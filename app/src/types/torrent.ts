@@ -275,6 +275,111 @@ export interface QbtPreferences {
   peer_turnover_cutoff: number
   peer_turnover_interval: number
   request_queue_size: number
+  // Advanced — disk I/O (extended)
+  hashing_threads: number
+  file_pool_size: number
+  checking_memory_use: number
+  disk_io_type: number
+  disk_io_read_mode: number
+  disk_io_write_mode: number
+  save_resume_data_interval: number
+  resume_data_storage_type: number
+  torrent_content_remove_option: number
+  // Advanced — connections (extended)
+  utp_tcp_mixed_mode: number
+  upload_slots_behavior: number
+  upload_choking_algorithm: number
+  peer_tos: number
+  dht_bootstrap_nodes: string
+  idn_support_enabled: boolean
+  enable_multi_connections_from_same_ip: boolean
+  // Advanced — security (extended)
+  enable_embedded_tracker: boolean
+  embedded_tracker_port: number
+  embedded_tracker_port_forwarding: boolean
+  // Advanced — performance
+  bdecode_depth_limit: number
+  bdecode_token_limit: number
+  recheck_completed_torrents: boolean
+  resolve_peer_countries: boolean
+  reannounce_when_address_changed: boolean
+  memory_working_set_limit: number
+  performance_warning: boolean
+  // RSS (extended)
+  rss_fetch_delay: number
+  // WebUI settings
+  web_ui_address: string
+  web_ui_port: number
+  web_ui_upnp: boolean
+  use_https: boolean
+  web_ui_https_cert_path: string
+  web_ui_https_key_path: string
+  web_ui_username: string
+  bypass_local_auth: boolean
+  bypass_auth_subnet_whitelist_enabled: boolean
+  bypass_auth_subnet_whitelist: string
+  web_ui_max_auth_fail_count: number
+  web_ui_ban_duration: number
+  web_ui_session_timeout: number
+  web_ui_clickjacking_protection_enabled: boolean
+  web_ui_csrf_protection_enabled: boolean
+  web_ui_secure_cookie_enabled: boolean
+  web_ui_host_header_validation_enabled: boolean
+  web_ui_domain_list: string
+  web_ui_reverse_proxy_enabled: boolean
+  web_ui_reverse_proxies_list: string
+  web_ui_use_custom_http_headers_enabled: boolean
+  web_ui_custom_http_headers: string
+  alternative_webui_enabled: boolean
+  alternative_webui_path: string
+  dyndns_enabled: boolean
+  dyndns_service: number
+  dyndns_domain: string
+  dyndns_username: string
+  dyndns_password: string
+  // Downloads — additional
+  use_category_paths_in_manual_mode: boolean
+  add_to_top_of_queue: boolean
+  add_stopped_enabled: boolean
+  torrent_content_layout: string
+  torrent_stop_condition: string
+  merge_trackers: boolean
+  excluded_file_names_enabled: boolean
+  excluded_file_names: string
+  autorun_on_torrent_added_enabled: boolean
+  autorun_on_torrent_added_program: string
+  autorun_enabled: boolean
+  autorun_program: string
+  mail_notification_enabled: boolean
+  mail_notification_sender: string
+  mail_notification_email: string
+  mail_notification_smtp: string
+  mail_notification_ssl_enabled: boolean
+  mail_notification_auth_enabled: boolean
+  mail_notification_username: string
+  mail_notification_password: string
+  // Connection — additional
+  current_network_interface: string
+  current_interface_address: string
+  i2p_enabled: boolean
+  i2p_address: string
+  i2p_port: number
+  i2p_mixed_mode: boolean
+  i2p_inbound_quantity: number
+  i2p_outbound_quantity: number
+  i2p_inbound_length: number
+  i2p_outbound_length: number
+  proxy_bittorrent: boolean
+  proxy_rss: boolean
+  proxy_misc: boolean
+  proxy_hostname_lookup: boolean
+  upnp_lease_duration: number
+  // BitTorrent — additional
+  add_trackers_enabled: boolean
+  add_trackers: string
+  add_trackers_from_url_enabled: boolean
+  add_trackers_url: string
+  max_active_checking_torrents: number
 }
 
 export interface TorrentUIPreferences {

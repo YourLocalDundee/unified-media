@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import type { QbtPreferences, TorrentUIPreferences } from '@/types/torrent'
+import { AdvancedTab, RSSTab, WebUITab } from './NewTabs'
 
 // ---------------------------------------------------------------------------
 // Shared UI primitives
@@ -223,6 +224,9 @@ const TABS = [
   { id: 'bittorrent', label: 'BitTorrent' },
   { id: 'queue', label: 'Queue' },
   { id: 'privacy', label: 'Privacy' },
+  { id: 'advanced', label: 'Advanced' },
+  { id: 'rss', label: 'RSS' },
+  { id: 'webui', label: 'WebUI' },
   { id: 'interface', label: 'Interface' },
 ]
 
@@ -232,11 +236,24 @@ const TAB_FIELDS: Record<string, (keyof QbtPreferences)[]> = {
     'save_path', 'temp_path_enabled', 'temp_path', 'incomplete_files_ext',
     'preallocate_all', 'auto_delete_mode', 'create_subfolder_enabled',
     'start_paused_enabled', 'auto_tmm_enabled', 'export_dir', 'export_dir_fin',
+    'torrent_changed_tmm_enabled', 'save_path_changed_tmm_enabled', 'category_changed_tmm_enabled',
+    'use_category_paths_in_manual_mode', 'add_to_top_of_queue', 'add_stopped_enabled',
+    'torrent_content_layout', 'torrent_stop_condition', 'merge_trackers',
+    'excluded_file_names_enabled', 'excluded_file_names',
+    'autorun_on_torrent_added_enabled', 'autorun_on_torrent_added_program',
+    'autorun_enabled', 'autorun_program',
+    'mail_notification_enabled', 'mail_notification_sender', 'mail_notification_email',
+    'mail_notification_smtp', 'mail_notification_ssl_enabled', 'mail_notification_auth_enabled',
+    'mail_notification_username', 'mail_notification_password',
   ],
   connection: [
     'listen_port', 'upnp', 'random_port', 'encryption', 'dht', 'pex', 'lsd',
     'max_connec', 'max_connec_per_torrent', 'max_uploads', 'max_uploads_per_torrent',
     'outgoing_ports_min', 'outgoing_ports_max',
+    'bittorrent_protocol', 'connection_speed', 'current_network_interface', 'current_interface_address',
+    'i2p_enabled', 'i2p_address', 'i2p_port', 'i2p_mixed_mode',
+    'i2p_inbound_quantity', 'i2p_outbound_quantity', 'i2p_inbound_length', 'i2p_outbound_length',
+    'proxy_bittorrent', 'proxy_rss', 'proxy_misc', 'proxy_hostname_lookup', 'upnp_lease_duration',
   ],
   speed: [
     'dl_limit', 'up_limit', 'alt_dl_limit', 'alt_up_limit', 'scheduler_enabled',
@@ -247,6 +264,8 @@ const TAB_FIELDS: Record<string, (keyof QbtPreferences)[]> = {
     'anonymous_mode', 'max_ratio_enabled', 'max_ratio', 'max_seeding_time_enabled',
     'max_seeding_time', 'max_inactive_seeding_time_enabled', 'max_inactive_seeding_time',
     'max_ratio_act', 'announce_to_all_trackers', 'announce_to_all_tiers',
+    'announce_ip', 'add_trackers_enabled', 'add_trackers',
+    'add_trackers_from_url_enabled', 'add_trackers_url', 'max_active_checking_torrents',
   ],
   queue: [
     'queueing_enabled', 'max_active_downloads', 'max_active_uploads', 'max_active_torrents',
@@ -257,6 +276,41 @@ const TAB_FIELDS: Record<string, (keyof QbtPreferences)[]> = {
     'proxy_type', 'proxy_ip', 'proxy_port', 'proxy_auth_enabled', 'proxy_username',
     'proxy_password', 'proxy_peer_connections', 'proxy_torrents_only',
     'ip_filter_enabled', 'ip_filter_path', 'ip_filter_trackers', 'banned_IPs',
+  ],
+  advanced: [
+    'async_io_threads', 'hashing_threads', 'file_pool_size', 'checking_memory_use',
+    'disk_cache', 'disk_cache_ttl', 'disk_queue_size', 'use_os_cache',
+    'enable_coalesce_read_write', 'enable_piece_extent_affinity', 'enable_upload_suggestions',
+    'disk_io_type', 'disk_io_read_mode', 'disk_io_write_mode',
+    'save_resume_data_interval', 'resume_data_storage_type', 'torrent_content_remove_option',
+    'send_buffer_watermark', 'send_buffer_low_watermark', 'send_buffer_watermark_factor',
+    'socket_send_buffer_size', 'socket_receive_buffer_size', 'socket_backlog_size',
+    'connection_speed', 'utp_tcp_mixed_mode', 'upload_slots_behavior', 'upload_choking_algorithm',
+    'request_queue_size', 'max_concurrent_http_announces', 'stop_tracker_timeout',
+    'peer_tos', 'peer_turnover', 'peer_turnover_cutoff', 'peer_turnover_interval',
+    'dht_bootstrap_nodes', 'idn_support_enabled', 'enable_multi_connections_from_same_ip',
+    'validate_https_tracker_certificate', 'ssrf_mitigation', 'block_peers_on_privileged_ports',
+    'enable_embedded_tracker', 'embedded_tracker_port', 'embedded_tracker_port_forwarding',
+    'bdecode_depth_limit', 'bdecode_token_limit', 'recheck_completed_torrents',
+    'resolve_peer_countries', 'reannounce_when_address_changed',
+    'memory_working_set_limit', 'performance_warning',
+  ],
+  rss: [
+    'rss_processing_enabled', 'rss_refresh_interval', 'rss_max_articles_per_feed',
+    'rss_fetch_delay', 'rss_auto_downloading_enabled', 'rss_download_repack_proper_episodes',
+    'rss_smart_episode_filters',
+  ],
+  webui: [
+    'web_ui_address', 'web_ui_port', 'web_ui_upnp', 'use_https',
+    'web_ui_https_cert_path', 'web_ui_https_key_path', 'web_ui_username',
+    'bypass_local_auth', 'bypass_auth_subnet_whitelist_enabled', 'bypass_auth_subnet_whitelist',
+    'web_ui_max_auth_fail_count', 'web_ui_ban_duration', 'web_ui_session_timeout',
+    'web_ui_clickjacking_protection_enabled', 'web_ui_csrf_protection_enabled',
+    'web_ui_secure_cookie_enabled', 'web_ui_host_header_validation_enabled', 'web_ui_domain_list',
+    'web_ui_reverse_proxy_enabled', 'web_ui_reverse_proxies_list',
+    'web_ui_use_custom_http_headers_enabled', 'web_ui_custom_http_headers',
+    'alternative_webui_enabled', 'alternative_webui_path',
+    'dyndns_enabled', 'dyndns_service', 'dyndns_domain', 'dyndns_username', 'dyndns_password',
   ],
 }
 
@@ -518,6 +572,15 @@ export default function TorrentSettingsClient() {
               setShowPassword={setShowPassword}
             />
           )}
+          {activeTab === 'advanced' && current && (
+            <AdvancedTab prefs={current} update={updateField} />
+          )}
+          {activeTab === 'rss' && current && (
+            <RSSTab prefs={current} update={updateField} />
+          )}
+          {activeTab === 'webui' && current && (
+            <WebUITab prefs={current} update={updateField} />
+          )}
           {activeTab === 'interface' && (
             <InterfaceTab prefs={uiPrefs} update={(patch) => setUIPrefs((p) => ({ ...p, ...patch }))} />
           )}
@@ -597,6 +660,127 @@ function DownloadsTab({
           />
         </SettingRow>
       </SectionCard>
+
+      <SectionCard title="Automatic Torrent Management">
+        <SettingRow label="Relocate torrent when its Category's save path changes">
+          <Toggle checked={prefs.torrent_changed_tmm_enabled} onChange={(v) => update('torrent_changed_tmm_enabled', v)} />
+        </SettingRow>
+        <SettingRow label="Relocate torrent when the default save path changes">
+          <Toggle checked={prefs.save_path_changed_tmm_enabled} onChange={(v) => update('save_path_changed_tmm_enabled', v)} />
+        </SettingRow>
+        <SettingRow label="Relocate torrent when its Category changes">
+          <Toggle checked={prefs.category_changed_tmm_enabled} onChange={(v) => update('category_changed_tmm_enabled', v)} />
+        </SettingRow>
+        <SettingRow label="Use Category paths in manual mode">
+          <Toggle checked={prefs.use_category_paths_in_manual_mode} onChange={(v) => update('use_category_paths_in_manual_mode', v)} />
+        </SettingRow>
+      </SectionCard>
+
+      <SectionCard title="Content Layout">
+        <SettingRow label="Torrent content layout">
+          <SelectField
+            value={prefs.torrent_content_layout}
+            onChange={(v) => update('torrent_content_layout', v)}
+            options={[
+              { value: 'Original', label: 'Original' },
+              { value: 'Subfolder', label: 'Subfolder' },
+              { value: 'NoSubfolder', label: 'No Subfolder' },
+            ]}
+          />
+        </SettingRow>
+        <SettingRow label="Torrent stop condition">
+          <SelectField
+            value={prefs.torrent_stop_condition}
+            onChange={(v) => update('torrent_stop_condition', v)}
+            options={[
+              { value: 'None', label: 'None' },
+              { value: 'MetadataReceived', label: 'Metadata received' },
+              { value: 'FilesChecked', label: 'Files checked' },
+            ]}
+          />
+        </SettingRow>
+        <SettingRow label="Add torrents to top of queue">
+          <Toggle checked={prefs.add_to_top_of_queue} onChange={(v) => update('add_to_top_of_queue', v)} />
+        </SettingRow>
+        <SettingRow label="Add torrents in stopped state">
+          <Toggle checked={prefs.add_stopped_enabled} onChange={(v) => update('add_stopped_enabled', v)} />
+        </SettingRow>
+        <SettingRow label="Merge trackers when adding duplicate torrent">
+          <Toggle checked={prefs.merge_trackers} onChange={(v) => update('merge_trackers', v)} />
+        </SettingRow>
+      </SectionCard>
+
+      <SectionCard title="File Exclusions">
+        <SettingRow label="Enable file name exclusion patterns">
+          <Toggle checked={prefs.excluded_file_names_enabled} onChange={(v) => update('excluded_file_names_enabled', v)} />
+        </SettingRow>
+        {prefs.excluded_file_names_enabled && (
+          <div className="py-2">
+            <label className="block text-sm font-medium mb-2">Exclusion patterns (one per line)</label>
+            <textarea
+              value={prefs.excluded_file_names}
+              onChange={(e) => update('excluded_file_names', e.target.value)}
+              rows={3}
+              className="w-full rounded-md border border-border bg-card px-3 py-2 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-primary resize-y"
+              placeholder="*.nfo&#10;*.txt"
+            />
+          </div>
+        )}
+      </SectionCard>
+
+      <SectionCard title="Run External Program">
+        <SettingRow label="Run program when torrent is added">
+          <Toggle checked={prefs.autorun_on_torrent_added_enabled} onChange={(v) => update('autorun_on_torrent_added_enabled', v)} />
+        </SettingRow>
+        {prefs.autorun_on_torrent_added_enabled && (
+          <SettingRow label="Program path/arguments (%f=path, %n=name)">
+            <TextInput value={prefs.autorun_on_torrent_added_program} onChange={(v) => update('autorun_on_torrent_added_program', v)} placeholder="/usr/bin/notify-send %n" className="w-96" />
+          </SettingRow>
+        )}
+        <SettingRow label="Run program when download finishes">
+          <Toggle checked={prefs.autorun_enabled} onChange={(v) => update('autorun_enabled', v)} />
+        </SettingRow>
+        {prefs.autorun_enabled && (
+          <SettingRow label="Program path/arguments (%f=path, %n=name)">
+            <TextInput value={prefs.autorun_program} onChange={(v) => update('autorun_program', v)} placeholder="/usr/bin/notify-send %n" className="w-96" />
+          </SettingRow>
+        )}
+      </SectionCard>
+
+      <SectionCard title="Email Notifications">
+        <SettingRow label="Enable email notifications">
+          <Toggle checked={prefs.mail_notification_enabled} onChange={(v) => update('mail_notification_enabled', v)} />
+        </SettingRow>
+        {prefs.mail_notification_enabled && (
+          <>
+            <SettingRow label="SMTP server">
+              <TextInput value={prefs.mail_notification_smtp} onChange={(v) => update('mail_notification_smtp', v)} placeholder="smtp.example.com" />
+            </SettingRow>
+            <SettingRow label="Use SSL">
+              <Toggle checked={prefs.mail_notification_ssl_enabled} onChange={(v) => update('mail_notification_ssl_enabled', v)} />
+            </SettingRow>
+            <SettingRow label="From address">
+              <TextInput value={prefs.mail_notification_sender} onChange={(v) => update('mail_notification_sender', v)} placeholder="qbt@example.com" />
+            </SettingRow>
+            <SettingRow label="To address">
+              <TextInput value={prefs.mail_notification_email} onChange={(v) => update('mail_notification_email', v)} placeholder="you@example.com" />
+            </SettingRow>
+            <SettingRow label="Use authentication">
+              <Toggle checked={prefs.mail_notification_auth_enabled} onChange={(v) => update('mail_notification_auth_enabled', v)} />
+            </SettingRow>
+            {prefs.mail_notification_auth_enabled && (
+              <>
+                <SettingRow label="SMTP username">
+                  <TextInput value={prefs.mail_notification_username} onChange={(v) => update('mail_notification_username', v)} />
+                </SettingRow>
+                <SettingRow label="SMTP password">
+                  <TextInput type="password" value={prefs.mail_notification_password} onChange={(v) => update('mail_notification_password', v)} />
+                </SettingRow>
+              </>
+            )}
+          </>
+        )}
+      </SectionCard>
     </div>
   )
 }
@@ -641,6 +825,9 @@ function ConnectionTab({
         </SettingRow>
         <SettingRow label="Use random port on each startup">
           <Toggle checked={prefs.random_port} onChange={(v) => update('random_port', v)} />
+        </SettingRow>
+        <SettingRow label="UPnP lease duration (seconds, 0=permanent)">
+          <NumberInput value={prefs.upnp_lease_duration} onChange={(v) => update('upnp_lease_duration', v)} min={0} />
         </SettingRow>
       </SectionCard>
 
@@ -689,6 +876,63 @@ function ConnectionTab({
         <SettingRow label="Outgoing port range maximum">
           <NumberInput value={prefs.outgoing_ports_max} onChange={(v) => update('outgoing_ports_max', v)} min={0} max={65535} />
         </SettingRow>
+      </SectionCard>
+
+      <SectionCard title="Protocol">
+        <SettingRow label="Preferred BitTorrent protocol">
+          <SelectField
+            value={prefs.bittorrent_protocol}
+            onChange={(v) => update('bittorrent_protocol', v)}
+            options={[
+              { value: 0, label: 'TCP and uTP' },
+              { value: 1, label: 'TCP' },
+              { value: 2, label: 'uTP' },
+            ]}
+          />
+        </SettingRow>
+        <SettingRow label="Outgoing connections per second">
+          <NumberInput value={prefs.connection_speed} onChange={(v) => update('connection_speed', v)} min={0} />
+        </SettingRow>
+      </SectionCard>
+
+      <SectionCard title="Network Interface">
+        <SettingRow label="Network interface">
+          <TextInput value={prefs.current_network_interface} onChange={(v) => update('current_network_interface', v)} placeholder="(any)" />
+        </SettingRow>
+        <SettingRow label="Optional IP address">
+          <TextInput value={prefs.current_interface_address} onChange={(v) => update('current_interface_address', v)} placeholder="(any IP)" />
+        </SettingRow>
+      </SectionCard>
+
+      <SectionCard title="I2P">
+        <SettingRow label="Enable I2P torrents">
+          <Toggle checked={prefs.i2p_enabled} onChange={(v) => update('i2p_enabled', v)} />
+        </SettingRow>
+        {prefs.i2p_enabled && (
+          <>
+            <SettingRow label="I2P SAM host">
+              <TextInput value={prefs.i2p_address} onChange={(v) => update('i2p_address', v)} placeholder="127.0.0.1" />
+            </SettingRow>
+            <SettingRow label="I2P SAM port">
+              <NumberInput value={prefs.i2p_port} onChange={(v) => update('i2p_port', v)} min={1} max={65535} />
+            </SettingRow>
+            <SettingRow label="Mixed mode (I2P + clearnet)">
+              <Toggle checked={prefs.i2p_mixed_mode} onChange={(v) => update('i2p_mixed_mode', v)} />
+            </SettingRow>
+            <SettingRow label="Inbound tunnels">
+              <NumberInput value={prefs.i2p_inbound_quantity} onChange={(v) => update('i2p_inbound_quantity', v)} min={1} max={16} />
+            </SettingRow>
+            <SettingRow label="Outbound tunnels">
+              <NumberInput value={prefs.i2p_outbound_quantity} onChange={(v) => update('i2p_outbound_quantity', v)} min={1} max={16} />
+            </SettingRow>
+            <SettingRow label="Inbound tunnel hops">
+              <NumberInput value={prefs.i2p_inbound_length} onChange={(v) => update('i2p_inbound_length', v)} min={0} max={7} />
+            </SettingRow>
+            <SettingRow label="Outbound tunnel hops">
+              <NumberInput value={prefs.i2p_outbound_length} onChange={(v) => update('i2p_outbound_length', v)} min={0} max={7} />
+            </SettingRow>
+          </>
+        )}
       </SectionCard>
     </div>
   )
@@ -891,6 +1135,38 @@ function BitTorrentTab({
         <SettingRow label="Announce to all tiers simultaneously">
           <Toggle checked={prefs.announce_to_all_tiers} onChange={(v) => update('announce_to_all_tiers', v)} />
         </SettingRow>
+        <SettingRow label="IP address announced to trackers">
+          <TextInput value={prefs.announce_ip} onChange={(v) => update('announce_ip', v)} placeholder="Leave empty to use default" />
+        </SettingRow>
+      </SectionCard>
+
+      <SectionCard title="Tracker Augmentation">
+        <SettingRow label="Automatically add trackers to new torrents">
+          <Toggle checked={prefs.add_trackers_enabled} onChange={(v) => update('add_trackers_enabled', v)} />
+        </SettingRow>
+        {prefs.add_trackers_enabled && (
+          <div className="py-2">
+            <label className="block text-sm font-medium mb-2">Trackers to add (one per line)</label>
+            <textarea
+              value={prefs.add_trackers}
+              onChange={(e) => update('add_trackers', e.target.value)}
+              rows={4}
+              className="w-full rounded-md border border-border bg-card px-3 py-2 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-primary resize-y"
+              placeholder="https://tracker.example.com/announce"
+            />
+          </div>
+        )}
+        <SettingRow label="Fetch additional trackers from URL">
+          <Toggle checked={prefs.add_trackers_from_url_enabled} onChange={(v) => update('add_trackers_from_url_enabled', v)} />
+        </SettingRow>
+        {prefs.add_trackers_from_url_enabled && (
+          <SettingRow label="Tracker list URL">
+            <TextInput value={prefs.add_trackers_url} onChange={(v) => update('add_trackers_url', v)} placeholder="https://example.com/trackers.txt" className="w-80" />
+          </SettingRow>
+        )}
+        <SettingRow label="Max active checking torrents">
+          <NumberInput value={prefs.max_active_checking_torrents} onChange={(v) => update('max_active_checking_torrents', v)} min={1} />
+        </SettingRow>
       </SectionCard>
     </div>
   )
@@ -1025,6 +1301,18 @@ function PrivacyTab({
             </SettingRow>
             <SettingRow label="Use proxy for torrents only">
               <Toggle checked={prefs.proxy_torrents_only} onChange={(v) => update('proxy_torrents_only', v)} />
+            </SettingRow>
+            <SettingRow label="Use proxy for BitTorrent">
+              <Toggle checked={prefs.proxy_bittorrent} onChange={(v) => update('proxy_bittorrent', v)} />
+            </SettingRow>
+            <SettingRow label="Use proxy for RSS">
+              <Toggle checked={prefs.proxy_rss} onChange={(v) => update('proxy_rss', v)} />
+            </SettingRow>
+            <SettingRow label="Use proxy for general purposes">
+              <Toggle checked={prefs.proxy_misc} onChange={(v) => update('proxy_misc', v)} />
+            </SettingRow>
+            <SettingRow label="Perform hostname lookup via proxy">
+              <Toggle checked={prefs.proxy_hostname_lookup} onChange={(v) => update('proxy_hostname_lookup', v)} />
             </SettingRow>
           </>
         )}
