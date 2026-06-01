@@ -1,6 +1,5 @@
 'use client'
 
-import { useState } from 'react'
 import Image from 'next/image'
 
 export interface DiscoverItem {
@@ -16,47 +15,14 @@ export interface DiscoverItem {
 
 interface Props {
   items: DiscoverItem[]
-  query: string
+  query?: string
 }
 
 export default function DiscoverResults({ items, query }: Props) {
-  const [requestedIds, setRequestedIds] = useState<Set<number>>(new Set())
-  const [loadingIds, setLoadingIds] = useState<Set<number>>(new Set())
-  const [errors, setErrors] = useState<Record<number, string>>({})
-
-  async function handleRequest(item: DiscoverItem) {
-    setLoadingIds((prev) => new Set(prev).add(item.tmdbId))
-    setErrors((prev) => { const n = { ...prev }; delete n[item.tmdbId]; return n })
-    try {
-      const res = await fetch('/api/requests', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          tmdbId: item.tmdbId,
-          mediaType: item.mediaType,
-          title: item.title,
-          year: item.year,
-          posterPath: item.posterPath,
-          overview: item.overview,
-        }),
-      })
-      if (res.ok || res.status === 409) {
-        setRequestedIds((prev) => new Set(prev).add(item.tmdbId))
-      } else {
-        const data = await res.json().catch(() => ({})) as { error?: string }
-        setErrors((prev) => ({ ...prev, [item.tmdbId]: data.error ?? 'Request failed' }))
-      }
-    } catch {
-      setErrors((prev) => ({ ...prev, [item.tmdbId]: 'Network error' }))
-    } finally {
-      setLoadingIds((prev) => { const s = new Set(prev); s.delete(item.tmdbId); return s })
-    }
-  }
-
   if (items.length === 0) {
     return (
       <div className="flex h-40 items-center justify-center text-zinc-500">
-        No results for &ldquo;{query}&rdquo;
+        {query ? `No results for "${query}"` : 'No results.'}
       </div>
     )
   }
@@ -65,17 +31,16 @@ export default function DiscoverResults({ items, query }: Props) {
     <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
       {items.map((item) => {
         const inLibrary = item.libraryId !== null
-        const isRequested = requestedIds.has(item.tmdbId)
-        const isLoading = loadingIds.has(item.tmdbId)
-        const error = errors[item.tmdbId]
         const posterUrl = item.posterPath
           ? `https://image.tmdb.org/t/p/w185${item.posterPath}`
           : null
+        const detailUrl = `/browse/discover/${item.mediaType}/${item.tmdbId}`
 
         return (
-          <div
+          <a
             key={`${item.mediaType}-${item.tmdbId}`}
-            className="group flex flex-col overflow-hidden rounded-lg bg-zinc-900 ring-1 ring-white/5 transition hover:ring-white/20"
+            href={detailUrl}
+            className="group flex flex-col overflow-hidden rounded-lg bg-zinc-900 ring-1 ring-white/5 transition hover:ring-white/20 hover:-translate-y-0.5"
           >
             {/* Poster */}
             <div className="relative aspect-[2/3] w-full bg-zinc-800">
@@ -111,56 +76,29 @@ export default function DiscoverResults({ items, query }: Props) {
                 </span>
               )}
 
-              {/* In Library overlay */}
+              {/* In Library overlay on hover */}
               {inLibrary && (
-                <div className="absolute inset-0 flex items-end bg-gradient-to-t from-black/60 to-transparent opacity-0 transition-opacity group-hover:opacity-100">
-                  <a
-                    href={`/browse/${item.libraryId}`}
-                    className="w-full py-2 text-center text-xs font-semibold text-green-300 hover:text-green-200"
-                  >
-                    In Library — View
-                  </a>
+                <div className="absolute inset-0 flex items-center justify-center bg-black/50 opacity-0 transition-opacity group-hover:opacity-100">
+                  <span className="rounded-full bg-green-600 px-3 py-1 text-xs font-semibold text-white">
+                    In Library
+                  </span>
                 </div>
               )}
             </div>
 
             {/* Card body */}
-            <div className="flex flex-1 flex-col gap-2 p-2.5">
-              <div className="flex-1">
-                <p className="line-clamp-2 text-sm font-medium leading-tight text-white">
-                  {item.title}
-                  {item.year !== null && (
-                    <span className="ml-1 font-normal text-zinc-400">({item.year})</span>
-                  )}
-                </p>
-              </div>
-
-              {error && <p className="text-[10px] text-red-400">{error}</p>}
-
-              {inLibrary ? (
-                <a
-                  href={`/browse/${item.libraryId}`}
-                  className="w-full rounded px-2 py-1.5 text-center text-xs font-medium bg-green-700/40 text-green-300 hover:bg-green-700/60 transition"
-                >
-                  In Library
-                </a>
-              ) : (
-                <button
-                  onClick={() => void handleRequest(item)}
-                  disabled={isRequested || isLoading}
-                  className={`w-full rounded px-2 py-1.5 text-xs font-medium transition ${
-                    isRequested
-                      ? 'cursor-default bg-green-700/40 text-green-300'
-                      : isLoading
-                      ? 'cursor-wait bg-zinc-700 text-zinc-400'
-                      : 'bg-white/10 text-white hover:bg-white/20 active:bg-white/30'
-                  }`}
-                >
-                  {isRequested ? 'Requested' : isLoading ? 'Requesting…' : '+ Request'}
-                </button>
+            <div className="flex flex-1 flex-col p-2.5">
+              <p className="line-clamp-2 text-sm font-medium leading-tight text-white">
+                {item.title}
+                {item.year !== null && (
+                  <span className="ml-1 font-normal text-zinc-400">({item.year})</span>
+                )}
+              </p>
+              {inLibrary && (
+                <p className="mt-1 text-[10px] font-medium text-green-400">In Library</p>
               )}
             </div>
-          </div>
+          </a>
         )
       })}
     </div>

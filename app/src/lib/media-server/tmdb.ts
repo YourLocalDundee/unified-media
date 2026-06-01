@@ -188,6 +188,272 @@ async function fetchSearchPage<T>(
   return res.json() as Promise<TMDBListResponse<T>>
 }
 
+// ---------------------------------------------------------------------------
+// Trending / Popular browsing
+// ---------------------------------------------------------------------------
+
+export type TrendingCategory =
+  | 'trending'
+  | 'popular-movies'
+  | 'popular-tv'
+  | 'top-rated-movies'
+  | 'top-rated-tv'
+
+const CATEGORY_ENDPOINT: Record<TrendingCategory, string> = {
+  'trending':          '/trending/all/week',
+  'popular-movies':    '/movie/popular',
+  'popular-tv':        '/tv/popular',
+  'top-rated-movies':  '/movie/top_rated',
+  'top-rated-tv':      '/tv/top_rated',
+}
+
+export async function getTrendingContent(
+  category: TrendingCategory = 'trending',
+  page = 1,
+): Promise<TMDBSearchResponse> {
+  const token = process.env.TMDB_ACCESS_TOKEN
+  if (!token) throw new Error('TMDB_ACCESS_TOKEN not set')
+  const endpoint = CATEGORY_ENDPOINT[category]
+  const qs = new URLSearchParams({ language: 'en-US', page: String(page) })
+  const url = `${BASE}${endpoint}?${qs.toString()}`
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    next: { revalidate: 3600 },
+  })
+  if (!res.ok) throw new Error(`TMDB ${res.status}: ${endpoint}`)
+  const data = await res.json() as TMDBListResponse<TMDBMovieListItem & TMDBTVListItem & { media_type?: string }>
+
+  const isTv = category === 'popular-tv' || category === 'top-rated-tv'
+  const isMovie = category === 'popular-movies' || category === 'top-rated-movies'
+
+  const results: TMDBSearchResult[] = data.results
+    .filter((r) => {
+      const mt = r.media_type
+      if (mt === 'person') return false
+      return true
+    })
+    .map((r) => {
+      const mt = r.media_type ?? (isTv ? 'tv' : 'movie')
+      if (mt === 'tv' || isTv) return mapTV(r as unknown as TMDBTVListItem)
+      return mapMovie(r as unknown as TMDBMovieListItem)
+    })
+
+  void isMovie
+
+  return {
+    results,
+    totalResults: data.total_results,
+    totalPages: data.total_pages,
+    page: data.page,
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Full detail (with credits) for detail pages
+// ---------------------------------------------------------------------------
+
+export interface CastMember {
+  id: number
+  name: string
+  character: string
+  profilePath: string | null
+  order: number
+}
+
+export interface CrewMember {
+  id: number
+  name: string
+  job: string
+  department: string
+  profilePath: string | null
+}
+
+export interface MovieDetail {
+  tmdbId: number
+  title: string
+  tagline: string | null
+  overview: string | null
+  posterPath: string | null
+  backdropPath: string | null
+  releaseDate: string | null
+  runtime: number | null
+  genres: { id: number; name: string }[]
+  voteAverage: number | null
+  budget: number
+  revenue: number
+  homepage: string | null
+  originalLanguage: string | null
+  belongsToCollection: { id: number; name: string; posterPath: string | null } | null
+  cast: CastMember[]
+  crew: CrewMember[]
+}
+
+export interface TVSeasonInfo {
+  id: number
+  seasonNumber: number
+  name: string | null
+  episodeCount: number | null
+  airDate: string | null
+  posterPath: string | null
+}
+
+export interface TVDetail {
+  tmdbId: number
+  name: string
+  tagline: string | null
+  overview: string | null
+  posterPath: string | null
+  backdropPath: string | null
+  firstAirDate: string | null
+  status: string | null
+  numberOfSeasons: number | null
+  numberOfEpisodes: number | null
+  genres: { id: number; name: string }[]
+  episodeRunTime: number[]
+  voteAverage: number | null
+  homepage: string | null
+  networks: { id: number; name: string; logoPath: string | null }[]
+  creators: { id: number; name: string; profilePath: string | null }[]
+  cast: CastMember[]
+  crew: CrewMember[]
+  seasons: TVSeasonInfo[]
+}
+
+export async function getMovieDetail(tmdbId: number): Promise<MovieDetail> {
+  const token = process.env.TMDB_ACCESS_TOKEN
+  if (!token) throw new Error('TMDB_ACCESS_TOKEN not set')
+  const url = `${BASE}/movie/${tmdbId}?append_to_response=credits&language=en-US`
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${token}` },
+    next: { revalidate: 86400 },
+  })
+  if (!res.ok) throw new Error(`TMDB ${res.status}: /movie/${tmdbId}`)
+  const r = await res.json() as Record<string, unknown> & {
+    credits?: {
+      cast?: Record<string, unknown>[]
+      crew?: Record<string, unknown>[]
+    }
+    belongs_to_collection?: { id: number; name: string; poster_path: string | null } | null
+  }
+
+  return {
+    tmdbId: r.id as number,
+    title: r.title as string,
+    tagline: (r.tagline as string | null) ?? null,
+    overview: (r.overview as string | null) ?? null,
+    posterPath: (r.poster_path as string | null) ?? null,
+    backdropPath: (r.backdrop_path as string | null) ?? null,
+    releaseDate: (r.release_date as string | null) ?? null,
+    runtime: (r.runtime as number | null) ?? null,
+    genres: (r.genres as { id: number; name: string }[]) ?? [],
+    voteAverage: (r.vote_average as number | null) ?? null,
+    budget: (r.budget as number) ?? 0,
+    revenue: (r.revenue as number) ?? 0,
+    homepage: (r.homepage as string | null) ?? null,
+    originalLanguage: (r.original_language as string | null) ?? null,
+    belongsToCollection: r.belongs_to_collection
+      ? {
+          id: r.belongs_to_collection.id,
+          name: r.belongs_to_collection.name,
+          posterPath: r.belongs_to_collection.poster_path,
+        }
+      : null,
+    cast: ((r.credits?.cast ?? []) as Record<string, unknown>[])
+      .slice(0, 24)
+      .map((c) => ({
+        id: c.id as number,
+        name: c.name as string,
+        character: c.character as string,
+        profilePath: (c.profile_path as string | null) ?? null,
+        order: c.order as number,
+      })),
+    crew: ((r.credits?.crew ?? []) as Record<string, unknown>[])
+      .filter((c) => ['Director', 'Producer', 'Screenplay', 'Writer'].includes(c.job as string))
+      .map((c) => ({
+        id: c.id as number,
+        name: c.name as string,
+        job: c.job as string,
+        department: c.department as string,
+        profilePath: (c.profile_path as string | null) ?? null,
+      })),
+  }
+}
+
+export async function getTVDetail(tmdbId: number): Promise<TVDetail> {
+  const token = process.env.TMDB_ACCESS_TOKEN
+  if (!token) throw new Error('TMDB_ACCESS_TOKEN not set')
+  const url = `${BASE}/tv/${tmdbId}?append_to_response=credits&language=en-US`
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${token}` },
+    next: { revalidate: 86400 },
+  })
+  if (!res.ok) throw new Error(`TMDB ${res.status}: /tv/${tmdbId}`)
+  const r = await res.json() as Record<string, unknown> & {
+    credits?: {
+      cast?: Record<string, unknown>[]
+      crew?: Record<string, unknown>[]
+    }
+    created_by?: Record<string, unknown>[]
+    networks?: Record<string, unknown>[]
+    seasons?: Record<string, unknown>[]
+  }
+
+  return {
+    tmdbId: r.id as number,
+    name: r.name as string,
+    tagline: (r.tagline as string | null) ?? null,
+    overview: (r.overview as string | null) ?? null,
+    posterPath: (r.poster_path as string | null) ?? null,
+    backdropPath: (r.backdrop_path as string | null) ?? null,
+    firstAirDate: (r.first_air_date as string | null) ?? null,
+    status: (r.status as string | null) ?? null,
+    numberOfSeasons: (r.number_of_seasons as number | null) ?? null,
+    numberOfEpisodes: (r.number_of_episodes as number | null) ?? null,
+    genres: (r.genres as { id: number; name: string }[]) ?? [],
+    episodeRunTime: (r.episode_run_time as number[]) ?? [],
+    voteAverage: (r.vote_average as number | null) ?? null,
+    homepage: (r.homepage as string | null) ?? null,
+    networks: ((r.networks ?? []) as Record<string, unknown>[]).map((n) => ({
+      id: n.id as number,
+      name: n.name as string,
+      logoPath: (n.logo_path as string | null) ?? null,
+    })),
+    creators: ((r.created_by ?? []) as Record<string, unknown>[]).map((c) => ({
+      id: c.id as number,
+      name: c.name as string,
+      profilePath: (c.profile_path as string | null) ?? null,
+    })),
+    cast: ((r.credits?.cast ?? []) as Record<string, unknown>[])
+      .slice(0, 24)
+      .map((c) => ({
+        id: c.id as number,
+        name: c.name as string,
+        character: c.character as string,
+        profilePath: (c.profile_path as string | null) ?? null,
+        order: (c.order as number) ?? 0,
+      })),
+    crew: ((r.credits?.crew ?? []) as Record<string, unknown>[])
+      .filter((c) => ['Executive Producer', 'Producer', 'Creator'].includes(c.job as string))
+      .map((c) => ({
+        id: c.id as number,
+        name: c.name as string,
+        job: c.job as string,
+        department: c.department as string,
+        profilePath: (c.profile_path as string | null) ?? null,
+      })),
+    seasons: ((r.seasons ?? []) as Record<string, unknown>[])
+      .filter((s) => (s.season_number as number) > 0)
+      .map((s) => ({
+        id: s.id as number,
+        seasonNumber: s.season_number as number,
+        name: (s.name as string | null) ?? null,
+        episodeCount: (s.episode_count as number | null) ?? null,
+        airDate: (s.air_date as string | null) ?? null,
+        posterPath: (s.poster_path as string | null) ?? null,
+      })),
+  }
+}
+
 export async function searchTMDB(
   query: string,
   type: 'movie' | 'tv' | 'all',

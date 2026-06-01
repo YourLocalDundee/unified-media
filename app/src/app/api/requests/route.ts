@@ -6,7 +6,9 @@ import {
   getUserRequests,
   getRequestByTmdb,
   createRequest,
+  updateRequestStatus,
 } from '@/lib/requests/monitor'
+import { getSetting } from '@/lib/settings/index'
 
 export const dynamic = 'force-dynamic'
 
@@ -62,6 +64,14 @@ export async function POST(req: NextRequest) {
     overview,
     seasons,
   })
+
+  // Auto-approve if enabled in settings
+  const autoApprove = getSetting('auto_approve', '0') === '1'
+  if (autoApprove) {
+    updateRequestStatus(created.id, 'approved')
+    const approved = { ...created, status: 'approved' as const }
+    return NextResponse.json(approved, { status: 201 })
+  }
 
   return NextResponse.json(created, { status: 201 })
 }

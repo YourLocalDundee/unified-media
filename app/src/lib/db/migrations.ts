@@ -236,6 +236,25 @@ export function runMigrations(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_media_requests_tmdb ON media_requests(tmdb_id, media_type);
   `)
 
+  // App settings — key-value store for admin-configurable options
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS app_settings (
+      key   TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
+  `)
+  // Seed defaults (INSERT OR IGNORE so re-runs are safe)
+  db.prepare("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('auto_approve', '0')").run()
+
+  // Additive migrations for media_requests
+  const requestCols = [
+    'ALTER TABLE media_requests ADD COLUMN auto_approved INTEGER DEFAULT 0',
+    'ALTER TABLE media_requests ADD COLUMN auto_delete_at INTEGER',
+  ]
+  for (const sql of requestCols) {
+    try { db.exec(sql) } catch { /* already exists */ }
+  }
+
   // Media server — Phase 5 independence build
   db.exec(`
     CREATE TABLE IF NOT EXISTS media_items (

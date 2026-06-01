@@ -15,6 +15,7 @@ const NAV = [
   { href: '/admin/automation/bridge', label: 'Request Bridge' },
   { href: '/admin/subtitles', label: 'Subtitles' },
   { href: '/admin/media-server', label: 'Media Server' },
+  { href: '/admin/settings', label: 'Settings' },
 ]
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {

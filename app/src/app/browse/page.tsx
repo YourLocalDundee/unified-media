@@ -2,7 +2,8 @@ import { Suspense } from 'react'
 import type { Metadata } from 'next'
 import MediaCard from '@/components/media/MediaCard'
 import { getItemsByType, searchItems, getTotalCount, getAvailableFilters, getItemsByTmdbIds } from '@/lib/media-server/library'
-import { searchTMDB } from '@/lib/media-server/tmdb'
+import { searchTMDB, getTrendingContent } from '@/lib/media-server/tmdb'
+import type { TrendingCategory } from '@/lib/media-server/tmdb'
 import type { MediaItem } from '@/lib/media-server/types'
 import { requireAuth } from '@/lib/dal'
 import DiscoverResults from './DiscoverResults'
@@ -23,8 +24,16 @@ const SORT_OPTIONS: { value: SortKey; label: string }[] = [
   { value: 'added_asc',  label: 'Date Added (Oldest)' },
 ]
 
+const TRENDING_CATEGORIES: { value: TrendingCategory; label: string }[] = [
+  { value: 'trending',         label: 'Trending' },
+  { value: 'popular-movies',   label: 'Popular Movies' },
+  { value: 'popular-tv',       label: 'Popular TV' },
+  { value: 'top-rated-movies', label: 'Top Rated Movies' },
+  { value: 'top-rated-tv',     label: 'Top Rated TV' },
+]
+
 interface BrowsePageProps {
-  searchParams: Promise<{ q?: string; page?: string; type?: string; year?: string; sort?: string }>
+  searchParams: Promise<{ q?: string; page?: string; type?: string; year?: string; sort?: string; cat?: string }>
 }
 
 // ---------------------------------------------------------------------------
@@ -116,37 +125,55 @@ async function BrowseGrid({
 }
 
 // ---------------------------------------------------------------------------
-// Discover Grid (TMDB search with library cross-reference)
+// Discover Grid (TMDB search or trending/popular with library cross-reference)
 // ---------------------------------------------------------------------------
+
+function TrendingCategoryTabs({ active, query }: { active: TrendingCategory; query?: string }) {
+  const qParam = query ? `&q=${encodeURIComponent(query)}` : ''
+  return (
+    <div className="flex flex-wrap gap-2">
+      {TRENDING_CATEGORIES.map((cat) => (
+        <a
+          key={cat.value}
+          href={`/browse?type=discover&cat=${cat.value}${qParam}`}
+          className={`rounded-full px-4 py-1.5 text-xs font-medium transition-colors ${
+            active === cat.value
+              ? 'bg-primary text-primary-foreground'
+              : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700 hover:text-white'
+          }`}
+        >
+          {cat.label}
+        </a>
+      ))}
+    </div>
+  )
+}
 
 async function DiscoverGrid({
   query,
   page,
-  mediaType,
+  category,
 }: {
   query?: string
   page: number
-  mediaType: 'all' | 'movie' | 'tv'
+  category: TrendingCategory
 }) {
-  if (!query) {
-    return (
-      <div className="flex h-64 flex-col items-center justify-center gap-4 text-zinc-500">
-        <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12 opacity-40" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-          <path strokeLinecap="round" strokeLinejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z" />
-        </svg>
-        <p className="text-lg">Search TMDB to discover movies and TV shows</p>
-        <p className="text-sm">Use the search bar above — anything not in your library shows a Request button</p>
-      </div>
-    )
+  let results: Awaited<ReturnType<typeof searchTMDB>>['results'] = []
+  let totalResults = 0
+  let totalPages = 0
+
+  if (query && query.trim().length > 0) {
+    const searchData = await searchTMDB(query.trim(), 'all', page).catch(() => null)
+    results = searchData?.results ?? []
+    totalResults = searchData?.totalResults ?? 0
+    totalPages = searchData?.totalPages ?? 0
+  } else {
+    const trendData = await getTrendingContent(category, page).catch(() => null)
+    results = trendData?.results ?? []
+    totalResults = trendData?.totalResults ?? 0
+    totalPages = trendData?.totalPages ?? 0
   }
 
-  const tmdbType = mediaType === 'all' ? 'all' : mediaType
-  const searchData = await searchTMDB(query, tmdbType, page).catch(() => null)
-  const results = searchData?.results ?? []
-  const totalResults = searchData?.totalResults ?? 0
-  const totalPages = searchData?.totalPages ?? 0
-
-  // Cross-reference with local library by tmdb_id
   const tmdbIds = results.map((r) => r.tmdbId)
   const libraryMap = tmdbIds.length > 0 ? getItemsByTmdbIds(tmdbIds) : {}
 
@@ -161,9 +188,16 @@ async function DiscoverGrid({
     libraryId: libraryMap[r.tmdbId] ?? null,
   }))
 
+  const pageBase = query
+    ? `?type=discover&q=${encodeURIComponent(query)}`
+    : `?type=discover&cat=${category}`
+
   return (
     <div className="flex flex-col gap-6">
-      {results.length > 0 && (
+      {/* Category tabs only when not searching */}
+      {!query && <TrendingCategoryTabs active={category} />}
+
+      {query && results.length > 0 && (
         <p className="text-sm text-zinc-400">
           {totalResults.toLocaleString()} result{totalResults !== 1 ? 's' : ''} for &ldquo;{query}&rdquo;
         </p>
@@ -174,12 +208,12 @@ async function DiscoverGrid({
       {totalPages > 1 && (
         <nav className="flex items-center justify-center gap-3">
           {page > 1 && (
-            <a href={`?type=discover&q=${encodeURIComponent(query)}&page=${page - 1}`}
+            <a href={`${pageBase}&page=${page - 1}`}
               className="rounded bg-zinc-800 px-4 py-2 text-sm text-white hover:bg-zinc-700">Prev</a>
           )}
           <span className="text-sm text-zinc-400">Page {page} of {totalPages}</span>
           {page < totalPages && (
-            <a href={`?type=discover&q=${encodeURIComponent(query)}&page=${page + 1}`}
+            <a href={`${pageBase}&page=${page + 1}`}
               className="rounded bg-zinc-800 px-4 py-2 text-sm text-white hover:bg-zinc-700">Next</a>
           )}
         </nav>
@@ -374,6 +408,8 @@ function TypeTabs({ active, query, sort, year }: { active: string; query?: strin
 // Page
 // ---------------------------------------------------------------------------
 
+const VALID_TREND_CATS = ['trending','popular-movies','popular-tv','top-rated-movies','top-rated-tv'] as const
+
 export default async function BrowsePage({ searchParams }: BrowsePageProps) {
   await requireAuth()
   const params = await searchParams
@@ -389,14 +425,13 @@ export default async function BrowsePage({ searchParams }: BrowsePageProps) {
     ? (sortRaw as SortKey)
     : 'title_asc'
 
+  const catRaw = params.cat ?? 'trending'
+  const trendCategory: TrendingCategory = (VALID_TREND_CATS as readonly string[]).includes(catRaw)
+    ? (catRaw as TrendingCategory)
+    : 'trending'
+
   const filterType = itemType === 'movies' ? 'movie' : itemType === 'shows' ? 'series' : undefined
   const filters = isDiscover ? { genres: [], years: [] } : getAvailableFilters(filterType)
-
-  // Discover media type tab (separate from library type)
-  const discoverMediaType: 'all' | 'movie' | 'tv' =
-    isDiscover && (params.type === 'discover')
-      ? (params.sort === 'movie' || params.sort === 'tv' ? (params.sort as 'movie' | 'tv') : 'all')
-      : 'all'
 
   return (
     <div className="min-h-screen bg-zinc-950 text-white">
@@ -418,7 +453,7 @@ export default async function BrowsePage({ searchParams }: BrowsePageProps) {
 
         {isDiscover ? (
           <Suspense fallback={<BrowseGridSkeleton />}>
-            <DiscoverGrid query={query} page={page} mediaType={discoverMediaType} />
+            <DiscoverGrid query={query} page={page} category={trendCategory} />
           </Suspense>
         ) : (
           <Suspense fallback={<BrowseGridSkeleton />}>
