@@ -1,0 +1,96 @@
+export type SubtitleStatus = 'wanted' | 'downloaded' | 'skipped' | 'failed'
+
+export interface SubtitleWant {
+  id: number
+  jellyfin_item_id: string
+  jellyfin_item_type: string        // 'Movie' | 'Episode'
+  title: string
+  imdb_id: string | null
+  media_path: string | null         // absolute path to the media file on disk
+  language: string                  // 'en', 'es', etc.
+  forced: number                    // 0 | 1
+  hi: number                        // 0 | 1 (hearing impaired)
+  status: SubtitleStatus
+  subtitle_file_id: number | null   // OpenSubtitles file_id
+  subtitle_path: string | null      // path where .srt was written
+  created_at: number
+  updated_at: number
+}
+
+// OpenSubtitles v3 API shapes
+export interface OSUploader {
+  uploader_id: number
+  name: string
+  rank: string
+}
+
+export interface OSFeatureDetails {
+  feature_id: number
+  feature_type: string
+  year: number | null
+  title: string
+  movie_name: string
+  imdb_id: number
+  tmdb_id: number
+}
+
+export interface OSFile {
+  file_id: number
+  cd_number: number
+  file_name: string
+}
+
+export interface OSSubtitleAttributes {
+  subtitle_id: string
+  language: string
+  download_count: number
+  hearing_impaired: boolean
+  hd: boolean
+  format: string              // 'srt' | 'ass' | 'vtt' etc.
+  fps: number
+  votes: number
+  ratings: number
+  from_trusted: boolean
+  foreign_parts_only: boolean
+  ai_translated: boolean
+  machine_translated: boolean
+  upload_date: string
+  release: string
+  comments: string
+  uploader: OSUploader
+  feature_details: OSFeatureDetails
+  url: string
+  files: OSFile[]
+}
+
+export interface OSSubtitle {
+  id: string
+  type: string
+  attributes: OSSubtitleAttributes
+}
+
+export interface OSSearchResponse {
+  data: OSSubtitle[]
+  total_count: number
+  page: number
+  per_page: number
+}
+
+export interface OSDownloadResponse {
+  link: string
+  file_name: string
+  requests: number
+  remaining: number             // downloads remaining today
+  message: string
+  reset_time: string
+  reset_time_utc: string
+}
+
+export interface SubtitleSearchParams {
+  imdb_id?: string     // numeric IMDB ID without "tt" prefix, e.g. "1234567"
+  tmdb_id?: number
+  query?: string       // title fallback
+  languages: string    // comma-separated, e.g. "en,es"
+  type: 'movie' | 'episode'
+  hearing_impaired?: 'include' | 'exclude' | 'only'
+}

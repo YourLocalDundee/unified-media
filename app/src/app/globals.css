@@ -1,0 +1,239 @@
+@import "tailwindcss";
+@config "../../tailwind.config.ts";
+
+@layer base {
+  :root {
+    --background: 222 47% 11%;
+    --foreground: 213 31% 91%;
+
+    --card: 222 47% 14%;
+    --card-foreground: 213 31% 91%;
+
+    --primary: 217 91% 60%;
+    --primary-foreground: 222 47% 11%;
+
+    --secondary: 222 47% 18%;
+    --secondary-foreground: 213 31% 91%;
+
+    --muted: 223 47% 18%;
+    --muted-foreground: 215 20% 55%;
+
+    --accent: 217 91% 60%;
+    --accent-foreground: 222 47% 11%;
+
+    --destructive: 0 63% 51%;
+    --destructive-foreground: 213 31% 91%;
+
+    --border: 222 47% 20%;
+    --ring: 217 91% 60%;
+
+    --radius: 0.5rem;
+  }
+
+  .dark {
+    --background: 222 47% 11%;
+    --foreground: 213 31% 91%;
+
+    --card: 222 47% 14%;
+    --card-foreground: 213 31% 91%;
+
+    --primary: 217 91% 60%;
+    --primary-foreground: 222 47% 11%;
+
+    --secondary: 222 47% 18%;
+    --secondary-foreground: 213 31% 91%;
+
+    --muted: 223 47% 18%;
+    --muted-foreground: 215 20% 55%;
+
+    --accent: 217 91% 60%;
+    --accent-foreground: 222 47% 11%;
+
+    --destructive: 0 63% 51%;
+    --destructive-foreground: 213 31% 91%;
+
+    --border: 222 47% 20%;
+    --ring: 217 91% 60%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    background-color: hsl(var(--background));
+    color: hsl(var(--foreground));
+  }
+}
+
+/* =========================================================
+   Theme system — applied via data-theme on <html>
+   ========================================================= */
+
+[data-theme="dark"],
+:root {
+  --theme-bg: #0f1117;
+  --theme-bg2: #161b22;
+  --theme-card: #1c2128;
+  --theme-hover: #21262d;
+  --theme-text: #e6edf3;
+  --theme-text2: #8b949e;
+  --theme-muted: #484f58;
+  --theme-accent: #2f81f7;
+  --theme-accent-h: #1f6feb;
+  --theme-border: #30363d;
+  --theme-danger: #da3633;
+  --theme-success: #3fb950;
+  --theme-warn: #d29922;
+
+  --background: 222 47% 11%;
+  --foreground: 213 31% 91%;
+  --card: 222 47% 14%;
+  --card-foreground: 213 31% 91%;
+  --primary: 217 91% 60%;
+  --primary-foreground: 222 47% 11%;
+  --secondary: 222 47% 18%;
+  --secondary-foreground: 213 31% 91%;
+  --muted: 223 47% 18%;
+  --muted-foreground: 215 20% 55%;
+  --accent: 217 91% 60%;
+  --accent-foreground: 222 47% 11%;
+  --destructive: 0 63% 51%;
+  --destructive-foreground: 213 31% 91%;
+  --border: 222 47% 20%;
+  --ring: 217 91% 60%;
+}
+
+[data-theme="midnight"] {
+  --theme-bg: #000000;
+  --theme-bg2: #0d0d0d;
+  --theme-card: #111111;
+  --theme-hover: #1a1a1a;
+  --theme-text: #ffffff;
+  --theme-text2: #999999;
+  --theme-muted: #444444;
+  --theme-accent: #6e40c9;
+  --theme-accent-h: #5a32a3;
+  --theme-border: #222222;
+  --theme-danger: #ff4444;
+  --theme-success: #44ff88;
+  --theme-warn: #ffaa00;
+
+  --background: 0 0% 0%;
+  --foreground: 0 0% 100%;
+  --card: 0 0% 7%;
+  --card-foreground: 0 0% 100%;
+  --primary: 262 54% 51%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 0 0% 10%;
+  --secondary-foreground: 0 0% 100%;
+  --muted: 0 0% 11%;
+  --muted-foreground: 0 0% 60%;
+  --accent: 262 54% 51%;
+  --accent-foreground: 0 0% 100%;
+  --destructive: 0 100% 63%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 0 0% 13%;
+  --ring: 262 54% 51%;
+}
+
+[data-theme="light"] {
+  --theme-bg: #ffffff;
+  --theme-bg2: #f6f8fa;
+  --theme-card: #ffffff;
+  --theme-hover: #f3f4f6;
+  --theme-text: #1f2328;
+  --theme-text2: #656d76;
+  --theme-muted: #9198a1;
+  --theme-accent: #0969da;
+  --theme-accent-h: #0550ae;
+  --theme-border: #d0d7de;
+  --theme-danger: #cf222e;
+  --theme-success: #1a7f37;
+  --theme-warn: #9a6700;
+
+  --background: 0 0% 100%;
+  --foreground: 222 47% 11%;
+  --card: 0 0% 98%;
+  --card-foreground: 222 47% 11%;
+  --primary: 217 91% 40%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 210 40% 94%;
+  --secondary-foreground: 222 47% 11%;
+  --muted: 210 40% 96%;
+  --muted-foreground: 215 20% 45%;
+  --accent: 217 91% 40%;
+  --accent-foreground: 0 0% 100%;
+  --destructive: 0 63% 45%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 214 32% 85%;
+  --ring: 217 91% 40%;
+}
+
+[data-theme="dim"] {
+  --theme-bg: #1b1f23;
+  --theme-bg2: #22272e;
+  --theme-card: #2d333b;
+  --theme-hover: #373e47;
+  --theme-text: #cdd9e5;
+  --theme-text2: #768390;
+  --theme-muted: #545d68;
+  --theme-accent: #539bf5;
+  --theme-accent-h: #316dca;
+  --theme-border: #444c56;
+  --theme-danger: #e5534b;
+  --theme-success: #46954a;
+  --theme-warn: #c69026;
+
+  --background: 216 10% 13%;
+  --foreground: 207 30% 84%;
+  --card: 213 11% 19%;
+  --card-foreground: 207 30% 84%;
+  --primary: 212 92% 64%;
+  --primary-foreground: 216 10% 13%;
+  --secondary: 213 11% 23%;
+  --secondary-foreground: 207 30% 84%;
+  --muted: 213 11% 23%;
+  --muted-foreground: 210 11% 52%;
+  --accent: 212 92% 64%;
+  --accent-foreground: 216 10% 13%;
+  --destructive: 3 72% 58%;
+  --destructive-foreground: 207 30% 84%;
+  --border: 213 11% 30%;
+  --ring: 212 92% 64%;
+}
+
+[data-theme="cinema"] {
+  --theme-bg: #080808;
+  --theme-bg2: #100f0f;
+  --theme-card: #161414;
+  --theme-hover: #1e1b1b;
+  --theme-text: #f5f0f0;
+  --theme-text2: #9e8e8e;
+  --theme-muted: #4a3f3f;
+  --theme-accent: #e5383b;
+  --theme-accent-h: #c1121f;
+  --theme-border: #2a1f1f;
+  --theme-danger: #ff6b6b;
+  --theme-success: #4caf50;
+  --theme-warn: #ff9800;
+
+  --background: 0 0% 3%;
+  --foreground: 10 20% 96%;
+  --card: 0 5% 9%;
+  --card-foreground: 10 20% 96%;
+  --primary: 359 74% 55%;
+  --primary-foreground: 10 20% 96%;
+  --secondary: 0 5% 11%;
+  --secondary-foreground: 10 20% 96%;
+  --muted: 0 5% 11%;
+  --muted-foreground: 0 6% 56%;
+  --accent: 359 74% 55%;
+  --accent-foreground: 10 20% 96%;
+  --destructive: 0 100% 71%;
+  --destructive-foreground: 10 20% 96%;
+  --border: 0 17% 14%;
+  --ring: 359 74% 55%;
+}

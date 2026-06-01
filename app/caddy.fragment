@@ -1,0 +1,4 @@
+unified.minijoe.dev {
+    import compressed
+    reverse_proxy unified-frontend:3001
+}

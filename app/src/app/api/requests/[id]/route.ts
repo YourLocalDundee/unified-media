@@ -1,0 +1,58 @@
+import { NextRequest, NextResponse } from 'next/server'
+import { requireAuth } from '@/lib/dal'
+import { getRequestById, deleteRequest } from '@/lib/requests/monitor'
+
+export const dynamic = 'force-dynamic'
+
+export async function GET(
+  _req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const session = await requireAuth()
+  const { id: idStr } = await params
+
+  const id = parseInt(idStr, 10)
+  if (isNaN(id)) {
+    return NextResponse.json({ error: 'Invalid id' }, { status: 400 })
+  }
+
+  const request = getRequestById(id)
+  if (!request) {
+    return NextResponse.json({ error: 'Request not found' }, { status: 404 })
+  }
+
+  if (session.role !== 'admin' && request.user_id !== session.userId) {
+    return NextResponse.json({ error: 'Request not found' }, { status: 404 })
+  }
+
+  return NextResponse.json(request)
+}
+
+export async function DELETE(
+  _req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const session = await requireAuth()
+  const { id: idStr } = await params
+
+  const id = parseInt(idStr, 10)
+  if (isNaN(id)) {
+    return NextResponse.json({ error: 'Invalid id' }, { status: 400 })
+  }
+
+  const request = getRequestById(id)
+  if (!request) {
+    return NextResponse.json({ error: 'Request not found' }, { status: 404 })
+  }
+
+  if (session.role !== 'admin' && request.user_id !== session.userId) {
+    return NextResponse.json({ error: 'Request not found' }, { status: 404 })
+  }
+
+  const deleted = deleteRequest(id)
+  if (!deleted) {
+    return NextResponse.json({ error: 'Request not found' }, { status: 404 })
+  }
+
+  return new NextResponse(null, { status: 204 })
+}

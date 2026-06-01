@@ -1,0 +1,32 @@
+import { NextRequest, NextResponse } from 'next/server'
+import { requireAdmin, logEvent } from '@/lib/dal'
+import { getDb } from '@/lib/db/index'
+
+const UPPER = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
+function generateCode(): string {
+  const array = new Uint8Array(12)
+  crypto.getRandomValues(array)
+  let code = ''
+  for (const b of array) code += UPPER[b % UPPER.length]
+  return code
+}
+
+export const dynamic = 'force-dynamic'
+
+export async function GET() {
+  await requireAdmin()
+  const invites = getDb().prepare('SELECT * FROM invite_codes ORDER BY created_at DESC').all()
+  return NextResponse.json(invites)
+}
+
+export async function POST(req: NextRequest) {
+  const session = await requireAdmin()
+  const body = await req.json() as { label?: string; maxUses?: number; expiresAt?: number | null }
+  const code = generateCode()
+  const now = Date.now()
+  getDb().prepare(
+    'INSERT INTO invite_codes (code, created_by, label, max_uses, use_count, expires_at, created_at) VALUES (?, ?, ?, ?, 0, ?, ?)'
+  ).run(code, session.userId, body.label ?? null, body.maxUses ?? 1, body.expiresAt ?? null, now)
+  await logEvent('invite_created', { code, label: body.label }, { userId: session.userId, username: session.username })
+  return NextResponse.json({ code })
+}

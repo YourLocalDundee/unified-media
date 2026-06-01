@@ -1,0 +1,26 @@
+services:
+  unified-frontend:
+    build:
+      context: /home/minijoe/dev/unified-frontend/app
+      dockerfile: Dockerfile
+    container_name: unified-frontend
+    restart: unless-stopped
+    env_file:
+      - /home/minijoe/dev/unified-frontend/app/.env.local
+    environment:
+      - NODE_ENV=production
+      - DB_PATH=/data/unified.db
+    volumes:
+      - unified-db:/data
+    mem_limit: 512m
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:3001/api/health']
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    labels:
+      - 'com.centurylinklabs.watchtower.enable=false'
+
+volumes:
+  unified-db:

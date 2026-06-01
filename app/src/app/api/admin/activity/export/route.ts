@@ -1,0 +1,36 @@
+import { NextResponse } from 'next/server'
+import { requireAdmin } from '@/lib/dal'
+import { getDb } from '@/lib/db/index'
+
+interface WatchRow {
+  username: string; item_title: string; item_type: string; series_title: string | null;
+  season_num: number | null; episode_num: number | null; progress_pct: number | null;
+  watched_sec: number | null; duration_sec: number | null; completed: number; started_at: number
+}
+
+export const dynamic = 'force-dynamic'
+
+export async function GET() {
+  await requireAdmin()
+  const rows = getDb().prepare(
+    `SELECT u.username, we.item_title, we.item_type, we.series_title, we.season_num,
+            we.episode_num, we.progress_pct, we.watched_sec, we.duration_sec,
+            we.completed, we.started_at
+     FROM watch_events we JOIN users u ON we.user_id = u.id
+     ORDER BY started_at DESC`
+  ).all() as WatchRow[]
+
+  const header = 'username,title,type,series,season,episode,progress_pct,watched_sec,duration_sec,completed,started_at\n'
+  const body = rows.map(r =>
+    [r.username, r.item_title, r.item_type, r.series_title ?? '', r.season_num ?? '', r.episode_num ?? '',
+     r.progress_pct ?? '', r.watched_sec ?? '', r.duration_sec ?? '', r.completed,
+     new Date(r.started_at).toISOString()].map(v => JSON.stringify(v)).join(',')
+  ).join('\n')
+
+  return new NextResponse(header + body, {
+    headers: {
+      'Content-Type': 'text/csv',
+      'Content-Disposition': 'attachment; filename="watch-activity.csv"',
+    },
+  })
+}
