@@ -2,13 +2,14 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { Home, Film, Search, ClipboardList, Download, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Home, Film, Library, Search, ClipboardList, Download, ChevronLeft, ChevronRight } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAppStore } from '@/store'
 
 const navItems = [
   { href: '/', icon: Home, label: 'Dashboard' },
   { href: '/browse', icon: Film, label: 'Browse' },
+  { href: '/browse?type=all', icon: Library, label: 'Library' },
   { href: '/search', icon: Search, label: 'Search' },
   { href: '/requests', icon: ClipboardList, label: 'Requests' },
   { href: '/downloads', icon: Download, label: 'Downloads' },

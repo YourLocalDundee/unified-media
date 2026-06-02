@@ -1,6 +1,8 @@
 'use client'
 
 import Image from 'next/image'
+import type { RequestStatus } from '@/lib/requests/types'
+import { RequestButton } from '@/components/media/RequestButton'
 
 export interface DiscoverItem {
   tmdbId: number
@@ -11,6 +13,7 @@ export interface DiscoverItem {
   rating: number | null
   overview: string
   libraryId: string | null
+  requestStatus: RequestStatus | null
 }
 
 interface Props {
@@ -37,13 +40,12 @@ export default function DiscoverResults({ items, query }: Props) {
         const detailUrl = `/browse/discover/${item.mediaType}/${item.tmdbId}`
 
         return (
-          <a
+          <div
             key={`${item.mediaType}-${item.tmdbId}`}
-            href={detailUrl}
             className="group flex flex-col overflow-hidden rounded-lg bg-zinc-900 ring-1 ring-white/5 transition hover:ring-white/20 hover:-translate-y-0.5"
           >
-            {/* Poster */}
-            <div className="relative aspect-[2/3] w-full bg-zinc-800">
+            {/* Poster as link */}
+            <a href={detailUrl} className="relative aspect-[2/3] w-full bg-zinc-800 block">
               {posterUrl ? (
                 <Image
                   src={posterUrl}
@@ -84,21 +86,51 @@ export default function DiscoverResults({ items, query }: Props) {
                   </span>
                 </div>
               )}
-            </div>
+            </a>
 
             {/* Card body */}
             <div className="flex flex-1 flex-col p-2.5">
-              <p className="line-clamp-2 text-sm font-medium leading-tight text-white">
+              <a href={detailUrl} className="line-clamp-2 text-sm font-medium leading-tight text-white hover:text-zinc-300">
                 {item.title}
                 {item.year !== null && (
                   <span className="ml-1 font-normal text-zinc-400">({item.year})</span>
                 )}
-              </p>
-              {inLibrary && (
-                <p className="mt-1 text-[10px] font-medium text-green-400">In Library</p>
-              )}
+              </a>
+
+              {/* CTA */}
+              <div className="mt-auto pt-2">
+                {inLibrary ? (
+                  <a
+                    href={`/browse/${item.libraryId}`}
+                    onClick={(e) => e.stopPropagation()}
+                    className="inline-flex items-center rounded-md px-2.5 py-1.5 text-xs font-medium bg-green-900/60 text-green-300 hover:bg-green-900/80 transition-colors"
+                  >
+                    Watch
+                  </a>
+                ) : item.requestStatus && item.requestStatus !== 'declined' ? (
+                  <span className={
+                    item.requestStatus === 'pending' ? 'text-xs font-medium text-zinc-400' :
+                    item.requestStatus === 'approved' ? 'text-xs font-medium text-blue-400' :
+                    'text-xs font-medium text-green-400'
+                  }>
+                    {item.requestStatus === 'pending' ? 'Requested' :
+                     item.requestStatus === 'approved' ? 'Approved' : 'Available'}
+                  </span>
+                ) : (
+                  <RequestButton
+                    tmdbId={item.tmdbId}
+                    mediaType={item.mediaType}
+                    title={item.title}
+                    year={item.year}
+                    posterPath={item.posterPath}
+                    overview={item.overview ?? ''}
+                    existingStatus={item.requestStatus ?? undefined}
+                    compact
+                  />
+                )}
+              </div>
             </div>
-          </a>
+          </div>
         )
       })}
     </div>

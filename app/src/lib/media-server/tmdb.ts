@@ -249,6 +249,55 @@ export async function getTrendingContent(
 }
 
 // ---------------------------------------------------------------------------
+// Genre discovery
+// ---------------------------------------------------------------------------
+
+export interface TMDBGenre {
+  id: number
+  name: string
+}
+
+export async function getGenres(type: 'movie' | 'tv'): Promise<TMDBGenre[]> {
+  try {
+    const data = await tmdbFetch<{ genres: TMDBGenre[] }>(`/genre/${type}/list?language=en-US`)
+    return data.genres
+  } catch {
+    return []
+  }
+}
+
+export async function discoverByGenre(
+  type: 'movie' | 'tv',
+  genreId: number,
+  page = 1,
+): Promise<TMDBSearchResponse> {
+  const token = process.env.TMDB_ACCESS_TOKEN
+  if (!token) throw new Error('TMDB_ACCESS_TOKEN not set')
+  const qs = new URLSearchParams({
+    language: 'en-US',
+    page: String(page),
+    with_genres: String(genreId),
+    sort_by: 'popularity.desc',
+  })
+  const endpoint = `/discover/${type}`
+  const res = await fetch(`${BASE}${endpoint}?${qs.toString()}`, {
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    next: { revalidate: 3600 },
+  })
+  if (!res.ok) throw new Error(`TMDB ${res.status}: ${endpoint}`)
+  const data = await res.json() as TMDBListResponse<TMDBMovieListItem & TMDBTVListItem>
+  const results: TMDBSearchResult[] = data.results.map((r) =>
+    type === 'tv' ? mapTV(r as unknown as TMDBTVListItem) : mapMovie(r as unknown as TMDBMovieListItem)
+  )
+  return {
+    results,
+    totalResults: data.total_results,
+    totalPages: data.total_pages,
+    page: data.page,
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Full detail (with credits) for detail pages
 // ---------------------------------------------------------------------------
 

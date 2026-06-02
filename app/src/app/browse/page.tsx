@@ -2,10 +2,12 @@ import { Suspense } from 'react'
 import type { Metadata } from 'next'
 import MediaCard from '@/components/media/MediaCard'
 import { getItemsByType, searchItems, getTotalCount, getAvailableFilters, getItemsByTmdbIds } from '@/lib/media-server/library'
-import { searchTMDB, getTrendingContent } from '@/lib/media-server/tmdb'
+import { searchTMDB, getTrendingContent, getGenres, discoverByGenre } from '@/lib/media-server/tmdb'
 import type { TrendingCategory } from '@/lib/media-server/tmdb'
 import type { MediaItem } from '@/lib/media-server/types'
 import { requireAuth } from '@/lib/dal'
+import { getUserRequests } from '@/lib/requests/monitor'
+import type { RequestStatus } from '@/lib/requests/types'
 import DiscoverResults from './DiscoverResults'
 import type { DiscoverItem } from './DiscoverResults'
 
@@ -33,7 +35,7 @@ const TRENDING_CATEGORIES: { value: TrendingCategory; label: string }[] = [
 ]
 
 interface BrowsePageProps {
-  searchParams: Promise<{ q?: string; page?: string; type?: string; year?: string; sort?: string; cat?: string }>
+  searchParams: Promise<{ q?: string; page?: string; type?: string; year?: string; sort?: string; cat?: string; genre?: string }>
 }
 
 // ---------------------------------------------------------------------------
@@ -149,14 +151,57 @@ function TrendingCategoryTabs({ active, query }: { active: TrendingCategory; que
   )
 }
 
+async function GenreFilterBar({
+  genreType,
+  activeGenreId,
+  category,
+  query,
+}: {
+  genreType: 'movie' | 'tv'
+  activeGenreId?: number
+  category: TrendingCategory
+  query?: string
+}) {
+  const genres = await getGenres(genreType).catch(() => [])
+  if (genres.length === 0) return null
+  const base = `?type=discover&cat=${category}${query ? `&q=${encodeURIComponent(query)}` : ''}`
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      <a
+        href={base}
+        className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+          !activeGenreId ? 'bg-white text-black' : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700 hover:text-white'
+        }`}
+      >
+        All
+      </a>
+      {genres.map((g) => (
+        <a
+          key={g.id}
+          href={`${base}&genre=${g.id}`}
+          className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+            activeGenreId === g.id ? 'bg-white text-black' : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700 hover:text-white'
+          }`}
+        >
+          {g.name}
+        </a>
+      ))}
+    </div>
+  )
+}
+
 async function DiscoverGrid({
   query,
   page,
   category,
+  genreId,
+  userId,
 }: {
   query?: string
   page: number
   category: TrendingCategory
+  genreId?: number
+  userId: string
 }) {
   let results: Awaited<ReturnType<typeof searchTMDB>>['results'] = []
   let totalResults = 0
@@ -167,6 +212,13 @@ async function DiscoverGrid({
     results = searchData?.results ?? []
     totalResults = searchData?.totalResults ?? 0
     totalPages = searchData?.totalPages ?? 0
+  } else if (genreId) {
+    const genreType: 'movie' | 'tv' =
+      category === 'popular-tv' || category === 'top-rated-tv' ? 'tv' : 'movie'
+    const genreData = await discoverByGenre(genreType, genreId, page).catch(() => null)
+    results = genreData?.results ?? []
+    totalResults = genreData?.totalResults ?? 0
+    totalPages = genreData?.totalPages ?? 0
   } else {
     const trendData = await getTrendingContent(category, page).catch(() => null)
     results = trendData?.results ?? []
@@ -177,6 +229,13 @@ async function DiscoverGrid({
   const tmdbIds = results.map((r) => r.tmdbId)
   const libraryMap = tmdbIds.length > 0 ? getItemsByTmdbIds(tmdbIds) : {}
 
+  // Build request status map for current user
+  const userRequests = getUserRequests(userId)
+  const requestMap: Record<string, RequestStatus> = {}
+  for (const req of userRequests) {
+    requestMap[`${req.media_type}-${req.tmdb_id}`] = req.status
+  }
+
   const items: DiscoverItem[] = results.map((r) => ({
     tmdbId: r.tmdbId,
     mediaType: r.mediaType,
@@ -186,16 +245,33 @@ async function DiscoverGrid({
     rating: r.rating,
     overview: r.overview,
     libraryId: libraryMap[r.tmdbId] ?? null,
+    requestStatus: requestMap[`${r.mediaType}-${r.tmdbId}`] ?? null,
   }))
 
   const pageBase = query
     ? `?type=discover&q=${encodeURIComponent(query)}`
+    : genreId
+    ? `?type=discover&cat=${category}&genre=${genreId}`
     : `?type=discover&cat=${category}`
+
+  // Determine genreType for the filter bar
+  const genreType: 'movie' | 'tv' =
+    category === 'popular-tv' || category === 'top-rated-tv' ? 'tv' : 'movie'
 
   return (
     <div className="flex flex-col gap-6">
       {/* Category tabs only when not searching */}
       {!query && <TrendingCategoryTabs active={category} />}
+
+      {/* Genre filter bar only when not searching */}
+      {!query && (
+        <GenreFilterBar
+          genreType={genreType}
+          activeGenreId={genreId}
+          category={category}
+          query={query}
+        />
+      )}
 
       {query && results.length > 0 && (
         <p className="text-sm text-zinc-400">
@@ -375,10 +451,10 @@ function FilterBar({
 
 function TypeTabs({ active, query, sort, year }: { active: string; query?: string; sort: SortKey; year?: number }) {
   const tabs = [
-    { value: 'all',      label: 'All' },
+    { value: 'discover', label: '✦ Browse' },
+    { value: 'all',      label: 'Library' },
     { value: 'movies',   label: 'Movies' },
     { value: 'shows',    label: 'TV Shows' },
-    { value: 'discover', label: 'Discover' },
   ]
   const extra = `&sort=${sort}${year ? `&year=${year}` : ''}${query ? `&q=${encodeURIComponent(query)}` : ''}`
   return (
@@ -389,15 +465,11 @@ function TypeTabs({ active, query, sort, year }: { active: string; query?: strin
           href={`/browse?type=${tab.value}${extra}`}
           className={`rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
             active === tab.value
-              ? tab.value === 'discover'
-                ? 'bg-primary text-primary-foreground'
-                : 'bg-white text-black'
-              : tab.value === 'discover'
-              ? 'bg-primary/20 text-primary hover:bg-primary/30'
+              ? 'bg-white text-black'
               : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700 hover:text-white'
           }`}
         >
-          {tab.value === 'discover' ? '✦ Discover' : tab.label}
+          {tab.label}
         </a>
       ))}
     </div>
@@ -411,13 +483,13 @@ function TypeTabs({ active, query, sort, year }: { active: string; query?: strin
 const VALID_TREND_CATS = ['trending','popular-movies','popular-tv','top-rated-movies','top-rated-tv'] as const
 
 export default async function BrowsePage({ searchParams }: BrowsePageProps) {
-  await requireAuth()
+  const session = await requireAuth()
   const params = await searchParams
   const query    = params.q?.trim() || undefined
   const page     = Math.max(1, parseInt(params.page ?? '1', 10) || 1)
   const itemType = ['movies', 'shows', 'all', 'discover'].includes(params.type ?? '')
-    ? (params.type ?? 'all')
-    : 'all'
+    ? (params.type ?? 'discover')
+    : 'discover'
   const isDiscover = itemType === 'discover'
   const year     = (!isDiscover && params.year) ? parseInt(params.year, 10) || undefined : undefined
   const sortRaw  = params.sort ?? 'title_asc'
@@ -429,6 +501,8 @@ export default async function BrowsePage({ searchParams }: BrowsePageProps) {
   const trendCategory: TrendingCategory = (VALID_TREND_CATS as readonly string[]).includes(catRaw)
     ? (catRaw as TrendingCategory)
     : 'trending'
+
+  const genreId = params.genre ? parseInt(params.genre, 10) || undefined : undefined
 
   const filterType = itemType === 'movies' ? 'movie' : itemType === 'shows' ? 'series' : undefined
   const filters = isDiscover ? { genres: [], years: [] } : getAvailableFilters(filterType)
@@ -453,7 +527,13 @@ export default async function BrowsePage({ searchParams }: BrowsePageProps) {
 
         {isDiscover ? (
           <Suspense fallback={<BrowseGridSkeleton />}>
-            <DiscoverGrid query={query} page={page} category={trendCategory} />
+            <DiscoverGrid
+              query={query}
+              page={page}
+              category={trendCategory}
+              genreId={genreId}
+              userId={session.userId}
+            />
           </Suspense>
         ) : (
           <Suspense fallback={<BrowseGridSkeleton />}>
