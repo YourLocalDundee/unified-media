@@ -26,12 +26,17 @@ export async function runAutoDelete(): Promise<number> {
 
   for (const req of expired) {
     try {
-      const dbType = req.media_type === 'movie' ? 'movie' : 'series'
-
-      // Find all media_items for this content
-      const items = db.prepare(
-        'SELECT id, file_path FROM media_items WHERE tmdb_id = ? AND type = ?'
-      ).all(req.tmdb_id, dbType) as { id: number; file_path: string }[]
+      // For TV: episode rows (type='episode') hold actual file_path values.
+      // The series stub row (type='series') has file_path=NULL and must also
+      // be deleted, but has no file to unlink.
+      const items = req.media_type === 'movie'
+        ? db.prepare(
+            'SELECT id, file_path FROM media_items WHERE tmdb_id = ? AND type = ?'
+          ).all(req.tmdb_id, 'movie') as { id: string; file_path: string | null }[]
+        : db.prepare(
+            `SELECT id, file_path FROM media_items
+             WHERE tmdb_id = ? AND type IN ('episode', 'series')`
+          ).all(req.tmdb_id) as { id: string; file_path: string | null }[]
 
       // Delete files from disk
       const dirs = new Set<string>()
@@ -41,6 +46,16 @@ export async function runAutoDelete(): Promise<number> {
           dirs.add(path.dirname(item.file_path))
         }
         db.prepare('DELETE FROM media_items WHERE id = ?').run(item.id)
+      }
+      // Also delete subtitle files alongside each video file
+      for (const dir of dirs) {
+        try {
+          for (const f of fs.readdirSync(dir)) {
+            if (/\.(srt|vtt|ass|ssa|sub)$/i.test(f)) {
+              fs.unlinkSync(path.join(dir, f))
+            }
+          }
+        } catch { /* dir already cleaned or gone */ }
       }
 
       // Remove empty directories (season dirs for TV, movie dir)

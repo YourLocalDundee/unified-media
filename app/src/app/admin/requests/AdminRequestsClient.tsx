@@ -7,7 +7,7 @@ import type { NativeRequestWithUser, RequestStatus } from '@/lib/requests/types'
 // Types
 // ---------------------------------------------------------------------------
 
-type FilterTab = 'all' | 'pending' | 'approved' | 'declined' | 'available'
+type FilterTab = 'all' | 'pending' | 'approved' | 'declined' | 'available' | 'expired'
 
 const FILTER_TABS: { value: FilterTab; label: string }[] = [
   { value: 'all', label: 'All' },
@@ -15,6 +15,7 @@ const FILTER_TABS: { value: FilterTab; label: string }[] = [
   { value: 'approved', label: 'Approved' },
   { value: 'declined', label: 'Declined' },
   { value: 'available', label: 'Available' },
+  { value: 'expired', label: 'Expired' },
 ]
 
 const STATUS_BADGE: Record<RequestStatus, { label: string; className: string }> = {
