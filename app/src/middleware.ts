@@ -22,7 +22,7 @@ const PUBLIC_PATHS = [
   '/api/health',
 ]
 
-export function proxy(request: NextRequest) {
+export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
 
   // Always allow Next.js internals and static files
@@ -39,11 +39,6 @@ export function proxy(request: NextRequest) {
   const isPublic = PUBLIC_PATHS.some(
     p => pathname === p || pathname.startsWith(p + '/')
   )
-
-  // Redirect logged-in users away from auth pages
-  if (hasSession && (pathname === '/login' || pathname === '/register')) {
-    return NextResponse.redirect(new URL('/', request.url))
-  }
 
   // UX redirect to login if no session cookie
   // (Real security is in requireAuth() in each Server Component)

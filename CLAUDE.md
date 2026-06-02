@@ -495,6 +495,18 @@ empty and these vars are absent.
 **Docker volume:** The SQLite DB lives at `/data/unified.db` inside the container. The compose
 file mounts the named volume `unified-db:/data`. Never delete this volume without a backup.
 
+### Middleware file naming
+
+Next.js middleware must be in `src/middleware.ts` (for src-dir projects) and must `export function middleware(...)`. Any other filename (e.g. `src/proxy.ts`) or export name is silently ignored — Next.js will not register the middleware and the manifest will be empty. After correcting the name and export and rebuilding, the manifest shows the middleware registered at `/`.
+
+### Stale session cookie loop
+
+`getSession()` in `src/lib/dal.ts` must delete the session cookie before returning null when it finds no matching DB row. If the cookie is left in place on a stale/expired session, the result is an infinite redirect: unauthenticated route → `requireAuth` fails → redirect `/login` → middleware sees cookie → redirect `/` → repeat. The fix is to call `cookieStore.delete(SESSION_COOKIE)` before every `return null` path where a stale cookie was detected.
+
+### Next.js 15: cookie mutations throw in Server Component context
+
+`cookies().set()` and `cookies().delete()` (from `next/headers`) throw `"Cookies can only be modified in a Server Action or Route Handler"` when called during a Server Component render. `getSession()` is invoked from Server Components via `requireAuth()`, so any cookie mutation inside it (session deletion on expiry, 24h rotation set) must be wrapped in `try { ... } catch { /* server component context — no-op */ }`. In Route Handler context the mutations succeed as before. Without this guard, users with expired sessions or sessions past the 24h rotation window get a 500 on every page load: middleware passes them through (cookie present), the page calls `requireAuth()` → `getSession()`, and the bare `cookieStore.delete()` / `cookieStore.set()` throws. All three cookie mutation sites in `src/lib/dal.ts` are already wrapped.
+
 ### SMTP for email verification (v0.5.3+)
 
 Email verification on registration uses `src/lib/email.ts` (nodemailer). The following env vars are all optional:
@@ -688,6 +700,13 @@ Set `output: 'standalone'` in `next.config.ts`.
 ```
 
 Watchtower is disabled because the image is built locally, not pulled from a registry.
+
+**Critical: always rebuild via compose, not `docker build`.** When compose manages the build (via the `build:` key), the resulting image is tagged `compose-<service>:latest` (e.g. `compose-unified-frontend:latest`). Running `docker build -t unified-frontend:latest .` produces a separate image that compose never uses — the container keeps running the old compose-managed image. Correct rebuild sequence:
+
+```bash
+docker compose build --no-cache unified-frontend
+docker compose up -d --force-recreate unified-frontend
+```
 
 ### Caddy route for unified.minijoe.dev (v0.4.0+)
 

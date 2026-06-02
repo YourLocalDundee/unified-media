@@ -51,10 +51,16 @@ export async function getSession(): Promise<SessionData | null> {
      WHERE s.id = ? AND s.expires_at > ? AND u.is_active = 1`
   ).get(sessionId, now) as SessionRow | undefined
 
-  if (!session) return null
+  if (!session) {
+    // Attempt to clear the stale cookie. This succeeds in Route Handlers and
+    // Server Actions; in Server Components Next.js 15 throws — ignore it.
+    try { cookieStore.delete(SESSION_COOKIE) } catch { /* server component context */ }
+    return null
+  }
 
   if (now - session.created_at > ABSOLUTE_TTL_MS) {
     db.prepare('DELETE FROM sessions WHERE id = ?').run(sessionId)
+    try { cookieStore.delete(SESSION_COOKIE) } catch { /* server component context */ }
     return null
   }
 
@@ -63,13 +69,15 @@ export async function getSession(): Promise<SessionData | null> {
     db.prepare(
       'UPDATE sessions SET id = ?, expires_at = ?, last_seen = ?, created_at = ? WHERE id = ?'
     ).run(newId, now + SESSION_TTL_MS, now, now, sessionId)
-    cookieStore.set(SESSION_COOKIE, newId, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
-      path: '/',
-      maxAge: SESSION_TTL_MS / 1000,
-    })
+    try {
+      cookieStore.set(SESSION_COOKIE, newId, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax',
+        path: '/',
+        maxAge: SESSION_TTL_MS / 1000,
+      })
+    } catch { /* server component context — rotation will retry on next request */ }
     return { userId: session.user_id, username: session.username, role: session.role, sessionId: newId }
   }
 
