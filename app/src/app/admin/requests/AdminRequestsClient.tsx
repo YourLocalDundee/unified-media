@@ -22,6 +22,7 @@ const STATUS_BADGE: Record<RequestStatus, { label: string; className: string }> 
   approved: { label: 'Approved', className: 'bg-blue-600/30 text-blue-300' },
   declined: { label: 'Declined', className: 'bg-red-600/30 text-red-300' },
   available: { label: 'Available', className: 'bg-green-600/30 text-green-300' },
+  expired: { label: 'Expired', className: 'bg-zinc-600/30 text-zinc-400' },
 }
 
 function tmdbImageUrl(path: string, size = 'w92') {

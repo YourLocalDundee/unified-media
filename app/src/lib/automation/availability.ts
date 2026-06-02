@@ -2,6 +2,8 @@ import { getDb } from '@/lib/db/index'
 import { updateItem } from './monitor'
 import type { MonitoredItem } from './types'
 
+const AUTO_DELETE_MS = 48 * 60 * 60 * 1000
+
 function isInNativeLibrary(item: MonitoredItem): boolean {
   if (item.tmdb_id == null) return false
 
@@ -16,7 +18,8 @@ function isInNativeLibrary(item: MonitoredItem): boolean {
 }
 
 export async function checkAvailability(): Promise<number> {
-  const grabbed = getDb()
+  const db = getDb()
+  const grabbed = db
     .prepare("SELECT * FROM monitored_items WHERE status = 'grabbed' AND tmdb_id IS NOT NULL")
     .all() as MonitoredItem[]
 
@@ -27,6 +30,17 @@ export async function checkAvailability(): Promise<number> {
   for (const item of grabbed) {
     if (isInNativeLibrary(item)) {
       updateItem(item.id, { status: 'imported' })
+
+      // Bridge to media_requests: mark available + schedule auto-delete
+      const mediaType = item.type === 'movie' ? 'movie' : 'tv'
+      const now = Date.now()
+      db.prepare(
+        `UPDATE media_requests
+         SET status = 'available', available_at = ?, auto_delete_at = ?
+         WHERE tmdb_id = ? AND media_type = ? AND auto_approved = 1
+         AND status = 'approved'`
+      ).run(now, now + AUTO_DELETE_MS, item.tmdb_id, mediaType)
+
       imported++
     }
   }

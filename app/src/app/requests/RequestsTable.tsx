@@ -26,6 +26,7 @@ const STATUS_LABELS: Record<RequestStatus, string> = {
   approved: 'Approved',
   declined: 'Declined',
   available: 'Available',
+  expired: 'Expired',
 }
 
 const STATUS_COLORS: Record<RequestStatus, string> = {
@@ -33,6 +34,7 @@ const STATUS_COLORS: Record<RequestStatus, string> = {
   approved: 'bg-blue-600 text-white',
   declined: 'bg-red-600 text-white',
   available: 'bg-green-600 text-white',
+  expired: 'bg-zinc-600 text-zinc-300',
 }
 
 function formatDate(ms: number): string {

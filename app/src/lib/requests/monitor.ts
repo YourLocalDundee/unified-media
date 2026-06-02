@@ -108,6 +108,7 @@ export function getRequestCounts(): {
   approved: number
   declined: number
   available: number
+  expired: number
   total: number
 } {
   const db = getDb()
@@ -115,7 +116,7 @@ export function getRequestCounts(): {
     `SELECT status, COUNT(*) as count FROM media_requests GROUP BY status`
   ).all() as { status: string; count: number }[]
 
-  const counts = { pending: 0, approved: 0, declined: 0, available: 0, total: 0 }
+  const counts = { pending: 0, approved: 0, declined: 0, available: 0, expired: 0, total: 0 }
   for (const row of rows) {
     const s = row.status as RequestStatus
     if (s in counts) counts[s] = row.count

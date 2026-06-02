@@ -28,5 +28,14 @@ export function initScheduler(): void {
     }
   })
 
+  // Auto-delete expired auto-approved content hourly
+  cron.schedule('0 * * * *', async () => {
+    const { runAutoDelete } = await import('./auto-delete')
+    const count = await runAutoDelete()
+    if (count > 0) {
+      console.log(`[auto-delete] Cleaned up ${count} expired item(s)`)
+    }
+  })
+
   console.log('[automation] Scheduler started')
 }

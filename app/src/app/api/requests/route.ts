@@ -5,10 +5,10 @@ import {
   getAllRequests,
   getUserRequests,
   getRequestByTmdb,
+  getRequestById,
   createRequest,
-  updateRequestStatus,
 } from '@/lib/requests/monitor'
-import { getSetting } from '@/lib/settings/index'
+import { getDb } from '@/lib/db/index'
 
 export const dynamic = 'force-dynamic'
 
@@ -50,8 +50,12 @@ export async function POST(req: NextRequest) {
   }
 
   const existing = getRequestByTmdb(session.userId, tmdbId, mediaType)
-  if (existing) {
+  if (existing && existing.status !== 'expired') {
     return NextResponse.json({ error: 'Already requested' }, { status: 409 })
+  }
+  // If expired, delete old record so we can create fresh
+  if (existing && existing.status === 'expired') {
+    getDb().prepare('DELETE FROM media_requests WHERE id = ?').run(existing.id)
   }
 
   const created = createRequest({
@@ -65,11 +69,11 @@ export async function POST(req: NextRequest) {
     seasons,
   })
 
-  // Auto-approve if enabled in settings
-  const autoApprove = getSetting('auto_approve', '0') === '1'
-  if (autoApprove) {
-    updateRequestStatus(created.id, 'approved')
-    const approved = { ...created, status: 'approved' as const }
+  // Try time-based + limit-based auto-approve
+  const { tryAutoApprove } = await import('@/lib/requests/auto-approve')
+  const wasApproved = tryAutoApprove(created.id)
+  if (wasApproved) {
+    const approved = getRequestById(created.id)
     return NextResponse.json(approved, { status: 201 })
   }
 

@@ -233,6 +233,7 @@ async function DiscoverGrid({
   const userRequests = getUserRequests(userId)
   const requestMap: Record<string, RequestStatus> = {}
   for (const req of userRequests) {
+    if (req.status === 'expired') continue   // slot is free — show as requestable
     requestMap[`${req.media_type}-${req.tmdb_id}`] = req.status
   }
 

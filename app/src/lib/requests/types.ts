@@ -1,4 +1,4 @@
-export type RequestStatus = 'pending' | 'approved' | 'declined' | 'available'
+export type RequestStatus = 'pending' | 'approved' | 'declined' | 'available' | 'expired'
 export type RequestMediaType = 'movie' | 'tv'
 
 export interface NativeRequest {

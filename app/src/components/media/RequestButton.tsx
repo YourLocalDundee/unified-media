@@ -31,6 +31,10 @@ const STATUS_BADGE_NORMAL: Record<RequestStatus, { label: string; className: str
     label: 'Declined',
     className: '', // handled as button below
   },
+  expired: {
+    label: 'Expired',
+    className: '', // handled as button below (falls through to request button)
+  },
 }
 
 const STATUS_BADGE_COMPACT: Record<RequestStatus, { label: string; className: string }> = {
@@ -49,6 +53,10 @@ const STATUS_BADGE_COMPACT: Record<RequestStatus, { label: string; className: st
   declined: {
     label: 'Declined',
     className: '', // handled as button below
+  },
+  expired: {
+    label: 'Expired',
+    className: '', // handled as button below (falls through to request button)
   },
 }
 
@@ -111,7 +119,7 @@ export function RequestButton({
   const sz = compact ? sizeCompact : sizeNormal
 
   // Static status badges (disabled states)
-  if (currentStatus && currentStatus !== 'declined') {
+  if (currentStatus && currentStatus !== 'declined' && currentStatus !== 'expired') {
     if (uiState === 'success' && currentStatus === 'pending') {
       // Brief "Requested!" flash before settling into badge
       setTimeout(() => setUiState('idle'), 1500)

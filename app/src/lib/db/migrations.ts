@@ -226,7 +226,7 @@ export function runMigrations(db: Database.Database): void {
       overview    TEXT,
       seasons     TEXT,
       status      TEXT NOT NULL DEFAULT 'pending'
-                    CHECK(status IN ('pending','approved','declined','available')),
+                    CHECK(status IN ('pending','approved','declined','available','expired')),
       created_at  INTEGER NOT NULL,
       updated_at  INTEGER NOT NULL,
       UNIQUE(user_id, tmdb_id, media_type)
@@ -250,9 +250,54 @@ export function runMigrations(db: Database.Database): void {
   const requestCols = [
     'ALTER TABLE media_requests ADD COLUMN auto_approved INTEGER DEFAULT 0',
     'ALTER TABLE media_requests ADD COLUMN auto_delete_at INTEGER',
+    'ALTER TABLE media_requests ADD COLUMN available_at INTEGER',
+    'ALTER TABLE media_requests ADD COLUMN release_date TEXT',
   ]
   for (const sql of requestCols) {
     try { db.exec(sql) } catch { /* already exists */ }
+  }
+
+  // Widen media_requests.status CHECK to include 'expired' (auto-delete terminal state).
+  // SQLite cannot ALTER a CHECK constraint, so recreate the table if the old constraint is present.
+  {
+    const tblInfo = db.prepare(
+      "SELECT sql FROM sqlite_master WHERE type='table' AND name='media_requests'"
+    ).get() as { sql: string } | undefined
+    if (tblInfo && !tblInfo.sql.includes("'expired'")) {
+      db.exec(`
+        BEGIN;
+        CREATE TABLE media_requests_new (
+          id          INTEGER PRIMARY KEY AUTOINCREMENT,
+          user_id     TEXT NOT NULL,
+          tmdb_id     INTEGER NOT NULL,
+          media_type  TEXT NOT NULL CHECK(media_type IN ('movie','tv')),
+          title       TEXT NOT NULL,
+          year        INTEGER,
+          poster_path TEXT,
+          overview    TEXT,
+          seasons     TEXT,
+          status      TEXT NOT NULL DEFAULT 'pending'
+                        CHECK(status IN ('pending','approved','declined','available','expired')),
+          created_at  INTEGER NOT NULL,
+          updated_at  INTEGER NOT NULL,
+          auto_approved INTEGER DEFAULT 0,
+          auto_delete_at INTEGER,
+          available_at INTEGER,
+          release_date TEXT,
+          UNIQUE(user_id, tmdb_id, media_type)
+        );
+        INSERT INTO media_requests_new SELECT id, user_id, tmdb_id, media_type, title, year,
+          poster_path, overview, seasons, status, created_at, updated_at,
+          auto_approved, auto_delete_at, available_at, release_date
+          FROM media_requests;
+        DROP TABLE media_requests;
+        ALTER TABLE media_requests_new RENAME TO media_requests;
+        CREATE INDEX IF NOT EXISTS idx_media_requests_user ON media_requests(user_id);
+        CREATE INDEX IF NOT EXISTS idx_media_requests_status ON media_requests(status);
+        CREATE INDEX IF NOT EXISTS idx_media_requests_tmdb ON media_requests(tmdb_id, media_type);
+        COMMIT;
+      `)
+    }
   }
 
   // Media server — Phase 5 independence build
