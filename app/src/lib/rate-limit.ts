@@ -1,3 +1,4 @@
+/** In-process only — resets on server restart and is not shared across multiple instances. */
 interface Entry { count: number; resetAt: number }
 const store = new Map<string, Entry>()
 

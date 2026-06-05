@@ -5,6 +5,108 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.9.2] — 2026-06-05
+
+### Changed
+- **Download client rebranded as UMT (Unified Media Torrent)** — the custom download client abstraction layer (`src/lib/download-client/`) is now branded as Unified Media Torrent. Environment variable keys renamed: `QBIT_URL` → `UMT_URL`, `QBIT_USERNAME` → `UMT_USERNAME`, `QBIT_PASSWORD` → `UMT_PASSWORD`. The `DOWNLOAD_CLIENT` default value changed from `qbittorrent` to `umt`. The underlying qBittorrent backend is unchanged.
+- **Browse page**: Removed redundant "Library" tab from the in-page browse tabs — Library is already accessible via the sidebar nav link. The `/browse?type=all` route continues to work.
+- **Importer path fix**: `buildLocalTargetPath()` now correctly uses `/media/movies/` and `/media/tv/` for direct filesystem operations instead of `/data/` (the SQLite volume).
+- **Importer token matching**: Fallback 2 matching upgraded from prefix comparison to token-based scoring, correctly handling filenames with `www.site.tld -` prefixes (e.g. `www.UIndex.org - The Boys S05E08...`).
+- **Quick + interactive grab**: Interactive torrent picks on 48hr requests now grab immediately without admin approval, matching Radarr's interactive search behavior.
+- **ACL fix**: `/mnt/media/movies` and `/mnt/media/tv` now grant write access to the container user (uid 1001) via `setfacl`, enabling the importer to place files directly into the library.
+
+### Added
+- **Series scope selector** — TV series requests now show a scope picker (Full Series / specific seasons / specific episodes) before submitting. The `SeriesScopeModal` is wired into `RequestOptions` for all TV media types. Scope is stored on `media_requests` and `monitored_items` and honored by the grabber's search query builder.
+- **TMDB season/episode route** (`GET /api/tmdb/tv/[tmdbId]/season/[seasonNumber]`) — returns episode list for the scope picker modal.
+- **Scope badge in requests** — the `/requests` page and admin requests page now display a scope summary badge on TV requests (Full Series / Season 1,2 / S01E01–E03).
+- **`/mnt/media/downloads/complete` mount** added to unified-frontend container (read-only) so the importer can detect and import files from qBittorrent's completed download directory.
+
+---
+
+## [0.9.1] — 2026-06-04
+
+### Fixed
+- **BunkerWeb: disabled `USE_BLACKLIST` for `unified.minijoe.dev`** — IP reputation blocklist feeds (Emerging Threats, firehol, etc.) were flagging cellular carrier NAT pool ranges, resulting in 403 for first-time external and mobile visitors. 2,472 IPs were blocked at time of discovery. `USE_BLACKLIST=no` now set per-domain in edge compose for both `bunkerweb` and `bwscheduler` services.
+- **Subtitle scheduler no longer crashes when `OPENSUBTITLES_API_KEY` is unset** — `downloadPendingSubtitles()` now returns immediately with a warning log when the key is absent; previously it would attempt network calls and surface 401 errors through the cron job. Both cron callbacks in `scheduler.ts` wrapped in try/catch.
+- **Admin seeding documented correctly** — CLAUDE.md previously claimed the container would `process.exit(1)` on missing `ADMIN_PASSWORD`; actual behavior is auto-generation of a random password printed to stderr with `force_pw_change=1`. Corrected.
+- **`*arr` services documented as bridge-network** — CLAUDE.md and `.env.local` incorrectly stated Sonarr/Radarr/Prowlarr/Bazarr ran with `network_mode: host`. Confirmed on `compose_default` bridge; reachable by container name or host IP.
+
+### Added
+- **Seerr webhook receiver** (`src/app/api/seerr/webhook/route.ts`) — implements the Phase 3 bridge endpoint. Handles `MEDIA_APPROVED` / `REQUEST_APPROVED` (idempotency via `findItemForRequest`, creates `monitored_item`, fires immediate grab as fire-and-forget), `MEDIA_AVAILABLE` (updates `media_requests.status`), and all other event types (200 ignored). HMAC-SHA256 signature verification via `timingSafeEqual` when `SEERR_WEBHOOK_SECRET` is set.
+- **Request download progress** (`src/app/api/requests/[id]/progress/route.ts`) — joins `media_requests → monitored_items → grab_history` by tmdb_id+type, queries qBittorrent `/api/v2/torrents/info?hashes=<hash>` for live progress. `RequestsTable.tsx` now renders a `DownloadProgress` component on approved rows: polls every 5 seconds, shows progress bar, speed (MB/s), ETA, and human-readable state label.
+- **Rate limiting on mutation routes** — `POST /api/requests` (20/hr per userId), `POST /api/requests/[id]/approve` and `decline` (60/5min per IP), `PATCH`+`DELETE /api/admin/users/[id]` (30/10min per IP, pooled).
+- **`SUBTITLE_MEDIA_ROOT=/media`** added to `.env.local` — required for the subtitle downloader to write `.srt` files alongside media files using the Jellyfin/Plex naming convention.
+- **`EMAIL_VERIFICATION_REQUIRED` env var** — defaults to `false`. When not set to `"true"`, registration creates the user account and session immediately without the two-step email code flow. The existing flow activates only when explicitly enabled.
+- **SMTP env vars scaffolded** — `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM` all optional. When absent, verification codes print to stdout.
+
+### Changed
+- **`package.json` version** bumped from `0.4.0` to `0.9.1` — was never incremented during the independence build phases.
+- **`@tanstack/react-query-devtools` and `@types/nodemailer`** moved from `dependencies` to `devDependencies` — devtools were going into the production bundle unnecessarily.
+- **CLAUDE.md** — corrected Next.js version (`14+` → `16+`), node base image (`22-slim` → `24-slim`), proxy file convention (middleware.ts → proxy.ts), `QBT_URL` → `QBIT_URL` in compose example, admin seeding behavior, `*arr` network mode, Jellyfin image proxy path, 21 DB tables listed, admin nav extended with Quality Profiles + Settings, BunkerWeb WAF table completed with all 5 disabled modules.
+
+---
+
+## [0.9.0] — Unreleased
+
+### Added
+- **Two-mode request system** — every media request is now either **Quick** (48-hour auto-delete, auto-approved, slot-limited, old content only) or **Long-term** (admin approval required, never auto-deleted, no slot limit). `request_type` column added to `media_requests` table.
+- **`RequestOptions` component** (`src/components/media/RequestOptions.tsx`) — shows two buttons ("Quick (48h)" / "Long-term") for content released before the current year; single "Request" button for current-year or future content.
+- **Auto-approve logic** (`src/lib/requests/auto-approve.ts`) — `tryAutoApprove()` gates on `request_type === 'quick'`, year check, and per-user slot limits (1 active movie, 2 active TV shows).
+- **Auto-delete cron** (`src/lib/automation/auto-delete.ts`) — hourly job removes media files and marks requests `expired` when `auto_delete_at <= now`. Only fires on quick requests.
+- **`availability.ts`** — sets `auto_delete_at` to 48 hours from now only for quick requests when they transition to available status.
+- **429 response on slot exhaustion** — `POST /api/requests` returns HTTP 429 when a quick request would exceed the user's slot limit; the request row is deleted.
+- **`request_method` column** — `'auto-pick'` (system selects best release) or `'interactive'` (user pre-selected a release via torrent picker modal). Auto-approval only triggers on `auto-pick` quick requests.
+- **`language` column on `media_requests`** — ISO 639-1 code or `'any'`; acts as a hard constraint on the auto-pick grab path.
+- **TorrentPickModal** (`src/components/media/TorrentPickModal.tsx`) — modal for interactive release selection; stores the chosen release as `preferred_release` JSON on the request row.
+- **`expired` status** added to `media_requests.status` CHECK constraint via table recreation migration (SQLite cannot ALTER a CHECK constraint).
+
+### Changed
+- `POST /api/requests` now accepts `requestType` field in the request body.
+- Status badges in `RequestOptions` now include a type label ("Quick (48h auto-delete)" / "Long-term").
+
+---
+
+## [0.8.0] — Unreleased
+
+### Added
+- **Independence build Phase 5 — Native media server** (`src/lib/media-server/`) — TypeScript media server replacing Jellyfin as the primary browse and playback backend. File scanner (`scanner.ts`), TMDB enricher (`enricher.ts`), ffprobe-based probe (`probe.ts`), HLS transcoder (`transcode.ts`), library query layer (`library.ts`), playback data builder (`playback.ts`), TMDB client (`tmdb.ts`). Background scanner starts from `src/instrumentation.ts`. Stores items in `media_items` and `media_watch_state` SQLite tables.
+- **Independence build Phase 6 — Browse and watch wired to native media server** — `/browse` and `/browse/[id]` now query the native media server library instead of Jellyfin. `/api/media/items/[id]`, `/api/media/image`, `/api/media/filters`, `/api/media/items/[id]/similar` routes added. Stream proxy at `/api/jellyfin/stream/[...path]` retained as pass-through for Jellyfin-backed items during migration.
+- **Independence build Phase 7 — Native request management** (`src/lib/requests/`) — request creation, approval, and status tracking backed by `media_requests` SQLite table. Replaces Seerr as the request backend. Admin requests page at `/admin/requests` with approval and decline actions.
+- **Browse — Discover mode** (`/browse`) — defaults to TMDB trending/popular/genre browsing cross-referenced against the local library. Type tabs: Browse (discover), Library, Movies, TV Shows. Genre filter pills; Quick/Long-term request buttons per card.
+- **`/browse/discover/[mediaType]/[tmdbId]`** — full detail page for TMDB items not yet in the local library.
+- **`DiscoverResults` component** (`src/app/browse/DiscoverResults.tsx`) — renders TMDB discover results with library cross-reference and inline request UI.
+- **`/admin/media-server`** — admin page for native media server: library stats (movie/series/episode counts), manual scan trigger, env var reference table for `MEDIA_ROOTS`, `TMDB_ACCESS_TOKEN`, `TRANSCODE_CACHE`.
+- **`/admin/requests`** — admin request management page with Pending/All/Approved/Declined filter tabs, approval modal with quality profile selection, inline approve/decline without page reload.
+- **`media_items` DB table** — stores scanned media: `id`, `type` (movie/episode/series/season), `title`, `sort_title`, `year`, `overview`, `runtime_ticks`, `tmdb_id`, `tvdb_id`, `imdb_id`, `series_id`, `season_number`, `episode_number`, `file_path`, `poster_path`, `backdrop_path`, timestamps.
+- **`media_watch_state` DB table** — per-user playback state: `position_ticks`, `played`, `play_count`, `last_played`.
+- **New env vars** — `TMDB_ACCESS_TOKEN` (required), `MEDIA_ROOTS` (required, colon-separated paths), `TRANSCODE_CACHE` (optional).
+
+### Changed
+- `continue-watching/route.ts` — rewritten to query `media_items` + `media_watch_state` via SQL; Jellyfin imports removed.
+- `EpisodeCard.tsx`, `EpisodeCarousel.tsx`, `SeriesSection.tsx` — switched from Jellyfin SDK types to native `NativeEpisode` / `NativeSeason` types; images served via `/api/media/image?path=`.
+- `VideoPlayer.tsx` progress reporting — `reportStart`, `reportProgress`, `reportStop` fall back gracefully when `progressApiUrl` is not set (logs warning, returns); no longer falls back to Jellyfin session routes.
+
+---
+
+## [0.7.0] — Unreleased
+
+### Added
+- **Independence build Phase 1 — Indexer aggregation** (`src/lib/indexer/`) — native Torznab/Newznab indexer registry stored in `indexers` SQLite table. Supports `requires_auth`, `requires_flaresolverr`, and `search_type` flags. FlareSolverr adapter at `adapters/`. Health check per indexer with `health_status` column. Admin UI at `/admin/indexers` with CRUD, enable/disable toggle, live test button.
+- **Independence build Phase 2 — Download automation** (`src/lib/automation/`) — want-list-driven grab loop replacing Sonarr/Radarr. `monitored_items` and `grab_history` tables. `grab_results` table stores search candidates per grab attempt. Quality profiles system: `quality_tiers` (19 canonical tiers seeded at startup), `custom_formats`, `quality_profile_formats`. Automated grabber (`grabber.ts`), scheduler (`scheduler.ts`), parser (`parser.ts`), quality scorer (`quality.ts`). Admin UI at `/admin/automation` with monitored items list, grab history, manual Grab Now action, Add Item modal.
+- **Independence build Phase 3 — Request bridge** (`src/lib/automation/bridge.ts`) — links the request system to the automation grab loop. Seerr webhook receiver at `/api/seerr/webhook` for `Request Approved` + `Media Available` events. Admin bridge status page at `/admin/automation/bridge`.
+- **Independence build Phase 4 — Subtitle management** (`src/lib/subtitle/`) — OpenSubtitles v3 integration replacing Bazarr. `subtitle_wants` table tracks wanted/downloaded/skipped/failed subtitle items. Library scanner discovers media without subtitles. Download job fetches `.srt` files and writes them to `SUBTITLE_MEDIA_ROOT`. Admin UI at `/admin/subtitles` with scan, download, and status management.
+- **Quality profiles admin** at `/admin/quality-profiles` — create/edit named quality profiles with tier-based conditions, upgrade-allowed toggle, cutoff quality, custom format scores, and preferred language constraint.
+- **`grab_results` DB table** — stores search candidates for each monitored item grab attempt: `monitored_item_id`, `searched_at`, `candidates` (JSON), `selected_hash`, `total_found`.
+- **`subtitle_wants` DB table** — tracks subtitle download state: `jellyfin_item_id`, language, forced/HI flags, `status`, `subtitle_path`.
+- **`quality_tiers`, `custom_formats`, `quality_profile_formats` DB tables** — seeded with 19 canonical tiers at startup.
+- **New env vars** — `OPENSUBTITLES_API_KEY` (required for subtitle phase), `SUBTITLE_LANGUAGES` (optional, default `en`), `SUBTITLE_MEDIA_ROOT` (optional, required for disk writes), `SEERR_WEBHOOK_SECRET` (optional).
+
+### Changed
+- Admin nav expanded — added Indexers, Automation, Request Bridge, Subtitles, Media Server tabs.
+- `quality_profiles` table extended with `upgrade_allowed`, `cutoff_quality_id`, `min_format_score`, `cutoff_format_score`, `language` columns (additive migrations).
+
+---
+
 ## [0.6.0] — 2026-05-30
 
 ### Added
@@ -51,7 +153,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **Media settings page** — `/settings/media` (admin-only via `requireAdmin()`) with 4 tabs: Indexers (Prowlarr — enable/disable toggle, test button, count badge), TV (Sonarr quality profiles + root folders), Movies (Radarr quality profiles + root folders), Subtitles (Bazarr providers + version info); all tabs gracefully degrade if a service is down
 - **Admin requests page** — `/admin/requests` with approval modal that loads quality profiles from Sonarr/Radarr at open time; approve and decline actions update row state inline without page reload; filter tabs (Pending/All/Approved/Declined) load server-side enriched data
 - **Decline API route** — `POST /api/seerr/request/[id]/decline`
-- **env vars** — `SONARR_URL`, `SONARR_API_KEY`, `RADARR_URL`, `RADARR_API_KEY`, `PROWLARR_URL`, `PROWLARR_API_KEY`, `BAZARR_URL`, `BAZARR_API_KEY` added to `.env.local`
+- **Two-step email verification registration** — `POST /api/auth/register` creates a `pending_registrations` row with a 6-digit code (10-minute TTL); `POST /api/auth/verify-email` accepts the code and creates the user + session on success. Maximum 5 incorrect attempts before the pending record is deleted.
+- **Demographics fields** — `first_name`, `last_name`, `bio`, `location` columns on `users` table (additive migrations). Collected at registration Step 1; editable post-registration via `PATCH /api/auth/profile/demographics` on `/settings/profile` "About Me" section.
+- **`/admin/monitoring`** — user monitoring dashboard: table of all users with username, name, email, status, role, last IP + country, active session count, last watched title, total watch count, last login.
+- **`/admin/users/[id]`** — per-user detail with five tabs: Overview (profile + activity stats), Sessions, Watches, Audit, Logins. Action buttons: Suspend/Activate, Reset Password, Force PW Change, Promote/Demote, Delete Account.
+- **Settings sidebar admin link** — if `role === 'admin'`, a "Admin Panel" link renders at the bottom of the settings sidebar pointing to `/admin/`.
+- **`pending_registrations` DB table** — stores email verification state between Step 1 and Step 2 of registration.
+- **env vars** — `SONARR_URL`, `SONARR_API_KEY`, `RADARR_URL`, `RADARR_API_KEY`, `PROWLARR_URL`, `PROWLARR_API_KEY`, `BAZARR_URL`, `BAZARR_API_KEY`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM` added.
 
 ### Changed
 - Settings nav — added "Media" tab between Torrent and Advanced

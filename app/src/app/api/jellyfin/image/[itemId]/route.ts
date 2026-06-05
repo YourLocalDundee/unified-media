@@ -1,3 +1,8 @@
+// Image proxy for Jellyfin artwork (poster, backdrop, thumb).
+// Proxying is required because: (a) the Jellyfin API key cannot be embedded in
+// browser-side <img src> tags, and (b) Jellyfin runs on the host IP
+// (192.168.0.50:8096) which is not reachable from the client's browser on
+// external networks. The response is cached for 1 hour at the CDN/Next.js layer.
 import { NextRequest } from 'next/server'
 import { JELLYFIN_URL, JELLYFIN_API_KEY } from '@/lib/jellyfin/client'
 
@@ -11,10 +16,13 @@ export async function GET(
   const index = searchParams.get('index')
   const width = searchParams.get('width') ?? '400'
 
+  // Log non-Primary requests to help diagnose missing artwork (e.g. backdrop index out of range).
   if (type !== 'Primary') {
     console.log(`[jellyfin-image] ${itemId} using fallback type=${type}${index !== null ? ` index=${index}` : ''}`)
   }
 
+  // Backdrop images are indexed (e.g. /Images/Backdrop/0, /Backdrop/1).
+  // All other types (Primary, Thumb, Logo) use the type name as the path segment.
   let imagePath: string
   if (type === 'Backdrop' && index !== null) {
     imagePath = `${JELLYFIN_URL}/Items/${itemId}/Images/Backdrop/${index}`
@@ -36,6 +44,7 @@ export async function GET(
       headers: {
         Authorization: authHeader,
       },
+      // Cache at the fetch level for 1 hour; artwork rarely changes between deploys.
       next: { revalidate: 3600 },
     })
 

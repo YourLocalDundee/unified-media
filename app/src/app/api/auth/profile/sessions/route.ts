@@ -1,3 +1,14 @@
+/**
+ * GET /api/auth/profile/sessions — returns all sessions for the current user
+ * so the /settings/profile page can show active devices with IP, UA, and
+ * timestamps. The currentSessionId is returned alongside so the UI can mark
+ * the active session and prevent the user from revoking it via the normal
+ * delete flow.
+ *
+ * force-dynamic ensures the session list is always fresh, not served from a
+ * Next.js route cache that might not reflect a recently revoked session.
+ */
+
 import { NextResponse } from 'next/server'
 import { requireAuth } from '@/lib/dal'
 import { getDb } from '@/lib/db/index'

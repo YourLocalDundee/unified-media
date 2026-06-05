@@ -1,3 +1,9 @@
+/**
+ * /history — paginated watch history for the currently logged-in user.
+ * Fetches from /api/auth/history (unified-frontend's own endpoint backed by
+ * the watch_events SQLite table). Pure client component — no server-side data
+ * fetch; the page content is session-scoped so there is no benefit to SSR here.
+ */
 'use client'
 
 import { useState, useEffect } from 'react'
@@ -12,6 +18,7 @@ interface WatchEvent {
 
 interface HistoryResponse { events: WatchEvent[]; total: number; page: number; pages: number }
 
+// started_at is stored as Unix epoch milliseconds in the watch_events table
 function fmtDate(ts: number) {
   const d = new Date(ts)
   const today = new Date()
@@ -36,12 +43,15 @@ export default function HistoryPage() {
   useEffect(() => {
     setLoading(true)
     const qs = new URLSearchParams({ page: String(page), filter })
+    // Resetting `page` to 1 when filter changes is handled at the call sites
+    // below (filter button onClick), not here, to avoid a double-fetch.
     fetch(`/api/auth/history?${qs}`)
       .then(r => r.json())
       .then(d => setData(d as HistoryResponse))
       .finally(() => setLoading(false))
   }, [page, filter])
 
+  // Only summarizes the current page — not the user's all-time total
   const totalWatchTime = data?.events.reduce((s, e) => s + (e.watched_sec ?? 0), 0) ?? 0
 
   return (

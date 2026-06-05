@@ -1,3 +1,8 @@
+// TypeScript interfaces for the Radarr v3 REST API.
+// All field names match Radarr's JSON exactly.
+// Radarr runs with network_mode: host — must be reached via 192.168.0.50:7878.
+// Auth is a static X-Api-Key header.
+
 export interface RadarrQuality {
   id: number
   name: string
@@ -148,6 +153,9 @@ export interface RadarrQueueResponse {
   records: RadarrQueueItem[]
 }
 
+// Used by POST /api/v3/movie. tmdbId is the canonical lookup key for Radarr.
+// minimumAvailability controls when Radarr considers a movie eligible to grab.
+// addOptions.searchForMovie triggers an immediate search after adding.
 export interface RadarrAddMovieParams {
   title: string
   qualityProfileId: number

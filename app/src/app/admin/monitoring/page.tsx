@@ -1,3 +1,6 @@
+// Admin user monitoring dashboard — fetches the full user roster with per-user
+// activity aggregates (watch count, active sessions, last IP) and provides
+// client-side search and status filtering without a round-trip per filter change.
 'use client'
 
 import { useState, useEffect } from 'react'
@@ -31,6 +34,8 @@ export default function MonitoringPage() {
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState<'all' | 'active' | 'suspended'>('all')
 
+  // Fetch once on mount — the full list is small enough that client-side
+  // filtering is faster than a new request per filter change.
   useEffect(() => {
     setLoading(true)
     fetch('/api/admin/monitoring')

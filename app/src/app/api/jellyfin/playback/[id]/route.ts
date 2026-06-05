@@ -1,3 +1,7 @@
+// Playback data endpoint for the VideoPlayer component.
+// Delegates to getPlaybackData() in lib/jellyfin/playback.ts which resolves the
+// stream URL, builds quality tiers, extracts chapters, and handles both direct-play
+// and HLS transcode paths. The VideoPlayer calls this once on mount.
 import { NextRequest, NextResponse } from 'next/server'
 import { getPlaybackData } from '@/lib/jellyfin/playback'
 

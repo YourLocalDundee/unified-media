@@ -231,6 +231,7 @@ export default function VideoPlayer(props: PlaybackData) {
     const remaining = video && video.duration > 0
       ? (video.duration - (video.currentTime ?? 0)) / video.duration
       : 1
+    // Mark as played when within the last 5% — avoids requiring the credits to finish.
     fetch(progressApiUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -242,6 +243,7 @@ export default function VideoPlayer(props: PlaybackData) {
     setCurrentQuality(quality)
     setActiveStreamUrl(quality.streamUrl)
     setActiveIsHls(quality.isHls)
+    // Incrementing retryCount triggers the HLS init effect to re-run with the new stream URL.
     setRetryCount((c) => c + 1)
   }, [])
 
@@ -259,6 +261,10 @@ export default function VideoPlayer(props: PlaybackData) {
   // Load video
   // ---------------------------------------------------------------------------
 
+  // activeStreamUrl and retryCount are the two triggers. retryCount bumps force a full
+  // HLS reinitialisation when the quality changes without the URL changing (e.g. same HLS
+  // manifest with different level). The `destroyed` flag guards against setState after
+  // the async dynamic import resolves post-unmount.
   useEffect(() => {
     let destroyed = false
 

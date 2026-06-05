@@ -1,6 +1,6 @@
 # unified-frontend
 
-A single-pane-of-glass web app for the minime home server media stack. Replaces the multi-tab workflow
+A single-pane-of-glass web app for the minime home server media stack (v0.9.2). Replaces the multi-tab workflow
 (Jellyfin + Seerr + qBittorrent) with one unified interface for browsing, requesting, watching, and
 monitoring downloads.
 
@@ -10,7 +10,7 @@ monitoring downloads.
 
 ### What this is
 
-A Next.js 14+ web app that acts as a **UX aggregation layer** on top of three existing services:
+A Next.js 16+ web app that acts as a **UX aggregation layer** on top of three existing services:
 
 - **Jellyfin** — browse the local media library, play content
 - **Seerr** — search TMDB, create requests for new movies/shows, check request status
@@ -87,7 +87,7 @@ Key components:
 | File | Purpose |
 |---|---|
 | `src/lib/db/index.ts` | Singleton DB, runs migrations + seed on first call |
-| `src/lib/db/migrations.ts` | Schema for users, sessions, invite_codes, audit_log, watch_events, login_attempts, pending_registrations |
+| `src/lib/db/migrations.ts` | Schema for all 21 tables: `users`, `sessions`, `invite_codes`, `audit_log`, `watch_events`, `login_attempts`, `password_resets`, `pending_registrations`, `indexers`, `quality_profiles`, `quality_tiers`, `custom_formats`, `quality_profile_formats`, `monitored_items`, `grab_history`, `grab_results`, `subtitle_wants`, `media_requests`, `app_settings`, `media_items`, `media_watch_state` |
 | `src/lib/db/seed.ts` | Seeds admin account from `ADMIN_USERNAME` + `ADMIN_PASSWORD` env vars on first run |
 | `src/lib/dal.ts` | `requireAuth()` / `requireAdmin()` / `createSession()` / `logEvent()` — server-only |
 | `src/lib/password.ts` | `validatePassword()`, `hashPassword()`, `verifyPassword()` |
@@ -103,20 +103,28 @@ as a security gate.
 **Session model:** 30-day TTL cookie `unified-session` (`HttpOnly`, `Secure`, `SameSite=lax`),
 24h rotation, 90-day absolute max. ID is 32-char cryptographically random string.
 
-**Registration (two-step, v0.5.3+):** Open enrollment with email verification. Rate-limited to 10 attempts per 15 minutes per IP.
+**Registration (two-step, v0.5.3+):** Open enrollment, email verification optional (controlled by `EMAIL_VERIFICATION_REQUIRED` env var, default false). Rate-limited to 10 attempts per 15 minutes per IP.
 
-1. `POST /api/auth/register` validates all fields (username, email, password, and demographics: first_name, last_name, location, bio). On success it creates a `pending_registrations` DB record containing a 6-digit code with a 10-minute TTL and sends the code via `src/lib/email.ts`. It returns `{ pendingId }` — no user or session is created yet.
+When `EMAIL_VERIFICATION_REQUIRED` is not set (default):
+
+1. `POST /api/auth/register` validates all fields, creates the user account and session immediately, and returns `{ username, role }`. No pending row is created.
+
+When `EMAIL_VERIFICATION_REQUIRED=true`:
+
+1. `POST /api/auth/register` validates all fields. On success it creates a `pending_registrations` DB record containing a 6-digit code with a 10-minute TTL and sends the code via `src/lib/email.ts`. It returns `{ pendingId }` — no user or session is created yet.
 2. `POST /api/auth/verify-email` accepts `{ pendingId, code }`. On correct code it creates the user + session. Maximum 5 incorrect attempts before the pending record is deleted. Code expires after 10 minutes regardless.
 
-The register page UI is two-step: Step 1 collects account info and demographics; Step 2 shows the 6-digit code entry form.
+The register page UI is two-step: Step 1 collects account info and demographics; Step 2 shows the 6-digit code entry form (Step 2 is skipped when `EMAIL_VERIFICATION_REQUIRED` is false).
 
 The `/admin/invites` system still exists for admin use but is no longer enforced at registration. The `/invite/{code}` route still functions for direct links.
 
 **Demographics fields (v0.5.3+):** The `users` table has four optional profile columns: `first_name`, `last_name`, `bio`, `location`. These are collected at registration (Step 1 of the two-step flow; bio and location are optional) and editable post-registration via `PATCH /api/auth/profile/demographics` on the `/settings/profile` "About Me" section.
 
 **Admin seeding:** On first `getDb()` call with an empty users table, `seedAdmin()` reads
-`ADMIN_USERNAME` and `ADMIN_PASSWORD` from env and creates the admin account. If either is missing,
-the process exits with an error — do not start the container without these set.
+`ADMIN_USERNAME` and `ADMIN_PASSWORD` from env. If `ADMIN_PASSWORD` is absent or fails the password
+policy, a random password is auto-generated, printed to stderr (`docker logs unified-frontend`), and
+`force_pw_change=1` is set so the admin must change it on first login. The container starts
+regardless — it does not exit. `ADMIN_USERNAME` defaults to `admin` if unset.
 
 ### Deployment
 
@@ -137,6 +145,7 @@ Dockerfile inside `app/`. Add a Caddy route at `http://media.minijoe.dev` using 
   `SEERR_API_KEY` to the unified-frontend container.
 - **Session auth alternative:** Seerr also accepts `req.session.userId` from cookie-based sessions,
   but API key is simpler for server-to-server calls.
+- **Note:** The `/api/seerr/[...path]` proxy route was removed in Phase 7. The native request system (`/api/requests/`) now handles all request operations. Seerr is still used for TMDB metadata and discovery, but request creation and management go through the native layer.
 
 Key API operations:
 
@@ -192,10 +201,11 @@ The app needs a server-level Jellyfin userId (from the API token's associated us
 - **API base:** `http://qbittorrent:8080/api/v2`
 - **Auth:** Cookie-based session. Must POST to `/auth/login` with `username` and `password`
   (`application/x-www-form-urlencoded`) and persist the `SID` cookie for subsequent requests.
-  Store credentials as `QBT_USERNAME` and `QBT_PASSWORD` env vars.
+  Store credentials as `UMT_USERNAME` and `UMT_PASSWORD` env vars (the UMT abstraction layer reads these).
 - **CORS / proxy requirement:** All qBittorrent calls must go through Next.js API routes
   (`/api/qbt/...`). The session cookie (`SID`) is held server-side. Never expose qBt credentials
   or cookies to the browser.
+- **UMT:** The unified-frontend client abstraction for this service is called **UMT (Unified Media Torrent)** and is configured via `UMT_URL`, `UMT_USERNAME`, `UMT_PASSWORD` env vars.
 
 Key API operations:
 
@@ -216,7 +226,7 @@ The `QbitTorrent` object includes: `hash`, `name`, `state`, `progress` (0–1), 
 
 ### Sonarr
 
-- **Internal URL:** `http://192.168.0.50:8989` (host network container — use host IP, not container name)
+- **Internal URL:** `http://sonarr:8989` (bridge network — reachable by container name or `http://192.168.0.50:8989`)
 - **API:** REST; auth header `X-Api-Key: <SONARR_API_KEY>`
 - **Proxy route:** `/api/sonarr/[...path]`
 - **Env vars:** `SONARR_URL`, `SONARR_API_KEY`
@@ -224,7 +234,7 @@ The `QbitTorrent` object includes: `hash`, `name`, `state`, `progress` (0–1), 
 
 ### Radarr
 
-- **Internal URL:** `http://192.168.0.50:7878` (host network container — use host IP, not container name)
+- **Internal URL:** `http://radarr:7878` (bridge network — reachable by container name or `http://192.168.0.50:7878`)
 - **API:** REST; auth header `X-Api-Key: <RADARR_API_KEY>`
 - **Proxy route:** `/api/radarr/[...path]`
 - **Env vars:** `RADARR_URL`, `RADARR_API_KEY`
@@ -232,7 +242,7 @@ The `QbitTorrent` object includes: `hash`, `name`, `state`, `progress` (0–1), 
 
 ### Prowlarr
 
-- **Internal URL:** `http://192.168.0.50:9696` (host network container — use host IP, not container name)
+- **Internal URL:** `http://prowlarr:9696` (bridge network — reachable by container name or `http://192.168.0.50:9696`)
 - **API:** REST; auth header `X-Api-Key: <PROWLARR_API_KEY>`
 - **Proxy route:** `/api/prowlarr/[...path]`
 - **Env vars:** `PROWLARR_URL`, `PROWLARR_API_KEY`
@@ -240,7 +250,7 @@ The `QbitTorrent` object includes: `hash`, `name`, `state`, `progress` (0–1), 
 
 ### Bazarr
 
-- **Internal URL:** `http://192.168.0.50:6767` (host network container — use host IP, not container name)
+- **Internal URL:** `http://bazarr:6767` (bridge network — reachable by container name or `http://192.168.0.50:6767`)
 - **API:** REST; auth header `X-Api-Key: <BAZARR_API_KEY>`
 - **Proxy route:** `/api/bazarr/[...path]`
 - **Env vars:** `BAZARR_URL`, `BAZARR_API_KEY`
@@ -252,6 +262,7 @@ Client selection is abstracted behind `src/lib/download-client/`:
 
 | File | Status |
 |---|---|
+| `config.ts` | `getDownloadClientConfig()` — reads `DOWNLOAD_CLIENT` (default `umt`), `UMT_URL`, `UMT_USERNAME`, `UMT_PASSWORD` env vars; returns typed config object |
 | `registry.ts` | Selects active client from `DOWNLOAD_CLIENT` env var |
 | `qbittorrent.ts` | Fully implemented (primary client) |
 | `transmission.ts` | Stub — not yet implemented |
@@ -264,7 +275,7 @@ Client selection is abstracted behind `src/lib/download-client/`:
 
 | Concern | Choice | Reason |
 |---|---|---|
-| Framework | Next.js 14+ App Router (TypeScript) | Matches Seerr's stack; server components solve CORS and auth header forwarding cleanly |
+| Framework | Next.js 16+ App Router (TypeScript) | Matches Seerr's stack; server components solve CORS and auth header forwarding cleanly |
 | Styling | Tailwind CSS + shadcn/ui | Fast to build, accessible, no design system to maintain |
 | Server state | TanStack Query (React Query) | Caching, background refetch, loading/error states; ideal for live download queue polling |
 | Client state | Zustand | Lightweight; manages selected media item, player open/closed, sidebar state |
@@ -274,15 +285,15 @@ Client selection is abstracted behind `src/lib/download-client/`:
 | Package manager | npm (or pnpm) | Use pnpm if using pnpm workspaces; npm otherwise |
 | Linting | ESLint + Prettier | Standard Next.js config |
 
-### Key package versions (match Seerr where possible)
+### Key package versions (actual installed versions as of v0.9.1)
 
-- `next`: 15+ (App Router stable)
-- `react` / `react-dom`: 19+
-- `typescript`: 5.4+
-- `tailwindcss`: 3.4+
-- `@tanstack/react-query`: 5+
-- `zustand`: 5+
-- `@jellyfin/sdk`: latest unstable or stable release
+- `next`: `^16.2.7` (App Router stable)
+- `react` / `react-dom`: `^19.0.0`
+- `typescript`: `^6.0.3`
+- `tailwindcss`: `^4.3.0` (Tailwind v4 — no `tailwind.config.js`; uses `@tailwindcss/postcss` in PostCSS config)
+- `@tanstack/react-query`: `^5.100.14`
+- `zustand`: `^5.0.14`
+- `@jellyfin/sdk`: `^0.13.0`
 
 ---
 
@@ -315,8 +326,8 @@ app/
     api/
       jellyfin/[...path]/
         route.ts                # Proxy to Jellyfin (auth header injection)
-      seerr/[...path]/
-        route.ts                # Proxy to Seerr (API key injection)
+      requests/
+        route.ts                # Native request API (replaced /api/seerr/[...path] proxy — Phase 7)
       qbt/
         login/route.ts          # Manages SID cookie acquisition
         [...path]/route.ts      # Proxy to qBittorrent with SID cookie
@@ -336,12 +347,13 @@ app/
 - Download queue summary (qBt `GET /transfer/info` + active torrents count)
 - Auto-refreshes download summary every 10 seconds via React Query `refetchInterval`
 
-**`/browse` — Library browser**
-- Library selector (Movies / TV Shows / Music) from Jellyfin user views
-- Grid of poster cards with title, year, duration
-- Filter by genre, sort by name/date/rating
-- Infinite scroll or paginated `GET /Users/<id>/Items`
-- Search box that routes to `/search`
+**`/browse` — Discover + Library browser (v0.8.0+)**
+- Defaults to **discover mode**: TMDB trending/popular/genre content cross-referenced against local library
+- Type tabs: ✦ Browse (discover) · Library · Movies · TV Shows
+- Discover mode: TMDB trending categories + genre filter pills; shows Quick/Long-term request buttons per card
+- Library mode: paginated grid of locally owned content; filter by year/sort
+- `RequestOptions` component handles per-card request UI — two buttons for old content, one for new
+- `/browse/discover/[mediaType]/[tmdbId]` — full detail page for TMDB items not yet in library
 
 **`/browse/[id]` — Media detail**
 - Jellyfin item detail: poster, backdrop, synopsis, metadata
@@ -401,7 +413,7 @@ Goal: App runs in Docker, is reachable at `media.minijoe.dev`, and auth headers 
 - Add `unified-frontend` service to `/opt/docker/compose/docker-compose.yml`
   - Image: built from `app/Dockerfile`
   - Port: `3000` (internal only)
-  - Env: `SEERR_API_KEY`, `JELLYFIN_API_KEY`, `QBT_USERNAME`, `QBT_PASSWORD`
+  - Env: `SEERR_API_KEY`, `JELLYFIN_API_KEY`, `UMT_USERNAME`, `UMT_PASSWORD`
   - Volumes: none required for production
 - Add Caddy route for `http://media.minijoe.dev` — simple `reverse_proxy unified-frontend:3001`, no `forward_auth`
 - Root layout uses `AuthContext` / `requireAuth()` for auth, not Authentik headers
@@ -418,7 +430,7 @@ Goal: Browse the full media library, view detail pages, play content.
 - `/browse`: library grid with poster images via `/Items/<id>/Images/Primary`
 - `/browse/[id]`: detail page with metadata and embedded `<video>` tag pointing to Jellyfin stream URL
 - `GET /Users/<id>/Items/Resume` for continue watching on home page
-- Image proxy: create `app/api/jellyfin-image/[itemId]/route.ts` to serve images with auth
+- Image proxy: `app/api/jellyfin/image/[itemId]/route.ts` — serves images with auth header injection
   (avoids embedding API tokens in `<img src>`)
 
 Acceptance: Can browse Movies library, open a detail page, and play a file.
@@ -465,10 +477,20 @@ Goal: Everything feels like one product, not three duct-taped together.
 
 ### qBittorrent session auth
 
-qBittorrent's Web API uses cookie-based sessions, not API keys. The `SID` cookie must be obtained
-by POSTing credentials to `/api/v2/auth/login`. All subsequent requests must include the
-`Cookie: SID=<value>` header. This entire flow must stay server-side in Next.js API routes.
+**The UMT (Unified Media Torrent) layer connects to a qBittorrent backend.**
+
+qBittorrent's Web API uses cookie-based sessions, not API keys. The session cookie must be obtained
+by POSTing credentials to `/api/v2/auth/login`. All subsequent requests must include the cookie as
+`Cookie: <NAME>=<value>`. This entire flow must stay server-side in Next.js API routes.
 On a 403 response, re-authenticate and retry once.
+
+**v5 differences (v5.2.1 running):**
+- Login returns HTTP `204` (No Content) on success instead of `200` with body `"Ok."`. The code
+  checks `res.ok` (true for any 2xx), so both versions are handled transparently.
+- The session cookie name changed from `SID` to `QBT_SID_{port}` (e.g. `QBT_SID_8080`). Both
+  `session.ts` and `download-client/qbittorrent.ts` use the regex
+  `/((?:QBT_SID_\d+|SID)=[^;]+)/` to capture the full `NAME=VALUE` pair from `Set-Cookie` and
+  pass it directly as the `Cookie` header value, so v4 and v5 are handled by the same code path.
 
 ### Jellyfin network_mode: host
 
@@ -488,22 +510,25 @@ stream through a Next.js route handler, but this adds latency on the server.
 `unified.minijoe.dev` uses its own SQLite-backed session system. Authentik is not in the request
 path. `X-Authentik-*` headers are no longer read anywhere in the app.
 
-**Critical:** Do not start the container without `ADMIN_USERNAME`, `ADMIN_PASSWORD`, and `DB_PATH`
-set in the environment. The first call to `getDb()` will `process.exit(1)` if the users table is
-empty and these vars are absent.
+**Note:** If `ADMIN_PASSWORD` is missing or fails the password policy, a secure random password is
+auto-generated and printed to stderr — check `docker logs unified-frontend` after first start if
+you didn't set it. The admin is forced to change it on first login. Set `ADMIN_PASSWORD` in
+`.env.local` before the first run to use your own password.
 
 **Docker volume:** The SQLite DB lives at `/data/unified.db` inside the container. The compose
 file mounts the named volume `unified-db:/data`. Never delete this volume without a backup.
 
-### Middleware file naming
+### Proxy file naming (Next.js 16)
 
-Next.js middleware must be in `src/middleware.ts` (for src-dir projects) and must `export function middleware(...)`. Any other filename (e.g. `src/proxy.ts`) or export name is silently ignored — Next.js will not register the middleware and the manifest will be empty. After correcting the name and export and rebuilding, the manifest shows the middleware registered at `/`.
+Next.js 16 deprecated the `middleware` file convention in favour of `proxy`. The UX redirect guard lives at `src/proxy.ts` and exports `export function proxy(...)`. In Next.js 16 the file must be named `proxy.ts` and the export must be `proxy` — using the old `middleware.ts` / `export function middleware` names causes silent registration failure (Next.js ignores them). Registered as `ƒ Proxy` in the build manifest.
+
+This is a UX-only redirect guard — not a security boundary. All auth enforcement happens inside server components and route handlers via `requireAuth()` / `requireAdmin()`.
 
 ### Stale session cookie loop
 
 `getSession()` in `src/lib/dal.ts` must delete the session cookie before returning null when it finds no matching DB row. If the cookie is left in place on a stale/expired session, the result is an infinite redirect: unauthenticated route → `requireAuth` fails → redirect `/login` → middleware sees cookie → redirect `/` → repeat. The fix is to call `cookieStore.delete(SESSION_COOKIE)` before every `return null` path where a stale cookie was detected.
 
-### Next.js 15: cookie mutations throw in Server Component context
+### Next.js 16: cookie mutations throw in Server Component context
 
 `cookies().set()` and `cookies().delete()` (from `next/headers`) throw `"Cookies can only be modified in a Server Action or Route Handler"` when called during a Server Component render. `getSession()` is invoked from Server Components via `requireAuth()`, so any cookie mutation inside it (session deletion on expiry, 24h rotation set) must be wrapped in `try { ... } catch { /* server component context — no-op */ }`. In Route Handler context the mutations succeed as before. Without this guard, users with expired sessions or sessions past the 24h rotation window get a 500 on every page load: middleware passes them through (cookie present), the page calls `requireAuth()` → `getSession()`, and the bare `cookieStore.delete()` / `cookieStore.set()` throws. All three cookie mutation sites in `src/lib/dal.ts` are already wrapped.
 
@@ -513,6 +538,7 @@ Email verification on registration uses `src/lib/email.ts` (nodemailer). The fol
 
 | Variable | Purpose | Default |
 |---|---|---|
+| `EMAIL_VERIFICATION_REQUIRED` | Set to `'true'` to require email code verification at signup; when `false` (default), accounts are activated immediately on signup | `false` |
 | `SMTP_HOST` | SMTP server hostname (e.g. `smtp.gmail.com`) | — |
 | `SMTP_PORT` | SMTP port | `587` |
 | `SMTP_USER` | SMTP username / email | — |
@@ -521,17 +547,25 @@ Email verification on registration uses `src/lib/email.ts` (nodemailer). The fol
 
 **Dev fallback:** If any of `SMTP_HOST`, `SMTP_USER`, or `SMTP_PASS` are not set, `email.ts` does not attempt a real send. The 6-digit verification code is printed to stdout instead, visible via `docker logs unified-frontend`. This is safe in a dev/LAN context where email delivery is not required.
 
-### BunkerWeb WAF / ModSecurity CRS
+### BunkerWeb WAF
 
-BunkerWeb runs ModSecurity CRS in front of Caddy. Avoid:
+BunkerWeb runs in front of Caddy with global ModSecurity CRS + CrowdSec enabled. Several WAF
+features are disabled specifically for `unified.minijoe.dev` via per-domain env vars in
+`/opt/docker/compose/edge/docker-compose.yml`:
 
-- Large JSON responses containing patterns that match SQLi/XSS rules (unlikely with media data)
-- Inline `<script>` tags containing dynamic content in server-rendered HTML
-- Query strings with characters like `<`, `>`, `'` unencoded — always encode search terms
-- Excessively large request bodies on API routes; set explicit `Content-Type` headers
+| Setting | Value | Reason |
+|---|---|---|
+| `unified.minijoe.dev_USE_BAD_BEHAVIOR` | `no` | Next.js RSC prefetch requests (`?_rsc=...`) accumulate score too fast under the default threshold (10 hits / 60s), causing false bans for normal users. |
+| `unified.minijoe.dev_USE_CROWDSEC` | `no` | CrowdSec threat-intel feeds flag VPN and cloud IPs as malicious, blocking first-time external visitors before they reach the app. |
+| `unified.minijoe.dev_USE_DNSBL` | `no` | Same reason as CrowdSec — DNSBL feeds include legitimate IPs that appear in shared-IP threat lists. |
+| `unified.minijoe.dev_USE_MODSECURITY` | `no` | ModSecurity CRS triggers on password fields in registration POST bodies. The app validates and sanitises all inputs itself. |
+| `unified.minijoe.dev_USE_BLACKLIST` | `no` | The IP reputation blocklist (downloads Emerging Threats, firehol, and similar feeds) routinely includes cellular carrier NAT pool ranges. Fresh IPs on those ranges received 403 before they could register — 2472 IPs were blocked from the feeds at the time of discovery. |
 
-If a legitimate request is blocked, check BunkerWeb logs and add a CRS exclusion rule rather
-than disabling WAF rules globally.
+Rate limiting remains active (it is not one of the disabled features). Global ModSecurity and
+CrowdSec still apply to all other domains.
+
+If a legitimate request is blocked on a different domain, check BunkerWeb logs and add a CRS
+exclusion rule rather than disabling WAF rules globally.
 
 ### Pi-hole wildcard DNS
 
@@ -556,9 +590,9 @@ Summary of internal addresses:
 | Radarr | `http://radarr:7878` |
 | Authentik | `http://authentik-server:9000` |
 
-### *arr services network_mode: host
+### *arr services network
 
-All *arr services (Sonarr, Radarr, Prowlarr, Bazarr) run with `network_mode: host` — use the host IP `192.168.0.50`, not container names. Transmission and Deluge download clients exist as stubs in `src/lib/download-client/` but are not yet implemented.
+All *arr services (Sonarr, Radarr, Prowlarr, Bazarr) run on the `compose_default` bridge network with port bindings to `192.168.0.50`. They are reachable by both container name (e.g. `http://sonarr:8989`) and host IP (e.g. `http://192.168.0.50:8989`). The `.env.local` file uses host IPs — either form works. Transmission and Deluge download clients exist as stubs in `src/lib/download-client/` but are not yet implemented.
 
 ### Seerr API key auth
 
@@ -592,12 +626,12 @@ JELLYFIN_USER_ID=<Jellyfin user UUID>
 SEERR_URL=http://192.168.0.50:5055
 SEERR_API_KEY=<from /opt/docker/configs/seerr/settings.json>
 
-# qBittorrent
-QBIT_URL=http://192.168.0.50:8080
-QBIT_USERNAME=<qbt username>
-QBIT_PASSWORD=<qbt password>
+# UMT (Unified Media Torrent) — connects to qBittorrent backend
+UMT_URL=http://192.168.0.50:8080
+UMT_USERNAME=<umt username>
+UMT_PASSWORD=<umt password>
 
-# *arr services (host network — must use IP, not container name)
+# *arr services (bridge network — host IPs used in dev; container names work in production)
 SONARR_URL=http://192.168.0.50:8989
 SONARR_API_KEY=<from Sonarr Settings → General>
 RADARR_URL=http://192.168.0.50:7878
@@ -621,6 +655,8 @@ SMTP_PORT=587
 SMTP_USER=
 SMTP_PASS=
 SMTP_FROM=
+# Email verification — set to 'true' to require email code at signup; default is false (instant activation)
+EMAIL_VERIFICATION_REQUIRED=
 ```
 
 In production (Docker), use container-name URLs (except Jellyfin — use host IP), set
@@ -645,7 +681,7 @@ docker build -t unified-frontend:latest .
 Multi-stage Dockerfile pattern for Next.js standalone output:
 
 ```dockerfile
-FROM node:22-slim AS builder
+FROM node:24-slim AS builder
 WORKDIR /app
 # build tools needed for better-sqlite3 native compilation
 RUN apt-get update && apt-get install -y --no-install-recommends python3 make g++ && rm -rf /var/lib/apt/lists/*
@@ -654,7 +690,7 @@ RUN npm ci
 COPY . .
 RUN npm run build
 
-FROM node:22-slim AS runner
+FROM node:24-slim AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 RUN groupadd --system --gid 1001 nodejs && \
@@ -671,7 +707,7 @@ ENV HOSTNAME="0.0.0.0"
 CMD ["node", "server.js"]
 ```
 
-**Note:** Use `node:22-slim` (Debian), NOT Alpine. `better-sqlite3` downloads a glibc-linked
+**Note:** Use `node:24-slim` (Debian), NOT Alpine. `better-sqlite3` downloads a glibc-linked
 prebuilt binary that does not work on Alpine (musl). The build stage needs `python3 make g++` so
 `npm ci` compiles it from source.
 
@@ -690,9 +726,9 @@ Set `output: 'standalone'` in `next.config.ts`.
       - SEERR_API_KEY=${UNIFIED_SEERR_API_KEY}
       - JELLYFIN_URL=http://192.168.0.50:8096
       - JELLYFIN_API_KEY=${UNIFIED_JELLYFIN_API_KEY}
-      - QBT_URL=http://qbittorrent:8080
-      - QBT_USERNAME=${UNIFIED_QBT_USERNAME}
-      - QBT_PASSWORD=${UNIFIED_QBT_PASSWORD}
+      - UMT_URL=http://qbittorrent:8080
+      - UMT_USERNAME=${UNIFIED_UMT_USERNAME}
+      - UMT_PASSWORD=${UNIFIED_UMT_PASSWORD}
     ports:
       - "192.168.0.50:3000:3000"
     labels:
@@ -756,6 +792,7 @@ All player tool components live in `src/components/player/`. They are composed i
 | `MediaSnapshot` | `snapshot()` | Canvas → PNG download |
 | `MediaToolsPanel` | Extended panels dialog | 4-tab overlay (Playback / Video / Audio / Info) |
 | `MediaQualitySelector` | — | Gear dropdown in controls bar; hidden when only 1 quality available |
+| `MediaTransform` | — | Rotation (0/90/180/270°), horizontal/vertical flip, zoom presets, 3×3 alignment grid; emits CSS transform + alignment strings to VideoPlayer via callbacks; persists to localStorage |
 
 ### Web Audio chain constraint
 
@@ -1003,7 +1040,7 @@ TypeScript services inside this monorepo replacing external *arr stack + Jellyfi
 
 ### Admin nav
 
-Overview → User Monitoring → User Management → Invites → Requests → Watch Activity → Audit Log → Server Status → **Indexers** → **Automation** → **Request Bridge** → **Subtitles** → **Media Server**
+Overview → User Monitoring → User Management → Invites → Requests → Watch Activity → Audit Log → Server Status → **Indexers** → **Automation** → **Request Bridge** → **Subtitles** → **Media Server** → **Quality Profiles** → **Settings**
 
 ### Independence build env vars
 
@@ -1021,3 +1058,57 @@ Overview → User Monitoring → User Management → Invites → Requests → Wa
 ### Seerr webhook (Phase 3)
 
 Configure Seerr → Settings → Notifications → Webhook → URL: `https://unified.minijoe.dev/api/seerr/webhook`. Enable `Request Approved` + `Media Available`. Set secret in both Seerr and `SEERR_WEBHOOK_SECRET` env var.
+
+`/api/seerr/webhook` is implemented and receives `MEDIA_APPROVED`, `REQUEST_APPROVED`, and `MEDIA_AVAILABLE` events.
+
+---
+
+## 15. Two-Mode Request System (v0.9.0+)
+
+Every media request is either **Quick** or **Long-term**. The mode is stored in `media_requests.request_type`.
+
+### Quick requests
+
+- Only available for content released before the current calendar year (`year < currentYear`)
+- Auto-approved immediately on creation — no admin action required
+- Added to `monitored_items` automatically (triggers the grab loop)
+- Slot-limited: **1 active movie** or **2 active TV shows** per user at once (status `approved` or `available`)
+- Once the media becomes available in the library, `auto_delete_at` is set to 48 hours from now
+- The hourly auto-delete cron removes the media files and marks the request `expired`, freeing the slot
+- If the Quick slot limit is full when the request is submitted, the request row is deleted and the API returns `429`
+
+### Long-term requests
+
+- Available for any content (old or new)
+- Require manual admin approval — status stays `pending` until an admin approves or declines
+- Never auto-deleted — content stays until the admin or user explicitly deletes the request
+- No slot limit
+
+### UI
+
+The `RequestOptions` component at `src/components/media/RequestOptions.tsx` handles the user-facing choice:
+- **Old content** (year < currentYear): shows two buttons — "Quick (48h)" and "Long-term"
+- **New content** (current year or future): shows a single "Request" button (Long-term only)
+- Shows the appropriate status badge with a type label ("Quick (48h auto-delete)" / "Long-term") for already-requested items
+
+### Key files
+
+| File | Role |
+|---|---|
+| `src/lib/requests/types.ts` | `RequestType = 'quick' \| 'longterm'`; `NativeRequest` interface |
+| `src/lib/requests/auto-approve.ts` | `tryAutoApprove()` — gates on `request_type === 'quick'` AND `request_method === 'auto-pick'`, year check, slot check |
+| `src/lib/automation/availability.ts` | Sets `auto_delete_at` only for quick requests when they become available |
+| `src/lib/automation/auto-delete.ts` | Hourly cron: deletes media files + marks expired when `auto_delete_at <= now` |
+| `src/app/api/requests/route.ts` | POST accepts `requestType`; returns 429 for failed quick requests |
+| `src/components/media/RequestOptions.tsx` | Two-button or single-button request UI |
+
+**`request_method` gate:** `tryAutoApprove()` returns false for any request where `request_method !== 'auto-pick'`. A quick request submitted via `TorrentPickModal` (where the user hand-selected a specific release) has `request_method = 'interactive'` and is NOT auto-approved — it goes to the admin queue regardless of year, slot availability, or any other condition. Only system-selected (`auto-pick`) quick requests are auto-approved.
+
+### Slot limits
+
+| Media type | Max concurrent quick slots |
+|---|---|
+| Movie | 1 |
+| TV show | 2 |
+
+Counted as: requests with `request_type = 'quick'` AND `status IN ('approved', 'available')` for the user.

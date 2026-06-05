@@ -6,6 +6,8 @@ const ALLOWED_ORIGINS = [
 
 export function verifyOrigin(request: Request): boolean {
   const origin = request.headers.get('origin')
-  if (!origin) return true // server-to-server, no origin header
+  // Browsers always send Origin on cross-origin requests; its absence means a same-origin or
+  // server-to-server call, both of which are safe to allow.
+  if (!origin) return true
   return ALLOWED_ORIGINS.some(o => origin === o || origin.startsWith(o))
 }

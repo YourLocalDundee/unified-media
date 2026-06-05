@@ -1,5 +1,10 @@
 'use client'
 
+// Client-side React hooks for qBittorrent.
+// These hit the Next.js API proxy routes (/api/qbit/...) — never the qBit daemon
+// directly. The browser never sees credentials or the SID cookie.
+// useMainData is the primary hook: it polls /api/qbit/sync/maindata every 2s
+// and maintains an in-memory torrent map that is patched via incremental deltas.
 import { useState, useEffect, useRef, useCallback } from 'react'
 import type { MainData, Torrent, TransferInfo } from './types'
 
@@ -18,7 +23,10 @@ export function useMainData(): {
   const [transferInfo, setTransferInfo] = useState<TransferInfo | null>(null)
   const [isConnected, setIsConnected] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // ridRef persists across renders without causing re-renders; it is not state.
+  // rid=0 tells the server to return a full_update (the initial snapshot).
   const ridRef = useRef(0)
+  // torrentMapRef is mutated in place; Object.values() produces the array for React state.
   const torrentMapRef = useRef<Record<string, Torrent>>({})
   // Increment to trigger an immediate re-poll on demand
   const [retryCount, setRetryCount] = useState(0)
@@ -29,13 +37,14 @@ export function useMainData(): {
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const data: MainData = await res.json()
 
+      // Thread the rid back on the next request so the server returns only the delta.
       ridRef.current = data.rid
 
       if (data.full_update) {
-        // Full replace
+        // Server signalled a full replace (first poll, or server restart).
         torrentMapRef.current = (data.torrents ?? {}) as Record<string, Torrent>
       } else {
-        // Merge delta
+        // Merge delta — only the changed fields are present in each partial entry.
         if (data.torrents) {
           for (const [hash, partial] of Object.entries(data.torrents)) {
             torrentMapRef.current[hash] = {
@@ -65,7 +74,9 @@ export function useMainData(): {
     } catch (e) {
       setIsConnected(false)
       setError(String(e))
-      ridRef.current = 0 // reset for full re-sync on recovery
+      // Reset rid so the next successful poll triggers a full_update and
+      // rebuilds the torrent map from scratch rather than applying a delta.
+      ridRef.current = 0
     }
   }, [])
 
@@ -91,6 +102,10 @@ export function useMainData(): {
 // Generic action hook
 // ---------------------------------------------------------------------------
 
+// Reusable primitive for fire-and-forget torrent actions.
+// Posts to the Next.js proxy route; the proxy forwards to qBit with the SID.
+// isPending can drive loading spinners; errors are currently not surfaced to the
+// caller — the next useMainData poll will reflect the actual state instead.
 function useTorrentAction(endpoint: string) {
   const [isPending, setIsPending] = useState(false)
 

@@ -1,3 +1,8 @@
+// GET /api/admin/users/[id]/monitoring
+// Returns the full per-user monitoring payload used by the five-tab admin detail page.
+// All queries are separate to keep each result set independently capped (sessions: 50,
+// watches: 100, audit: 100, logins: 50) without a giant JOIN.
+
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAdmin } from '@/lib/dal'
 import { getDb } from '@/lib/db/index'
@@ -37,6 +42,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     ORDER BY created_at DESC LIMIT 100
   `).all(id)
 
+  // login_attempts is keyed by username (not user_id) so we join via subquery.
   const loginAttempts = db.prepare(`
     SELECT ip_address, username, success, created_at
     FROM login_attempts

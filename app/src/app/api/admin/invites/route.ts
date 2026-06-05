@@ -1,3 +1,9 @@
+// GET + POST /api/admin/invites
+// GET returns all invite codes (used and active).
+// POST generates a new cryptographically random invite code and stores it.
+// Registration no longer requires an invite (v0.5.3+), but these codes still work
+// for the /invite/[code] route which skips email verification.
+
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAdmin, logEvent } from '@/lib/dal'
 import { getDb } from '@/lib/db/index'
@@ -5,6 +11,7 @@ import { getDb } from '@/lib/db/index'
 const UPPER = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
 function generateCode(): string {
   const array = new Uint8Array(12)
+  // Uniform distribution over the 36-char alphabet via modulo; bias is negligible at this entropy level.
   crypto.getRandomValues(array)
   let code = ''
   for (const b of array) code += UPPER[b % UPPER.length]

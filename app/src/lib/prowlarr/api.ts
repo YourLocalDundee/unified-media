@@ -1,3 +1,6 @@
+// Typed Prowlarr API helpers. All functions run server-side.
+// getIndexerStats accepts optional ISO date strings for windowed reporting;
+// omitting both returns all-time stats.
 import { prowlarrFetch } from './client'
 import type {
   ProwlarrIndexer,

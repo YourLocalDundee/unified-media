@@ -1,3 +1,5 @@
+// Global top header bar — shows the app logo, search shortcut, theme toggle,
+// and a user account dropdown with settings and sign-out links.
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
@@ -15,6 +17,8 @@ export function Header({ username }: HeaderProps) {
   const menuRef = useRef<HTMLDivElement>(null)
   const { logout } = useAuth()
 
+  // Close the dropdown when the user clicks outside the menu ref boundary.
+  // mousedown (not click) is used so it fires before the browser's focus event.
   useEffect(() => {
     function close(e: MouseEvent) {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false)

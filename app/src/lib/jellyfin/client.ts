@@ -1,6 +1,15 @@
+// Server-only Jellyfin HTTP client.
+// Jellyfin runs with network_mode: host, so it is not reachable by container
+// name. The host IP (192.168.0.50) must be used for all server-to-server calls.
+// Auth uses the X-Emby-Authorization (MediaBrowser) header format; Bearer-style
+// api_key query params are only used for stream URLs where <video src> prevents
+// custom headers. The API key is server-only — never exposed to the browser.
+
 export const JELLYFIN_URL = process.env.JELLYFIN_URL ?? 'http://192.168.0.50:8096'
 export const JELLYFIN_API_KEY = process.env.JELLYFIN_API_KEY ?? ''
 
+// Jellyfin requires this exact Authorization header format on every request.
+// Jellyfin uses it to identify the calling application and session in its logs.
 function authHeader(): string {
   return `MediaBrowser Client="unified-frontend", Device="server", DeviceId="unified-frontend-01", Version="0.1.0", Token="${JELLYFIN_API_KEY}"`
 }
@@ -35,6 +44,8 @@ export async function jellyfinFetch<T>(path: string, options?: RequestInit): Pro
   const fetchOptions: RequestInit = {
     ...options,
     headers,
+    // Cache GET responses for 60 s in Next.js's data cache so browsing the library
+    // doesn't hammer Jellyfin. Mutations (POST/PATCH) bypass the cache entirely.
     ...(isGet
       ? { next: { revalidate: 60 } as NextFetchRequestConfig }
       : {}),

@@ -146,7 +146,8 @@ export async function getNativePlaybackData(
     isHls: false,
   }
 
-  // Transcoded quality tiers (only below native height)
+  // Transcoded quality tiers (only below native height).
+  // nativeHeight === 0 means probe failed; skip the height guard so all tiers remain available.
   const qualityOptions: QualityOption[] = QUALITY_TIERS
     .filter((t) => nativeHeight === 0 || t.height < nativeHeight)
     .map((t) => {

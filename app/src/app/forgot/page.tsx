@@ -1,5 +1,15 @@
 'use client'
 
+/**
+ * Forgot-password page — collects an email address and calls
+ * POST /api/auth/forgot-password. The API always returns 200 regardless of
+ * whether the email is registered; this page mirrors that by showing the
+ * same success message either way to prevent user-enumeration attacks.
+ *
+ * No token or reset logic lives here. The reset flow continues on
+ * /reset-password after the user clicks the emailed link.
+ */
+
 import { useState } from 'react'
 import { Loader2, Mail, CheckCircle2 } from 'lucide-react'
 
@@ -18,7 +28,8 @@ export default function ForgotPasswordPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email }),
       })
-      // Always show success — never reveal whether email exists
+      // Always show success regardless of HTTP status — never reveal whether
+      // the email is registered. Network-level errors still surface below.
       setSent(true)
     } catch {
       setError('An unexpected error occurred. Please try again.')

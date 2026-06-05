@@ -1,3 +1,8 @@
+// Shared types for the qBittorrent Web API v2.
+// All interfaces match the JSON shapes returned by qBittorrent directly — no
+// field renaming — so API responses can be assigned without an adapter layer.
+// These are consumed by session.ts / api.ts (server-only) and hooks.ts (client).
+
 export type TorrentState =
   | 'error'
   | 'missingFiles'
@@ -83,6 +88,10 @@ export interface TransferInfo {
   free_space_on_disk?: number  // bytes free on the save path's disk
 }
 
+// Sync response from /api/v2/sync/maindata.
+// When full_update is true the caller should replace its local map entirely.
+// When false, only the keys present in `torrents` have changed — merge them.
+// The rid must be threaded back on the next call so the server returns only the delta.
 export interface MainData {
   rid: number
   full_update: boolean
@@ -109,6 +118,9 @@ export interface TorrentFile {
   availability: number
 }
 
+// Parameters for /api/v2/torrents/add. All fields are optional — omit any that
+// should keep the server's default. `paused` and `stopped` are different param
+// names for the same intent across qBit versions; send both when targeting v4/v5.
 export interface AddTorrentParams {
   urls?: string           // newline-separated magnet/HTTP URLs
   savepath?: string
@@ -125,6 +137,8 @@ export interface AddTorrentParams {
 // Helper functions
 // ---------------------------------------------------------------------------
 
+// stalledDL/UP are included as "active" because the peer connection still exists;
+// they just have no data moving at the moment.
 export function isTorrentActive(state: TorrentState): boolean {
   return [
     'downloading',
@@ -138,6 +152,8 @@ export function isTorrentActive(state: TorrentState): boolean {
   ].includes(state)
 }
 
+// Any UP-suffix state means the download is complete and the torrent is seeding
+// (or waiting to seed). checkingUP is included because the data is all present.
 export function isTorrentComplete(state: TorrentState): boolean {
   return [
     'uploading',

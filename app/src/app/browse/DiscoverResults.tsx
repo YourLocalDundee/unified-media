@@ -2,7 +2,8 @@
 
 import Image from 'next/image'
 import type { RequestStatus } from '@/lib/requests/types'
-import { RequestButton } from '@/components/media/RequestButton'
+import type { RequestType } from '@/lib/requests/types'
+import { RequestOptions } from '@/components/media/RequestOptions'
 
 export interface DiscoverItem {
   tmdbId: number
@@ -14,6 +15,7 @@ export interface DiscoverItem {
   overview: string
   libraryId: string | null
   requestStatus: RequestStatus | null
+  requestType: RequestType | null
 }
 
 interface Props {
@@ -103,21 +105,12 @@ export default function DiscoverResults({ items, query }: Props) {
                   <a
                     href={`/browse/${item.libraryId}`}
                     onClick={(e) => e.stopPropagation()}
-                    className="inline-flex items-center rounded-md px-2.5 py-1.5 text-xs font-medium bg-green-900/60 text-green-300 hover:bg-green-900/80 transition-colors"
+                    className="inline-flex items-center rounded px-2.5 py-1.5 text-xs font-medium bg-green-900/60 text-green-300 hover:bg-green-900/80 transition-colors"
                   >
                     Watch
                   </a>
-                ) : item.requestStatus && item.requestStatus !== 'declined' ? (
-                  <span className={
-                    item.requestStatus === 'pending' ? 'text-xs font-medium text-zinc-400' :
-                    item.requestStatus === 'approved' ? 'text-xs font-medium text-blue-400' :
-                    'text-xs font-medium text-green-400'
-                  }>
-                    {item.requestStatus === 'pending' ? 'Requested' :
-                     item.requestStatus === 'approved' ? 'Approved' : 'Available'}
-                  </span>
                 ) : (
-                  <RequestButton
+                  <RequestOptions
                     tmdbId={item.tmdbId}
                     mediaType={item.mediaType}
                     title={item.title}
@@ -125,6 +118,7 @@ export default function DiscoverResults({ items, query }: Props) {
                     posterPath={item.posterPath}
                     overview={item.overview ?? ''}
                     existingStatus={item.requestStatus ?? undefined}
+                    existingRequestType={item.requestType ?? undefined}
                     compact
                   />
                 )}

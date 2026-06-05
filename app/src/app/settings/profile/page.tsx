@@ -1,3 +1,10 @@
+/**
+ * /settings/profile — server component that loads the current user's profile
+ * data from the local SQLite DB and passes it to ProfileClient. Reading the DB
+ * directly here (rather than calling an API route) is acceptable because this
+ * is a server component running server-side with the same DB access as the
+ * route handlers. The client component handles all mutations via API routes.
+ */
 import type { Metadata } from 'next'
 import { requireAuth } from '@/lib/dal'
 import { getDb } from '@/lib/db/index'

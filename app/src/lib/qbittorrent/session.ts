@@ -1,23 +1,33 @@
+// Server-only qBittorrent session manager.
+// qBittorrent uses cookie-based auth (SID), not API keys. The SID must be
+// obtained by POSTing credentials and then sent as a Cookie header on every
+// subsequent request. This module caches the SID in a module-level variable so
+// the full login round-trip only happens once per 25-minute TTL window.
+// All functions here MUST stay server-side — never import from a client component.
+
 // This file runs only on the server (used only in API routes / server components)
 
-const QBIT_URL = process.env.QBIT_URL ?? 'http://qbittorrent:8080'
-const QBIT_USERNAME = process.env.QBIT_USERNAME ?? 'admin'
-const QBIT_PASSWORD = process.env.QBIT_PASSWORD ?? ''
+const UMT_URL = process.env.UMT_URL ?? 'http://qbittorrent:8080'
+const UMT_USERNAME = process.env.UMT_USERNAME ?? 'admin'
+const UMT_PASSWORD = process.env.UMT_PASSWORD ?? ''
 
 interface SessionCache {
   sid: string
   expiresAt: number
 }
 
+// Module-level singleton — intentional. One SID is shared across all requests
+// in the same Node.js worker process, which is fine because qBit sessions are
+// not user-scoped (there is only one qBittorrent account in use here).
 let sessionCache: SessionCache | null = null
 
 async function login(): Promise<string> {
   const body = new URLSearchParams({
-    username: QBIT_USERNAME,
-    password: QBIT_PASSWORD,
+    username: UMT_USERNAME,
+    password: UMT_PASSWORD,
   })
 
-  const res = await fetch(`${QBIT_URL}/api/v2/auth/login`, {
+  const res = await fetch(`${UMT_URL}/api/v2/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body,
@@ -64,7 +74,7 @@ export async function qbitFetch<T = unknown>(
     headers['Content-Type'] = 'application/x-www-form-urlencoded'
   }
 
-  const res = await fetch(`${QBIT_URL}${path}`, {
+  const res = await fetch(`${UMT_URL}${path}`, {
     method,
     headers,
     body: options?.body,
@@ -72,14 +82,15 @@ export async function qbitFetch<T = unknown>(
   })
 
   if (res.status === 403) {
-    // Re-auth once
+    // qBittorrent evicts sessions on restart or after the server-side idle timeout.
+    // Clear and re-login exactly once; if the retry still fails, let it throw.
     clearSession()
     const newSid = await getQbitSession()
     const retryHeaders: HeadersInit = { Cookie: newSid }
     if (method === 'POST' && options?.body) {
       retryHeaders['Content-Type'] = 'application/x-www-form-urlencoded'
     }
-    const retryRes = await fetch(`${QBIT_URL}${path}`, {
+    const retryRes = await fetch(`${UMT_URL}${path}`, {
       method,
       headers: retryHeaders,
       body: options?.body,
@@ -96,6 +107,8 @@ export async function qbitFetch<T = unknown>(
 
   if (!res.ok) throw new Error(`qBittorrent ${method} ${path}: ${res.status}`)
 
+  // qBittorrent action endpoints (pause, resume, delete, add) return plain text
+  // "Ok." on success, not JSON. Check Content-Type before attempting to parse.
   const ct = res.headers.get('content-type') ?? ''
   return ct.includes('application/json')
     ? res.json()

@@ -1,3 +1,6 @@
+// Badge — inline pill label used for status indicators, media type labels, and role tags.
+// All variants use a semi-transparent background so they work on any card surface.
+
 import { cn } from '@/lib/utils'
 
 const variants = {
@@ -6,6 +9,7 @@ const variants = {
   warning: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30',
   error: 'bg-red-500/20 text-red-400 border-red-500/30',
   info: 'bg-blue-500/20 text-blue-400 border-blue-500/30',
+  // outline has no background — used when the surrounding context already provides color context
   outline: 'border-border text-foreground',
 }
 

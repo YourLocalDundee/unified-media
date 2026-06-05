@@ -1,3 +1,8 @@
+// Audio processing tools panel inside MediaToolsPanel's Audio tab.
+// Controls: volume boost (GainNode), dynamics compressor (DynamicsCompressorNode),
+// stereo pan (StereoPannerNode), volume normalizer (RMS-based gain automation),
+// noise gate (RMS threshold gating), and karaoke/vocal remover (phase cancellation).
+// All tools share the single Web Audio chain from useAudioChain() via initAudioChain().
 'use client'
 
 import { useState, useEffect, useRef, useCallback } from 'react'
@@ -20,6 +25,8 @@ export default function MediaAudioTools({ initAudioChain, videoRef }: Props) {
 
   const normalizerCleanupRef = useRef<(() => void) | null>(null)
   const noiseGateCleanupRef = useRef<(() => void) | null>(null)
+  // Refs mirror state so that the normalizer/noise-gate interval callbacks can
+  // read the current value without being re-created every time the user moves a slider.
   const volumeGainRef = useRef(volumeGain)
   useEffect(() => { volumeGainRef.current = volumeGain }, [volumeGain])
   const noiseGateThresholdRef = useRef(noiseGateThreshold)
@@ -49,6 +56,9 @@ export default function MediaAudioTools({ initAudioChain, videoRef }: Props) {
     } catch {}
   }
 
+  // Returns RMS amplitude in the range 0–1.
+  // getByteTimeDomainData returns values 0–255 where 128 = silence, so we
+  // re-center by dividing by 128 and subtracting 1 before squaring.
   function sampleRms(analyser: AnalyserNode): number {
     const buffer = new Uint8Array(analyser.frequencyBinCount)
     analyser.getByteTimeDomainData(buffer)
@@ -65,13 +75,17 @@ export default function MediaAudioTools({ initAudioChain, videoRef }: Props) {
     const chain = initAudioChain()
     if (!video || !chain?.analyser) return
     const { analyser, gainNode } = chain
+    // TARGET_RMS of 0.2 is ~-14 dBFS, roughly "conversational" loudness.
     const TARGET_RMS = 0.2
     function onTimeUpdate() {
       const rms = sampleRms(analyser)
       if (rms > 0) {
+        // Clamp gain: floor 0.5 prevents over-amplifying quiet moments; ceil 3.0
+        // prevents blowing out transients in near-silent passages.
         gainNode.gain.value = Math.min(3.0, Math.max(0.5, TARGET_RMS / rms))
       }
     }
+    // 'timeupdate' fires ~4×/s — cheap enough for gain automation without an interval.
     video.addEventListener('timeupdate', onTimeUpdate)
     normalizerCleanupRef.current = () => {
       video.removeEventListener('timeupdate', onTimeUpdate)
@@ -127,12 +141,14 @@ export default function MediaAudioTools({ initAudioChain, videoRef }: Props) {
     const chain = initAudioChain()
     if (!chain) return
     if (next) {
+      // Restore the same default settings set during chain init in useAudioChain.
       chain.compressor.threshold.value = -24
       chain.compressor.knee.value = 30
       chain.compressor.ratio.value = 12
       chain.compressor.attack.value = 0.003
       chain.compressor.release.value = 0.25
     } else {
+      // ratio=1 is unity (no compression) — the node stays in the graph but passes through.
       chain.compressor.ratio.value = 1
     }
   }
@@ -156,6 +172,8 @@ export default function MediaAudioTools({ initAudioChain, videoRef }: Props) {
     setNormalizer(next)
     saveAudio({ normalizer: next })
     if (next) {
+      // Normalizer and noise gate both write to gainNode.gain, so they conflict.
+      // Enabling normalizer forces noise gate off.
       stopNoiseGate()
       startNormalizer()
     } else {
@@ -187,6 +205,11 @@ export default function MediaAudioTools({ initAudioChain, videoRef }: Props) {
     if (!chain?.splitter || !chain.merger || !chain.karaokeGainL || !chain.karaokeGainR) return
     const { panner, splitter, merger, karaokeGainL, karaokeGainR, context } = chain
     if (next) {
+      // Insert the karaoke sub-graph between panner and destination:
+      // panner → splitter → karaokeGainL (×+1) ──→ merger → destination
+      //                   → karaokeGainR (×-1) ──↗
+      // L channel is added as-is; R channel is phase-inverted. Center-panned
+      // audio (e.g. lead vocals) cancels out; hard-panned content survives.
       panner.disconnect(context.destination)
       panner.connect(splitter)
       splitter.connect(karaokeGainL, 0)
@@ -195,6 +218,8 @@ export default function MediaAudioTools({ initAudioChain, videoRef }: Props) {
       karaokeGainR.connect(merger, 0, 0)
       merger.connect(context.destination)
     } else {
+      // disconnect() throws if the connection doesn't exist — wrap each individually
+      // so a partial teardown still completes rather than aborting mid-way.
       try { panner.disconnect(splitter) } catch {}
       try { splitter.disconnect(karaokeGainL, 0) } catch {}
       try { splitter.disconnect(karaokeGainR, 1) } catch {}

@@ -1,3 +1,7 @@
+/**
+ * Proxy for the Prowlarr API. Injects the API key and internal host so neither
+ * is ever exposed to the browser.
+ */
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth } from '@/lib/dal'
 

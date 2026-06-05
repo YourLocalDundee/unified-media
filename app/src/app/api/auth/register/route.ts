@@ -1,9 +1,30 @@
+/**
+ * POST /api/auth/register — Step 1 of the two-step registration flow.
+ *
+ * Validates fields, checks for username/email conflicts, creates a
+ * pending_registrations row, and emails a 6-digit code. Returns a `pendingId`
+ * opaque token that ties Step 1 to Step 2 (verify-email). No user row or
+ * session is created here — the account only exists after the code is verified.
+ *
+ * Rate limit: 10 attempts per IP per 15 minutes.
+ * Code TTL: 10 minutes. Max verify attempts: 5 (enforced in verify-email).
+ *
+ * Any existing pending row for the same email is deleted before inserting a new
+ * one so that re-registering with the same email gets a fresh code immediately.
+ */
+
 import { NextRequest, NextResponse } from 'next/server'
 import { getDb } from '@/lib/db/index'
 import { validatePassword, hashPassword } from '@/lib/password'
 import { checkRateLimit } from '@/lib/rate-limit'
 import { sendEmail, buildVerificationEmail } from '@/lib/email'
+import { createSession, logEvent } from '@/lib/dal'
+import { cookies } from 'next/headers'
+import { verifyOrigin } from '@/lib/csrf'
 
+// Generates a URL-safe random ID for the pendingId token. Uses modulo bias
+// reduction implicitly — the charset length (62) divides evenly enough into 256
+// that the bias is negligible for a non-cryptographic opaque token.
 function makeId(size = 32): string {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
   let result = ''
@@ -13,17 +34,32 @@ function makeId(size = 32): string {
   return result
 }
 
+// Each byte mod 10 produces a random digit 0–9. The slight bias toward 0–5 is
+// acceptable for a short-lived UX code; it is not used as a cryptographic secret.
 function makeCode(): string {
   const array = new Uint8Array(6)
   crypto.getRandomValues(array)
   return Array.from(array).map(b => b % 10).join('')
 }
 
+// 8-byte base62 user ID (same algorithm as in verify-email/route.ts).
+function makeUserId(): string {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
+  let result = ''
+  const array = new Uint8Array(8)
+  crypto.getRandomValues(array)
+  for (const byte of array) result += chars[byte % chars.length]
+  return result
+}
+
+const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000
+
 function getClientIp(req: NextRequest): string {
   return req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? '127.0.0.1'
 }
 
 export async function POST(req: NextRequest) {
+  if (!verifyOrigin(req)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   const ip = getClientIp(req)
   const rl = checkRateLimit(`register:${ip}`, 10, 15 * 60 * 1000)
   if (!rl.allowed) {
@@ -63,9 +99,42 @@ export async function POST(req: NextRequest) {
   }
 
   const now = Date.now()
+  const hash = await hashPassword(password)
+
+  // When EMAIL_VERIFICATION_REQUIRED is not 'true', skip the pending row and
+  // create the account immediately. This is the default for self-hosted installs
+  // where SMTP is not configured and users should be able to sign up instantly.
+  const verificationRequired = process.env.EMAIL_VERIFICATION_REQUIRED === 'true'
+
+  if (!verificationRequired) {
+    const userId = makeUserId()
+    db.prepare(
+      `INSERT INTO users (id, username, email, password_hash, role, first_name, last_name, bio, location, created_at, updated_at, is_active)
+       VALUES (?, ?, ?, ?, 'user', ?, ?, ?, ?, ?, ?, 1)`
+    ).run(userId, username, email.toLowerCase(), hash,
+      firstName?.trim() || null, lastName?.trim() || null,
+      bio?.trim() || null, location?.trim() || null, now, now)
+
+    await logEvent('user_created', { username, email }, { userId, username, ip })
+
+    const sessionId = await createSession(userId, ip, req.headers.get('user-agent') ?? undefined)
+    const cookieStore = await cookies()
+    cookieStore.set('unified-session', sessionId, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      path: '/',
+      maxAge: SESSION_TTL_MS / 1000,
+    })
+
+    return NextResponse.json({ username, role: 'user' })
+  }
+
+  // Purge any existing pending row for this email (e.g. user re-registered after
+  // losing the code) AND stale expired rows for any email to prevent table bloat.
+  // There is no background cleanup job — expiry enforcement is opportunistic here.
   db.prepare('DELETE FROM pending_registrations WHERE LOWER(email) = ? OR expires_at < ?').run(email.toLowerCase(), now)
 
-  const hash = await hashPassword(password)
   const pendingId = makeId(32)
   const code = makeCode()
 

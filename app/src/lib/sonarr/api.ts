@@ -1,3 +1,6 @@
+// Typed Sonarr API helpers. All functions run server-side.
+// Series are identified by Sonarr's internal integer ID, not TVDB/TMDB IDs.
+// Use tvdbId when adding and convert to Sonarr's id for subsequent operations.
 import { sonarrFetch } from './client'
 import type {
   SonarrQualityProfile,
@@ -44,6 +47,9 @@ export function getLanguageProfiles(): Promise<SonarrLanguageProfile[]> {
   return sonarrFetch('/languageprofile')
 }
 
+// Triggers an immediate search across all enabled indexers for all missing
+// episodes in the series. The command runs asynchronously in Sonarr; this
+// call returns as soon as the command is queued, not when it completes.
 export function commandSearch(seriesId: number): Promise<void> {
   return sonarrFetch('/command', {
     method: 'POST',

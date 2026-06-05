@@ -1,3 +1,6 @@
+// Episode list for a specific season. Requires both seasonId (path) and seriesId
+// (query param) because Jellyfin's episode endpoint needs the series context to
+// look up the correct library item.
 import { NextRequest, NextResponse } from 'next/server'
 import { getEpisodes } from '@/lib/jellyfin/api'
 
@@ -18,6 +21,7 @@ export async function GET(
 
   try {
     const episodes = await getEpisodes(seriesId, userId, seasonId)
+    // Sort client-side because Jellyfin's episode endpoint does not guarantee order.
     const sorted = [...episodes].sort((a, b) => (a.IndexNumber ?? 0) - (b.IndexNumber ?? 0))
     return NextResponse.json(sorted)
   } catch (err) {

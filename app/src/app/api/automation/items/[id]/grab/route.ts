@@ -1,3 +1,13 @@
+/**
+ * POST /api/automation/items/[id]/grab
+ *
+ * Triggers an immediate grab attempt for a single monitored item, bypassing the
+ * 15-minute cron schedule. Used by the "Grab Now" button on the admin automation page.
+ *
+ * Returns { result: 'grabbed' | 'not_found' | 'error' } — the same values grabItem() returns.
+ * The item does not have to be in 'wanted' status; admin can force-grab any item.
+ */
+
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAdmin } from '@/lib/dal'
 import { getItemById } from '@/lib/automation/monitor'
@@ -22,6 +32,7 @@ export async function POST(
     return NextResponse.json({ error: 'Item not found' }, { status: 404 })
   }
 
+  // grabItem handles its own error catching; result is always one of the three string literals
   const result = await grabItem(item)
   return NextResponse.json({ result })
 }

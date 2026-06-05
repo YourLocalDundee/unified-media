@@ -1,3 +1,6 @@
+// Slide-up tools panel rendered over the video player (fixed bottom-0).
+// Organises all player tool components into five tabs: Playback, Video, Subtitles, Audio, Info.
+// Receives callbacks and refs from the parent VideoPlayer rather than owning any media state.
 'use client'
 
 import { useState } from 'react'
@@ -57,6 +60,9 @@ export function MediaToolsPanel({
   onClose,
 }: MediaToolsPanelProps) {
   const [activeTab, setActiveTab] = useState<Tab>('playback')
+  // The prop accepts HTMLVideoElement | null (matching useRef's initial value) but child
+  // components expect a non-nullable ref. The cast is safe because we only render when a
+  // video is loaded, at which point the ref is always populated.
   const videoRef = videoRefProp as React.RefObject<HTMLVideoElement>
 
   return (

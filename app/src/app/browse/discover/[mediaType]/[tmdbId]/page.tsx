@@ -59,6 +59,7 @@ function CastCard({ name, character, profilePath }: { name: string; character: s
 
 export default async function DiscoverDetailPage({ params }: PageProps) {
   const session = await requireAuth()
+  // Next.js 15 — dynamic segment params are a Promise; must be awaited before use.
   const { mediaType, tmdbId: tmdbIdStr } = await params
 
   if (mediaType !== 'movie' && mediaType !== 'tv') notFound()
@@ -76,7 +77,6 @@ export default async function DiscoverDetailPage({ params }: PageProps) {
 
   const libraryId = libraryMap[tmdbId] ?? null
   const existingRequest = getRequestByTmdb(session.userId, tmdbId, mediaType as 'movie' | 'tv')
-  const alreadyRequested = !!existingRequest
 
   const isMovie = mediaType === 'movie'
   const movie = isMovie ? (detail as Awaited<ReturnType<typeof getMovieDetail>>) : null
@@ -205,7 +205,8 @@ export default async function DiscoverDetailPage({ params }: PageProps) {
                 posterPath={posterPath}
                 overview={overview}
                 libraryId={libraryId}
-                alreadyRequested={alreadyRequested}
+                existingStatus={existingRequest?.status}
+                existingRequestType={existingRequest?.request_type}
               />
             </div>
           </div>

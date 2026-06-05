@@ -1,3 +1,9 @@
+// OpenSubtitles v3 REST API client.
+// Free tier: 5 subtitle downloads per day, resets at midnight UTC.
+// API key is passed as the 'Api-Key' header (not Authorization/Bearer).
+// Searches are ordered by download_count descending so popular/well-tested subs
+// appear first. Only srt and vtt formats are kept — ass/ssa are filtered out
+// because the player does not support them without a conversion step.
 import type {
   OSDownloadResponse,
   OSSearchResponse,
@@ -50,7 +56,8 @@ async function searchSubtitles(params: SubtitleSearchParams): Promise<OSSubtitle
   const qs = new URLSearchParams()
 
   if (params.imdb_id) {
-    // Strip leading zeros and the "tt" prefix if present; keep numeric portion only
+    // OpenSubtitles expects a plain integer with no "tt" prefix and no leading zeros.
+    // scanner.ts strips the "tt" prefix; this strips any remaining leading zeros.
     const numeric = params.imdb_id.replace(/^tt0*/, '').replace(/^0+/, '') || '0'
     qs.set('imdb_id', numeric)
   }
@@ -80,6 +87,8 @@ async function searchSubtitles(params: SubtitleSearchParams): Promise<OSSubtitle
       ALLOWED_FORMATS.has(sub.attributes.format?.toLowerCase()),
     )
 
+    // Cap at 5 candidates — pickBestSubtitle scores them; returning more is
+    // wasted memory and the top 5 by download_count are almost always sufficient.
     return filtered.slice(0, 5)
   } catch (err) {
     console.error('[opensubtitles] searchSubtitles error:', err)
@@ -105,6 +114,9 @@ async function getDownloadLink(fileId: number): Promise<OSDownloadResponse> {
   return response
 }
 
+// Scoring heuristic: trusted uploader is the dominant signal (+100), HI match
+// is secondary (+10), and download_count is a 0–9 tiebreaker so prolific but
+// low-quality subs don't beat a trusted uploader with fewer downloads.
 function pickBestSubtitle(results: OSSubtitle[], wantHi: boolean): OSSubtitle | null {
   if (results.length === 0) return null
 

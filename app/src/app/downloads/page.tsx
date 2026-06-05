@@ -1,11 +1,23 @@
+/**
+ * /downloads — simplified single-page UMT queue viewer.
+ * This is an older, self-contained page that predates the component-split
+ * version (FilterSidebar, TorrentRow, DetailPanel). It still ships alongside
+ * those components but only uses the raw UMT hooks directly.
+ *
+ * Primary differences from the component-split version:
+ *   - No filter sidebar, no detail panel, no right-click context menu
+ *   - Has an inline speed graph and a quick speed-limit dropdown
+ *   - Responsive: table on md+, card list on mobile
+ */
 'use client'
 
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react'
+import TorrentSettingsClient from '@/app/settings/torrent/TorrentSettingsClient'
 import { formatBytes } from '@/lib/utils'
 // The hooks below import from @/lib/qbittorrent directly because this page
 // uses client-side polling against the /api/qbit proxy route. The abstraction
 // layer in src/lib/download-client is for server-side use; the browser hook
-// works with raw qBittorrent types since it talks to the qBit proxy endpoint.
+// works with raw UMT types since it talks to the qBit proxy endpoint.
 import {
   useMainData,
   useAddTorrent,
@@ -29,6 +41,7 @@ type FilterTab = 'all' | 'downloading' | 'seeding' | 'paused'
 
 function formatEta(eta: number, state: TorrentState): string {
   if (isTorrentComplete(state)) return 'Done'
+  // qBittorrent uses 8640000 (100 days) as the sentinel value for "unknown ETA"
   if (eta < 0 || eta >= 8640000) return '∞'
   if (eta === 0) return 'Done'
   const h = Math.floor(eta / 3600)
@@ -106,6 +119,7 @@ function SpeedGraph({ history }: { history: SpeedPoint[] }) {
     if (history.length === 0) return `0,${HEIGHT} ${WIDTH - 1},${HEIGHT}`
     return history
       .map((p, i) => {
+        // x is a 0-100 percentage of the viewBox width; y is inverted (SVG origin is top-left)
         const x = (i / (WIDTH - 1)) * 100
         const y =
           maxVal === 0
@@ -582,8 +596,9 @@ export default function DownloadsPage() {
 
   const [activeTab, setActiveTab] = useState<FilterTab>('all')
   const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [showSettings, setShowSettings] = useState(false)
 
-  // Speed history for the graph — updated every 2s alongside the poll interval
+  // Speed history for the graph — capped at 60 samples (~2 min at 2s poll rate)
   const [speedHistory, setSpeedHistory] = useState<{ dl: number; ul: number }[]>([])
   useEffect(() => {
     if (!transferInfo) return
@@ -596,7 +611,8 @@ export default function DownloadsPage() {
     })
   }, [transferInfo])
 
-  // First load detection — no connection attempt has resolved yet
+  // True only during the very first poll before any response (success or error) arrives;
+  // used to show skeleton rows instead of "no torrents" empty state.
   const isFirstLoad = !isConnected && !error
 
   // ---------------------------------------------------------------------------
@@ -715,7 +731,7 @@ export default function DownloadsPage() {
                 Downloads
               </h1>
               <p className="mt-0.5 text-sm text-gray-500 dark:text-gray-400">
-                qBittorrent download queue
+                UMT download queue
               </p>
             </div>
 
@@ -766,6 +782,13 @@ export default function DownloadsPage() {
                   <SpeedLimitDropdown />
                 </>
               )}
+              <button
+                onClick={() => setShowSettings((v) => !v)}
+                title="UMT Settings"
+                className="flex items-center gap-1 rounded-md border border-gray-200 bg-white px-2 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+              >
+                ⚙ Settings
+              </button>
             </div>
           </div>
         </div>
@@ -789,7 +812,7 @@ export default function DownloadsPage() {
                 />
               </svg>
               <span className="text-sm font-medium text-red-700 dark:text-red-400">
-                qBittorrent unreachable
+                UMT unreachable
               </span>
               <span className="hidden text-xs text-red-600 dark:text-red-500 sm:inline">
                 — {error}
@@ -992,6 +1015,22 @@ export default function DownloadsPage() {
           )}
         </div>
       </div>
+
+      {/* UMT Settings slide-over */}
+      {showSettings && (
+        <div className="fixed inset-0 z-50 flex">
+          <div className="flex-1 bg-black/60" onClick={() => setShowSettings(false)} />
+          <div className="w-full max-w-2xl bg-zinc-950 border-l border-zinc-800 overflow-y-auto flex flex-col">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800 sticky top-0 bg-zinc-950">
+              <h2 className="text-sm font-semibold text-white">UMT Settings</h2>
+              <button onClick={() => setShowSettings(false)} className="text-zinc-400 hover:text-white">✕</button>
+            </div>
+            <div className="flex-1 p-4">
+              <TorrentSettingsClient />
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Bulk action bar */}
       {selected.size > 0 && (

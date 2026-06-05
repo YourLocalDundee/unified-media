@@ -1,9 +1,27 @@
 'use client'
 
-import { useState, useEffect, useRef, Suspense } from 'react'
+/**
+ * Registration page — two-step flow: account info → email verification.
+ *
+ * Step 1 (StepOne): collects username/email/password + optional demographics,
+ *   submits to POST /api/auth/register, which creates a pending_registrations
+ *   row and emails a 6-digit code. Returns a `pendingId` opaque token.
+ *
+ * Step 2 (StepTwo): user enters the 6-digit code. POST /api/auth/verify-email
+ *   validates it and, on success, creates the real user + session in one
+ *   transaction. The `pendingId` is the only link between the two steps.
+ *
+ * No user row or session exists until Step 2 succeeds, so an abandoned Step 1
+ * leaves no orphan accounts — only an expiring pending_registrations record.
+ */
+
+import { useState, useEffect, useRef, Suspense, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { Eye, EyeOff, Loader2, Check, X, Mail } from 'lucide-react'
 
+// Client-side password rules mirror the server-side validatePassword() in
+// src/lib/password.ts so feedback is instant without a round-trip. The server
+// re-validates regardless — this is UX only, not a security gate.
 function checkRules(password: string, username: string) {
   return {
     length: password.length >= 8,
@@ -11,13 +29,18 @@ function checkRules(password: string, username: string) {
     lowercase: /[a-z]/.test(password),
     special: /[!@#$%^&*()\-_=+\[\]{}|;:,.<>?/~`'"\\]/.test(password),
     noRepeat: !/(.)\1{2,}/.test(password),
+    // 'unified' is the app name; blocking it prevents trivially guessable passwords.
     noBlockedWords: !password.toLowerCase().includes('password') && !password.toLowerCase().includes('unified'),
   }
 }
 
 // ─── Step 1: Account info + demographics ─────────────────────────────────────
 
-function StepOne({ onNext }: { onNext: (pendingId: string, email: string) => void }) {
+function StepOne({ onNext, onDone, verificationRequired }: {
+  onNext: (pendingId: string, email: string) => void
+  onDone: () => void
+  verificationRequired: boolean | null
+}) {
   const [username, setUsername] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -39,9 +62,15 @@ function StepOne({ onNext }: { onNext: (pendingId: string, email: string) => voi
   const allRulesPassed = Object.values(rules).every(Boolean)
   const passwordsMatch = password === confirmPassword && confirmPassword.length > 0
   const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
+  // strength === -1 means zxcvbn hasn't loaded yet; allow submit in that case
+  // rather than blocking forever on a dynamic import failure or slow network.
+  // score >= 2 ("Fair") is the minimum accepted; "Weak" (0–1) is blocked.
   const canSubmit = allRulesPassed && passwordsMatch && (strength === -1 || strength >= 2) &&
     usernameStatus === 'available' && emailValid
 
+  // zxcvbn is large (~800 KB), so it is loaded lazily only once the user starts
+  // typing a password. The username and common words are passed as user-inputs so
+  // zxcvbn penalises them in the entropy estimate.
   useEffect(() => {
     if (!password) { setStrength(-1); return }
     void (async () => {
@@ -52,6 +81,10 @@ function StepOne({ onNext }: { onNext: (pendingId: string, email: string) => voi
     })()
   }, [password, username])
 
+  // Debounced live availability check — fires 500ms after the user stops typing.
+  // Checks both users and pending_registrations so a username mid-verification
+  // elsewhere is not simultaneously offered here. The server re-checks at
+  // verify-email time anyway, so this is a UX hint, not the enforcement point.
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current)
     if (!username || !/^[a-zA-Z0-9_]{3,20}$/.test(username)) { setUsernameStatus('idle'); return }
@@ -75,12 +108,15 @@ function StepOne({ onNext }: { onNext: (pendingId: string, email: string) => voi
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username, email, password, confirmPassword, firstName, lastName, bio, location }),
       })
-      const data = await res.json() as { error?: string; errors?: string[]; pendingId?: string }
+      const data = await res.json() as { error?: string; errors?: string[]; pendingId?: string; username?: string }
       if (!res.ok) {
         if (data.errors) setFieldErrors(data.errors)
         else setError(data.error ?? 'Registration failed.')
         return
       }
+      // When verification is disabled the server returns { username, role }
+      // directly and sets the session cookie — redirect immediately.
+      if (data.username) { onDone(); return }
       onNext(data.pendingId!, email)
     } catch {
       setError('An unexpected error occurred.')
@@ -89,6 +125,7 @@ function StepOne({ onNext }: { onNext: (pendingId: string, email: string) => voi
     }
   }
 
+  // zxcvbn scores run 0–4; index 0 and 1 both map to "Weak" intentionally.
   const strengthLabels = ['Weak', 'Weak', 'Fair', 'Good', 'Strong']
   const strengthColors = ['bg-red-500', 'bg-red-500', 'bg-orange-400', 'bg-yellow-400', 'bg-green-500']
 
@@ -117,7 +154,9 @@ function StepOne({ onNext }: { onNext: (pendingId: string, email: string) => voi
           <input type="email" required value={email} onChange={e => setEmail(e.target.value)}
             className="w-full rounded-lg border border-border bg-background px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
             placeholder="you@example.com" />
-          <p className="mt-1 text-xs text-muted-foreground">A 6-digit verification code will be sent here.</p>
+          {verificationRequired && (
+            <p className="mt-1 text-xs text-muted-foreground">A 6-digit verification code will be sent here.</p>
+          )}
         </div>
 
         <div>
@@ -219,7 +258,9 @@ function StepOne({ onNext }: { onNext: (pendingId: string, email: string) => voi
       <button type="submit" disabled={!canSubmit || loading}
         className="w-full flex items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors">
         {loading && <Loader2 className="h-4 w-4 animate-spin" />}
-        {loading ? 'Sending verification code…' : 'Continue'}
+        {loading
+          ? (verificationRequired ? 'Sending verification code…' : 'Creating account…')
+          : (verificationRequired ? 'Continue' : 'Create Account')}
       </button>
     </form>
   )
@@ -227,8 +268,12 @@ function StepOne({ onNext }: { onNext: (pendingId: string, email: string) => voi
 
 // ─── Step 2: Verification code entry ─────────────────────────────────────────
 
+// ─── Step 2: Verification code entry ─────────────────────────────────────────
+
 function StepTwo({ pendingId, email, onBack }: { pendingId: string; email: string; onBack: () => void }) {
   const router = useRouter()
+  // Six separate state slots rather than a single string so each cell can be
+  // targeted individually for focus management and paste distribution.
   const [digits, setDigits] = useState<string[]>(['', '', '', '', '', ''])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -243,6 +288,8 @@ function StepTwo({ pendingId, email, onBack }: { pendingId: string; email: strin
     if (!cleaned) {
       const next = [...digits]; next[i] = ''; setDigits(next); return
     }
+    // Spread multi-character input (e.g. autofill from SMS) across subsequent
+    // slots rather than discarding the extra characters, then advance focus.
     const next = [...digits]
     for (let j = 0; j < cleaned.length && i + j < 6; j++) next[i + j] = cleaned[j]
     setDigits(next)
@@ -250,6 +297,8 @@ function StepTwo({ pendingId, email, onBack }: { pendingId: string; email: strin
   }
 
   function handleKeyDown(i: number, e: React.KeyboardEvent) {
+    // Backspace on an already-empty cell moves focus left; the previous cell's
+    // value is then cleared by the next keydown, making deletion feel natural.
     if (e.key === 'Backspace' && !digits[i] && i > 0) {
       inputRefs.current[i - 1]?.focus()
     }
@@ -258,6 +307,8 @@ function StepTwo({ pendingId, email, onBack }: { pendingId: string; email: strin
   function handlePaste(e: React.ClipboardEvent) {
     e.preventDefault()
     const pasted = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, 6)
+    // Pad to exactly 6 slots so array length is always invariant regardless
+    // of paste content length; concat+slice is cheaper than fill+splice.
     const next = pasted.split('').concat(Array(6).fill('')).slice(0, 6)
     setDigits(next)
     inputRefs.current[Math.min(pasted.length, 5)]?.focus()
@@ -351,25 +402,45 @@ function StepTwo({ pendingId, email, onBack }: { pendingId: string; email: strin
 // ─── Root ─────────────────────────────────────────────────────────────────────
 
 function RegisterForm() {
+  const router = useRouter()
   const [step, setStep] = useState<1 | 2>(1)
   const [pendingId, setPendingId] = useState('')
   const [email, setEmail] = useState('')
+  const [verificationRequired, setVerificationRequired] = useState<boolean | null>(null)
+
+  const fetchConfig = useCallback(async () => {
+    try {
+      const res = await fetch('/api/auth/register-config')
+      const d = await res.json() as { emailVerificationRequired: boolean }
+      setVerificationRequired(d.emailVerificationRequired)
+    } catch {
+      setVerificationRequired(true) // safe default if fetch fails
+    }
+  }, [])
+
+  useEffect(() => { void fetchConfig() }, [fetchConfig])
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-background p-4">
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
           <h1 className="text-3xl font-bold tracking-tight text-foreground">Create Account</h1>
-          <div className="mt-3 flex items-center justify-center gap-2">
-            {[1, 2].map(n => (
-              <div key={n} className={`h-2 w-2 rounded-full transition-colors ${n === step ? 'bg-primary' : n < step ? 'bg-primary/50' : 'bg-muted'}`} />
-            ))}
-            <span className="ml-1 text-xs text-muted-foreground">Step {step} of 2</span>
-          </div>
+          {verificationRequired && (
+            <div className="mt-3 flex items-center justify-center gap-2">
+              {[1, 2].map(n => (
+                <div key={n} className={`h-2 w-2 rounded-full transition-colors ${n === step ? 'bg-primary' : n < step ? 'bg-primary/50' : 'bg-muted'}`} />
+              ))}
+              <span className="ml-1 text-xs text-muted-foreground">Step {step} of 2</span>
+            </div>
+          )}
         </div>
         <div className="rounded-xl border border-border bg-card p-8 shadow-lg">
           {step === 1
-            ? <StepOne onNext={(id, em) => { setPendingId(id); setEmail(em); setStep(2) }} />
+            ? <StepOne
+                onNext={(id, em) => { setPendingId(id); setEmail(em); setStep(2) }}
+                onDone={() => router.push('/')}
+                verificationRequired={verificationRequired}
+              />
             : <StepTwo pendingId={pendingId} email={email} onBack={() => setStep(1)} />
           }
         </div>

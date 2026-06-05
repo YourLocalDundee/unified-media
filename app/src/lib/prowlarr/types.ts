@@ -1,3 +1,10 @@
+// TypeScript interfaces for the Prowlarr v1 REST API.
+// Prowlarr runs with network_mode: host — reached via 192.168.0.50:9696.
+// Auth is a static X-Api-Key header.
+// Prowlarr aggregates multiple indexers and provides a unified search and RSS
+// feed for Sonarr/Radarr. The independence build uses it for indexer health
+// and its own Torznab-compatible search via searchAllIndexers in lib/indexer/.
+
 export interface ProwlarrCategory {
   id: number
   name: string

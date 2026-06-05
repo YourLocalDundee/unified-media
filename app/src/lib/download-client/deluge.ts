@@ -1,3 +1,7 @@
+// Deluge stub — not yet implemented.
+// Deluge uses a JSON-RPC 2.0 API with session cookie auth, similar in concept
+// to qBittorrent but with a different handshake.
+// All methods throw immediately so the registry can still be loaded without error.
 import type {
   AddTorrentPayload,
   DownloadClient,

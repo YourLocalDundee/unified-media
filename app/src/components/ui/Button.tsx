@@ -1,3 +1,6 @@
+// Button — composable button primitive with variant and size props.
+// Supports an isLoading state that disables the button and shows a spinner inline.
+// buttonVariants is exported for use in Link elements that need button styling.
 'use client'
 
 import { forwardRef } from 'react'
@@ -30,6 +33,8 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
   ({ className, variant = 'default', size = 'md', isLoading, disabled, children, ...props }, ref) => (
     <button
       ref={ref}
+      // isLoading disables the button independently of the disabled prop so callers
+      // don't have to manually gate both.
       disabled={disabled || isLoading}
       className={cn(
         'inline-flex items-center justify-center gap-2 whitespace-nowrap font-medium transition-colors',

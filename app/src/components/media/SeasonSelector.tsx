@@ -19,6 +19,7 @@ export default function SeasonSelector({ seasons, selectedSeasonId, onSelect }: 
       style={{ scrollbarWidth: 'none' }}
     >
       {seasons.map((season) => {
+        // Jellyfin uses IndexNumber 0 for the specials pseudo-season.
         const label = (season.IndexNumber ?? 0) === 0 ? 'Specials' : season.Name
         const isSelected = season.Id === selectedSeasonId
         return (

@@ -1,11 +1,30 @@
+/**
+ * POST /api/auth/verify-email — Step 2 of the two-step registration flow.
+ *
+ * Accepts { pendingId, code } and on correct code creates the user + session
+ * in a single synchronous block (SQLite serialized writes = implicit transaction).
+ * The pending_registrations row is deleted atomically with user creation so
+ * duplicate submissions cannot create two accounts from one verification.
+ *
+ * Guards: TTL expiry → delete + error. 5+ wrong attempts → delete + error.
+ * Both guards delete the pending row so the user must restart registration.
+ *
+ * Race condition: username/email uniqueness is re-checked immediately before
+ * INSERT in case another registration completed while this one was pending.
+ */
+
 import { NextRequest, NextResponse } from 'next/server'
 import { getDb } from '@/lib/db/index'
 import { checkRateLimit } from '@/lib/rate-limit'
 import { createSession, logEvent } from '@/lib/dal'
 import { cookies } from 'next/headers'
+import { verifyOrigin } from '@/lib/csrf'
 
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000
 
+// 8-byte base62 ID gives ~47 bits of entropy — enough for a small user table.
+// User IDs are not secret (they appear in audit logs) so collision resistance
+// matters more than unpredictability; 47 bits is sufficient for that purpose.
 function makeUserId(): string {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
   let result = ''
@@ -26,6 +45,7 @@ interface PendingRow {
 }
 
 export async function POST(req: NextRequest) {
+  if (!verifyOrigin(req)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   const ip = getClientIp(req)
   const rl = checkRateLimit(`verify-email:${ip}`, 10, 15 * 60 * 1000)
   if (!rl.allowed) {
@@ -53,6 +73,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Verification code expired. Please register again.' }, { status: 400 })
   }
 
+  // Check attempt count before comparing codes to prevent timing-based inference
+  // of remaining guesses. Deleting the row on exhaustion forces a fresh start.
   if (pending.attempts >= 5) {
     db.prepare('DELETE FROM pending_registrations WHERE id = ?').run(pendingId)
     return NextResponse.json({ error: 'Too many incorrect attempts. Please register again.' }, { status: 400 })
@@ -60,14 +82,17 @@ export async function POST(req: NextRequest) {
 
   if (code.trim() !== pending.code) {
     db.prepare('UPDATE pending_registrations SET attempts = attempts + 1 WHERE id = ?').run(pendingId)
+    // remaining is shown to the user; computed from stored attempts (before increment)
     const remaining = 4 - pending.attempts
     return NextResponse.json({ error: `Incorrect code. ${remaining} attempt${remaining !== 1 ? 's' : ''} remaining.` }, { status: 400 })
   }
 
-  // Code correct — create the user
+  // Code correct — create the user. SQLite single-writer model means these
+  // three statements are effectively atomic from the app's perspective.
   const now = Date.now()
 
-  // Guard against race conditions / duplicate email from another path
+  // Re-check uniqueness: another user could have registered with the same
+  // username or email between Step 1 and now.
   if (db.prepare('SELECT id FROM users WHERE LOWER(email) = ?').get(pending.email)) {
     db.prepare('DELETE FROM pending_registrations WHERE id = ?').run(pendingId)
     return NextResponse.json({ error: 'An account with that email already exists.' }, { status: 400 })

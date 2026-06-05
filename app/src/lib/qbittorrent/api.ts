@@ -1,3 +1,7 @@
+// Server-side qBittorrent API helpers.
+// All functions call qbitFetch, which handles SID cookie auth and automatic
+// re-auth on 403. These must only be called from Next.js API routes or server
+// components — never imported into client components.
 import { qbitFetch } from './session'
 import type {
   AddTorrentParams,
@@ -55,6 +59,7 @@ export async function getTorrentFiles(hash: string): Promise<TorrentFile[]> {
 /**
  * Stop (pause) torrents. Uses the qBit 5+ /stop endpoint.
  * Multiple hashes are joined with | (pipe). Pass 'all' to stop everything.
+ * Note: qBit v4 used /torrents/pause — this codebase targets v5.
  */
 export async function pauseTorrents(hashes: string[]): Promise<void> {
   await qbitFetch<string>('/api/v2/torrents/stop', {

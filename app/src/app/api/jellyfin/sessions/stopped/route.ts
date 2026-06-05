@@ -1,3 +1,6 @@
+// Notifies Jellyfin that playback has stopped (POST /Sessions/Playing/Stopped).
+// Called by VideoPlayer on the 'ended' event and when the player is closed.
+// This is what makes Jellyfin mark an item as played and remove it from Now Playing.
 import { NextRequest, NextResponse } from 'next/server'
 import { jellyfinFetch } from '@/lib/jellyfin/client'
 

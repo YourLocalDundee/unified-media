@@ -1,12 +1,18 @@
-// Transparent proxy to qBittorrent. Kept for backward compatibility with the
-// client-side polling hook (useMainData and action hooks in
-// src/lib/qbittorrent/hooks.ts) which call /api/qbit/... from the browser.
-// Do not import from the download-client registry here — this route manages
-// its own SID session via @/lib/qbittorrent/session.
+// Transparent proxy to qBittorrent's Web API (/api/v2/...).
+// Kept for backward compatibility with client-side hooks (useMainData and action
+// hooks in src/lib/qbittorrent/hooks.ts) which call /api/qbit/... from the browser.
+// Auth is cookie-based (SID), held server-side by @/lib/qbittorrent/session — the
+// browser never sees qBittorrent credentials. Do not import from the download-client
+// registry here; this route manages its own session directly.
+//
+// Three fixed gaps vs. a naïve proxy:
+//  1. Multipart bodies (torrent file uploads) are forwarded verbatim including the boundary.
+//  2. Query params are preserved on POST requests.
+//  3. 403 responses trigger one re-auth-and-retry before returning the error.
 import { NextRequest, NextResponse } from 'next/server'
 import { qbitFetch, getQbitSession, clearSession } from '@/lib/qbittorrent/session'
 
-const QBIT_URL = process.env.QBIT_URL ?? 'http://qbittorrent:8080'
+const UMT_URL = process.env.UMT_URL ?? 'http://qbittorrent:8080'
 
 type Params = { params: Promise<{ path: string[] }> }
 
@@ -38,7 +44,7 @@ export async function POST(req: NextRequest, { params }: Params) {
       const sid = await getQbitSession()
 
       const bodyBuffer = await req.arrayBuffer()
-      const qbtRes = await fetch(`${QBIT_URL}${endpoint}${search}`, {
+      const qbtRes = await fetch(`${UMT_URL}${endpoint}${search}`, {
         method: 'POST',
         headers: {
           Cookie: sid,
@@ -51,7 +57,7 @@ export async function POST(req: NextRequest, { params }: Params) {
         // Re-auth once
         clearSession()
         const newSid = await getQbitSession()
-        const retryRes = await fetch(`${QBIT_URL}${endpoint}${search}`, {
+        const retryRes = await fetch(`${UMT_URL}${endpoint}${search}`, {
           method: 'POST',
           headers: {
             Cookie: newSid,

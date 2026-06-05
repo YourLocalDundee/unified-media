@@ -1,3 +1,9 @@
+/**
+ * /settings/playback — user preferences for video quality, audio/subtitle
+ * language defaults, and autoplay behavior. All values persist to localStorage
+ * via usePlaybackPrefs; nothing is stored server-side. The video player reads
+ * these prefs on mount to configure its initial state.
+ */
 'use client'
 
 import { usePlaybackPrefs } from '@/hooks/useSettings'
@@ -65,6 +71,7 @@ function Toggle({
   )
 }
 
+// Values are bit-per-second ceilings passed to Jellyfin's transcoding API; 0 = uncapped
 const QUALITY_OPTIONS: { value: PlaybackPrefs['quality']; label: string }[] = [
   { value: 0, label: 'Auto (Best available)' },
   { value: 120000000, label: '4K (120 Mbps)' },

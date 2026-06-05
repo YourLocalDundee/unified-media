@@ -1,3 +1,10 @@
+// Shared types for the download client abstraction layer.
+// TorrentState is a normalized enum that collapses the many qBittorrent-specific
+// state strings into the UI-relevant buckets. Each concrete client maps its own
+// raw states into this enum so the rest of the app stays client-agnostic.
+// The DownloadClient interface is what the rest of the app talks to; concrete
+// implementations live in qbittorrent.ts, transmission.ts, and deluge.ts.
+
 export enum TorrentState {
   Downloading = 'Downloading',
   Uploading = 'Uploading',
@@ -33,6 +40,9 @@ export interface TransferInfo {
   freeSpace: number
 }
 
+// Normalized result from the incremental sync endpoint.
+// When isFullUpdate is true the caller should replace its state entirely.
+// rid must be passed back on the next call to receive only deltas.
 export interface MaindataResult {
   torrents: Record<string, Partial<Torrent>>
   removed: string[]

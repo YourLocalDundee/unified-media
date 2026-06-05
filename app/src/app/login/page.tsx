@@ -1,10 +1,27 @@
 'use client'
 
+/**
+ * Login page — username/password form that hits /api/auth/login.
+ *
+ * After a successful login the context is refreshed so downstream components
+ * (nav, profile) reflect the new session without a full page reload. Supports
+ * the `?from=` open-redirect guard and the `requiresPasswordChange` server flag
+ * that admin-created accounts emit on first login.
+ *
+ * No session cookie is read here — the browser sends it automatically on the
+ * POST, and the API route sets it on success. Client state is updated via
+ * AuthContext.refresh() so the context re-fetches /api/auth/me.
+ */
+
 import { useState, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { Eye, EyeOff, Loader2 } from 'lucide-react'
 import { useAuth } from '@/context/AuthContext'
 
+// Validates the post-login redirect target to prevent open-redirect attacks.
+// Blocks protocol-relative URLs (//evil.com), absolute URLs (contains ':'),
+// and circular redirects back to auth pages. Mirrors src/lib/safe-redirect.ts
+// but inlined here to avoid pulling a server-only module into a client component.
 function getSafeRedirect(from: string | null): string {
   if (!from) return '/'
   if (!from.startsWith('/') || from.startsWith('//')) return '/'
@@ -38,17 +55,23 @@ function LoginForm() {
       const data = await res.json() as { error?: string; requiresPasswordChange?: boolean; username?: string; role?: string }
 
       if (!res.ok) {
+        // Surface distinct messages for rate-limit and suspended-account cases
+        // without leaking whether the username itself exists.
         if (res.status === 429) setError('Too many attempts. Please wait before trying again.')
         else if (res.status === 403) setError('Your account has been suspended. Contact the site owner.')
         else setError(data.error ?? 'Invalid username or password.')
         return
       }
 
+      // Admin-created accounts have force_pw_change set; the server returns this
+      // flag instead of issuing a session cookie, so the user cannot skip the
+      // password change by navigating away before the cookie lands.
       if (data.requiresPasswordChange) {
         router.push('/change-password')
         return
       }
 
+      // Refresh context so the nav and any server components see the new session.
       await refresh()
       router.push(getSafeRedirect(searchParams.get('from')))
     } catch {
@@ -146,6 +169,9 @@ function LoginForm() {
   )
 }
 
+// Suspense is required because LoginForm calls useSearchParams(), which suspends
+// during static rendering in Next.js 15. The boundary prevents the entire page
+// from failing; the form becomes the only suspended subtree.
 export default function LoginPage() {
   return <Suspense><LoginForm /></Suspense>
 }

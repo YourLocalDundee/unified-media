@@ -1,3 +1,14 @@
+/**
+ * Slide-in detail panel for the /downloads page.
+ * Renders a 6-tab view (Overview, Files, Trackers, Peers, Speed, Options) for
+ * the selected torrent. Each tab fetches its own data via React Query so that
+ * switching tabs does not block the other tabs from being visible.
+ *
+ * Layout behavior:
+ *   - On large screens (lg+): sits as a persistent right-side column (1/3 width)
+ *   - On smaller screens: slides in from the right as a full-screen overlay with
+ *     a dark backdrop dismissible by clicking outside the panel.
+ */
 'use client'
 
 import { useState, useEffect, useRef, useCallback } from 'react'
@@ -123,6 +134,8 @@ interface FileNode {
   file?: QbtFileInfo
 }
 
+// Converts the flat file list from UMT (paths like "Folder/sub/file.mkv")
+// into a nested tree structure for the collapsible file explorer.
 function buildFileTree(files: QbtFileInfo[]): FileNode {
   const root: FileNode = { name: '', path: '', isDir: true, children: {} }
   for (const f of files) {
@@ -301,6 +314,7 @@ function TrackersTab({ hash }: { hash: string }) {
 
   if (isLoading) return <div className="py-6 text-center text-sm text-gray-400">Loading trackers…</div>
 
+  // qBittorrent prefixes internal pseudo-trackers (DHT, PeX, LSD) with "** ["; hide them
   const displayTrackers = (trackers ?? []).filter((t) => !t.url.startsWith('** [') )
 
   return (
@@ -387,6 +401,7 @@ function PeersTab({ hash }: { hash: string }) {
     queryKey: ['torrent-peers', hash],
     queryFn: () =>
       fetch(`/api/qbit/sync/torrentPeers?hash=${hash}`).then((r) => r.json()),
+    // Peer data is expensive to fetch; don't auto-refresh — the user clicks "Refresh" manually
     staleTime: Infinity,
     refetchOnWindowFocus: false,
   })
@@ -481,6 +496,7 @@ function SpeedChartTab({ torrent }: { torrent: Torrent }) {
 
   useEffect(() => {
     const curr = { dl: torrent.dlspeed, ul: torrent.upspeed }
+    // Skip duplicate data points — torrent poll may fire more often than speed changes
     if (
       prevRef.current &&
       prevRef.current.dl === curr.dl &&
@@ -488,6 +504,7 @@ function SpeedChartTab({ torrent }: { torrent: Torrent }) {
     ) return
 
     prevRef.current = curr
+    // Keep at most 60 samples (~2 minutes at 2s poll rate)
     setChartData((prev) => {
       const next = [...prev, { t: Date.now(), dl: curr.dl, ul: curr.ul }]
       return next.slice(-60)
@@ -550,6 +567,7 @@ function OptionsTab({ torrent }: { torrent: Torrent }) {
     [invalidate]
   )
 
+  // qBittorrent expects limits in bytes/s; UI input is in KB/s so multiply by 1024
   const setDlLimitHandler = useCallback(async () => {
     await post('torrents/setDownloadLimit', new URLSearchParams({ hashes: torrent.hash, limit: String(dlLimit * 1024) }))
   }, [post, torrent.hash, dlLimit])
@@ -724,6 +742,8 @@ interface DetailPanelProps {
 export default function DetailPanel({ torrent, onClose }: DetailPanelProps) {
   const [activeTab, setActiveTab] = useState<DetailTab>('overview')
 
+  // Reset to the Overview tab whenever a different torrent is selected so
+  // the user doesn't land on e.g. the Peers tab for a torrent they just clicked.
   useEffect(() => {
     if (torrent) setActiveTab('overview')
   }, [torrent?.hash])

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth } from '@/lib/dal'
 
+// Restrict to TMDB's actual supported sizes to prevent open SSRF via arbitrary size strings.
 const VALID_SIZES = new Set(['w92', 'w154', 'w185', 'w300', 'w342', 'w500', 'w780', 'original'])
 const DEFAULT_SIZE = 'w300'
 

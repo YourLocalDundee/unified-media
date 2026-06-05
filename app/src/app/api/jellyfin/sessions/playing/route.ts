@@ -1,3 +1,7 @@
+// Notifies Jellyfin that playback has started (POST /Sessions/Playing).
+// Called by VideoPlayer on the first play event so Jellyfin can update Now Playing
+// and show the session in its dashboard. No auth check here — the session info
+// passed in the body identifies the playback session to Jellyfin.
 import { NextRequest, NextResponse } from 'next/server'
 import { jellyfinFetch } from '@/lib/jellyfin/client'
 

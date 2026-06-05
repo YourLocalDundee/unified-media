@@ -1,3 +1,8 @@
+// GET /api/admin/activity
+// Returns a paginated slice of all watch_events joined with usernames.
+// The JOIN is intentional — watch_events stores user_id, not username, so denormalizing
+// at read time keeps the write path simple and the DB normalized.
+
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAdmin } from '@/lib/dal'
 import { getDb } from '@/lib/db/index'

@@ -54,6 +54,7 @@ export async function GET(
     const chunkSize = end - start + 1
 
     const stream = fs.createReadStream(filePath, { start, end })
+    // Node.js ReadableStream must be bridged to the Web ReadableStream that Next.js Route Handlers expect.
     const webStream = new ReadableStream({
       start(controller) {
         stream.on('data', chunk => controller.enqueue(chunk))

@@ -1,3 +1,12 @@
+// Server-side playback data builder for the video player.
+// getPlaybackData() negotiates stream format with Jellyfin, resolves the
+// correct stream URL (direct play or HLS transcoding), and builds the full
+// quality options list. It always runs server-side and returns a PlaybackData
+// object that is safe to serialize to the client.
+//
+// Stream URL routing: all URLs are prefixed with /api/jellyfin/stream so the
+// browser fetches them through the Next.js proxy route, which injects the API
+// key server-side. This keeps the token out of client-visible markup.
 import { jellyfinFetch } from '@/lib/jellyfin/client'
 import type { PlaybackInfo, MediaSource, MediaStream } from '@/lib/jellyfin/types'
 import type { QualityOption } from '@/components/player/types'
@@ -17,6 +26,8 @@ interface ItemMetadata {
   Chapters?: Array<{ Name?: string; StartPositionTicks?: number }>
 }
 
+// Only tiers strictly below nativeHeight are offered — never upscale.
+// Bitrates are reasonable targets for LAN streaming over Tailscale/Headscale.
 const QUALITY_TIERS = [
   { label: '4K',    height: 2160, width: 3840, bitrate: 40_000_000 },
   { label: '1080p', height: 1080, width: 1920, bitrate: 8_000_000  },
@@ -98,6 +109,8 @@ export async function getPlaybackData(id: string): Promise<PlaybackData> {
   let isHls = false
 
   if (source.TranscodingUrl) {
+    // Jellyfin embeds the api_key in the TranscodingUrl query string. Strip it
+    // so the proxy route can inject it server-side instead (keeps it off the wire).
     const rawPath = source.TranscodingUrl.startsWith('/')
       ? source.TranscodingUrl
       : '/' + source.TranscodingUrl
@@ -119,6 +132,9 @@ export async function getPlaybackData(id: string): Promise<PlaybackData> {
     isHls = false
   }
 
+  // hlsTranscodeUrl is the base URL used to build each lower-quality tier.
+  // Even for direct-play content we synthesise a manual HLS URL so the quality
+  // selector has something to transcode to when the user picks a lower tier.
   let hlsTranscodeUrl: string
   if (isHls) {
     hlsTranscodeUrl = streamUrl
@@ -148,6 +164,8 @@ export async function getPlaybackData(id: string): Promise<PlaybackData> {
   const qualityOptions: QualityOption[] = QUALITY_TIERS
     .filter((t) => nativeHeight === 0 || t.height < nativeHeight)
     .map((t) => {
+      // URL is relative (/api/jellyfin/stream/...), so a placeholder base is
+      // needed to parse and mutate query params with the URL API.
       const url = new URL(hlsTranscodeUrl, 'http://placeholder')
       url.searchParams.set('MaxWidth', String(t.width))
       url.searchParams.set('MaxHeight', String(t.height))
@@ -192,6 +210,9 @@ export async function getPlaybackData(id: string): Promise<PlaybackData> {
       ? `S${item.ParentIndexNumber} E${item.IndexNumber}`
       : undefined
 
+  // Chapters are not in ItemMetadata's typed fields so we cast here; Jellyfin
+  // returns them only when the Fields param includes 'Chapters', which the
+  // UserData fetch above does not include. This is a best-effort fallback.
   const chaptersRaw = (item as { Chapters?: Array<{ Name?: string; StartPositionTicks?: number }> }).Chapters ?? []
   const chapters = chaptersRaw.map((c) => ({
     name: c.Name ?? 'Chapter',

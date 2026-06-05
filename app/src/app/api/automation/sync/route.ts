@@ -1,3 +1,14 @@
+/**
+ * POST /api/automation/sync
+ *
+ * Manually triggers the availability check outside the 30-minute cron schedule.
+ * Used by the "Check Availability Now" button on the admin bridge page.
+ *
+ * Returns { updated: number } — the count of items that transitioned to 'imported'.
+ * Errors are caught and returned as { error: string } with a 500 status rather than
+ * letting Next.js produce an unstructured error response.
+ */
+
 import { NextResponse } from 'next/server'
 import { requireAdmin } from '@/lib/dal'
 import { checkAvailability } from '@/lib/automation/availability'

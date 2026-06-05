@@ -1,5 +1,16 @@
 'use client'
 
+/**
+ * Change-password page — used after an admin-forced password reset
+ * (force_pw_change = 1). The login route returns `requiresPasswordChange: true`
+ * instead of issuing a session cookie, so the user lands here without a valid
+ * session. This page calls POST /api/auth/change-password which verifies the
+ * current (temporary) password before accepting the new one.
+ *
+ * On success, other sessions are revoked and the user is redirected to home.
+ * The 1.5s delay gives the success state time to render before the redirect.
+ */
+
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Eye, EyeOff, Loader2, Check, X } from 'lucide-react'
@@ -51,6 +62,7 @@ export default function ChangePasswordPage() {
         return
       }
       setSuccess(true)
+      // Brief delay lets the success state render before navigation tears it down.
       setTimeout(() => router.push('/'), 1500)
     } catch {
       setError('An unexpected error occurred.')

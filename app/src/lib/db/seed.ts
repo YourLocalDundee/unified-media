@@ -1,3 +1,17 @@
+/**
+ * Admin account seeder — runs once on first getDb() call when the users table
+ * is empty (i.e. a fresh DB with no existing accounts).
+ *
+ * Priority order for the initial password:
+ *   1. ADMIN_PASSWORD env var if it passes the password policy
+ *   2. Auto-generated random password (printed to stderr, force_pw_change=1)
+ *
+ * The force_pw_change flag causes the login flow to redirect the admin to
+ * /change-password immediately after their first successful login.
+ *
+ * This file intentionally uses bcryptjs (sync) rather than the async hashPassword
+ * wrapper in password.ts — seeding happens in the synchronous DB init path.
+ */
 import type Database from 'better-sqlite3'
 import bcrypt from 'bcryptjs'
 import { randomBytes } from 'crypto'
@@ -13,6 +27,7 @@ function makeId(size: number): string {
 }
 
 export function seedAdmin(db: Database.Database): void {
+  // Guard: only seed on a completely empty users table — never overwrites existing data
   const count = (db.prepare('SELECT COUNT(*) as c FROM users').get() as { c: number }).c
   if (count > 0) return
 

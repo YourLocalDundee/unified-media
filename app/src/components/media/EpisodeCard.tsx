@@ -14,7 +14,7 @@ export interface NativeEpisode {
   series_id: string | null
   series_poster_path: string | null
   position_ticks: number
-  played: number  // 0 or 1 (SQLite boolean)
+  played: number  // SQLite stores booleans as 0/1 integers
 }
 
 interface EpisodeCardProps {
@@ -38,6 +38,7 @@ export default function EpisodeCard({ episode, isUpNext = false }: EpisodeCardPr
 
   const episodeNumber = `E${String(episode.episode_number ?? 0).padStart(2, '0')}`
 
+  // runtime_ticks is in 100-nanosecond units; 600_000_000 = 1 minute
   const runtime =
     episode.runtime_ticks != null
       ? `${Math.round(episode.runtime_ticks / 600_000_000)} min`

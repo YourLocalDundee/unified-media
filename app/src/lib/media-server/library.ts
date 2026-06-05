@@ -1,3 +1,10 @@
+/**
+ * SQLite data-access layer for the native media server.
+ * All reads and writes for `media_items` and `media_watch_state` live here.
+ * Callers should never query these tables directly — go through these functions
+ * so query changes only need to happen in one place.
+ */
+
 import { getDb } from '@/lib/db/index'
 import type { MediaItem, WatchState } from './types'
 
@@ -10,6 +17,7 @@ export function getItemById(id: string): MediaItem | undefined {
 
 type SortKey = 'title_asc' | 'title_desc' | 'year_desc' | 'year_asc' | 'added_desc' | 'added_asc'
 
+// Pre-built ORDER BY clauses — kept as a lookup to prevent SQL injection via the sort param
 const SORT_CLAUSE: Record<SortKey, string> = {
   title_asc:   'ORDER BY sort_title ASC',
   title_desc:  'ORDER BY sort_title DESC',
@@ -148,19 +156,63 @@ export function getResumeItems(userId: string, limit = 12): MediaItem[] {
 export function getSimilarItems(id: string, limit = 10): MediaItem[] {
   const db = getDb()
   const item = db
-    .prepare('SELECT type, tmdb_id FROM media_items WHERE id = ?')
-    .get(id) as { type: string; tmdb_id: number | null } | undefined
+    .prepare('SELECT type, genres FROM media_items WHERE id = ?')
+    .get(id) as { type: string; genres: string | null } | undefined
 
   if (!item) return []
 
-  // TODO: implement proper similarity using TMDB recommendations or genre matching
-  // For now: return items of same type, excluding the item itself
+  // Parse the subject item's genres
+  let subjectGenres: string[] = []
+  if (item.genres) {
+    try { subjectGenres = JSON.parse(item.genres) as string[] } catch { /* malformed — treat as empty */ }
+  }
+
+  // Fetch candidates of the same type that have genre data, ordered by recency
+  const candidates = db
+    .prepare(
+      `SELECT * FROM media_items WHERE type = ? AND id != ?
+       AND genres IS NOT NULL AND genres != '[]'
+       ORDER BY year DESC LIMIT ?`
+    )
+    .all(item.type, id, limit * 4) as MediaItem[]
+
+  if (subjectGenres.length > 0) {
+    // Filter to items sharing at least one genre with the subject.
+    // genres is stored as JSON text in SQLite; cast through unknown before parsing.
+    const matched = candidates.filter(row => {
+      let rowGenres: string[] = []
+      const raw = row.genres as unknown as string | null
+      try { rowGenres = JSON.parse(raw ?? '[]') as string[] } catch { return false }
+      return rowGenres.some(g => subjectGenres.includes(g))
+    })
+
+    const result = matched.slice(0, limit)
+
+    // Pad with other same-type items if genre filter left fewer than limit
+    if (result.length < limit) {
+      const existing = new Set(result.map(r => r.id))
+      const pad = db
+        .prepare(
+          `SELECT * FROM media_items WHERE type = ? AND id != ?
+           ORDER BY year DESC LIMIT ?`
+        )
+        .all(item.type, id, limit * 2) as MediaItem[]
+      for (const r of pad) {
+        if (!existing.has(r.id)) {
+          result.push(r)
+          if (result.length >= limit) break
+        }
+      }
+    }
+
+    return result
+  }
+
+  // No genre data on subject — fall back to same-type items by year
   return db
     .prepare(
-      `SELECT * FROM media_items
-       WHERE type = ? AND id != ?
-       ORDER BY added_at DESC
-       LIMIT ?`
+      `SELECT * FROM media_items WHERE type = ? AND id != ?
+       ORDER BY year DESC LIMIT ?`
     )
     .all(item.type, id, limit) as MediaItem[]
 }
@@ -188,7 +240,24 @@ export function getAvailableFilters(type?: string): {
 } {
   const db = getDb()
 
-  // TODO: genres are not yet stored in media_items; return empty until schema adds them
+  // Collect distinct genre values by parsing the JSON text column
+  const genreRows = db
+    .prepare(
+      type
+        ? `SELECT DISTINCT genres FROM media_items WHERE type = ? AND genres IS NOT NULL`
+        : `SELECT DISTINCT genres FROM media_items WHERE genres IS NOT NULL`
+    )
+    .all(...(type ? [type] : [])) as Array<{ genres: string }>
+
+  const genreSet = new Set<string>()
+  for (const row of genreRows) {
+    try {
+      const parsed = JSON.parse(row.genres) as string[]
+      for (const g of parsed) if (g) genreSet.add(g)
+    } catch { /* skip malformed rows */ }
+  }
+  const genres = Array.from(genreSet).sort()
+
   const years = db
     .prepare(
       type

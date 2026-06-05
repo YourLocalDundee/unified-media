@@ -1,3 +1,8 @@
+// 10-band graphic equalizer panel inside MediaToolsPanel's Audio tab.
+// The EQ is off by default; enabling it triggers lazy audio chain creation via
+// initAudioChain(). Gain values are persisted to localStorage so the curve
+// survives panel close/reopen, but they are not applied to the chain until the
+// EQ is explicitly enabled to avoid unnecessary audio processing overhead.
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
@@ -21,8 +26,11 @@ export default function MediaEqualizer({ initAudioChain }: Props) {
       const raw = localStorage.getItem('unified-player-eq')
       if (raw) {
         const stored = JSON.parse(raw) as number[]
+        // Length check ensures we don't apply a partially-saved array if the
+        // EQ_FREQUENCIES list is ever extended.
         if (Array.isArray(stored) && stored.length === EQ_FREQUENCIES.length) {
           setGains(stored)
+          // Chain may already exist if another audio tool was opened first.
           if (chainRef.current) {
             applyGainsToChain(chainRef.current, stored)
           }
@@ -47,12 +55,15 @@ export default function MediaEqualizer({ initAudioChain }: Props) {
 
   function handleToggle() {
     if (!enabled) {
+      // First enable: lazy-init the audio chain (no-op if already created by another tool).
       const chain = initAudioChain()
       if (!chain) return
       chainRef.current = chain
       applyGainsToChain(chain, gains)
       setEnabled(true)
     } else {
+      // Disabling: reset all EQ band gains to 0 dB (flat) rather than destroying the chain,
+      // because other audio tools may still be using it.
       if (chainRef.current) {
         resetChainGains(chainRef.current)
       }

@@ -1,3 +1,8 @@
+// TypeScript interfaces for the Sonarr v3 REST API.
+// All field names match Sonarr's JSON exactly.
+// Sonarr runs with network_mode: host — must be reached via 192.168.0.50:8989.
+// Auth is a static X-Api-Key header (no session rotation needed).
+
 export interface SonarrQuality {
   id: number
   name: string
@@ -168,6 +173,9 @@ export interface SonarrQueueResponse {
   records: SonarrQueueItem[]
 }
 
+// Used by POST /api/v3/series. tvdbId is the canonical lookup key for Sonarr;
+// tmdbId is optional metadata. addOptions.monitor controls which episodes are
+// marked for download immediately after the series is added.
 export interface SonarrAddSeriesParams {
   title: string
   qualityProfileId: number

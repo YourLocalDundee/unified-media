@@ -1,3 +1,9 @@
+// Server-side Jellyfin API helpers — browse, search, playback, image URLs,
+// and playback progress reporting. All functions call jellyfinFetch which
+// injects the MediaBrowser auth header automatically.
+// getImageUrl and getStreamUrl build direct Jellyfin URLs that include the API
+// key as a query param — necessary because browsers cannot set custom headers
+// on <img src> or <video src> requests.
 import { jellyfinFetch, JELLYFIN_URL, JELLYFIN_API_KEY } from './client'
 import type {
   JellyfinItem,
@@ -209,6 +215,10 @@ export async function getRecentlyWatched(
 // Playback info
 // ---------------------------------------------------------------------------
 
+// Device profile sent with PlaybackInfo requests. This tells Jellyfin which
+// containers and codecs the client can handle directly, and which require
+// transcoding. HLS (ts/h264/aac) is the fallback because all browsers support
+// it — more exotic formats are handled by direct play when the file qualifies.
 const DEVICE_PROFILE = {
   DirectPlayProfiles: [
     {
@@ -312,6 +322,9 @@ export function getStreamUrl(
 // Playback reporting
 // ---------------------------------------------------------------------------
 
+// Reporting functions tell Jellyfin's session manager that this client is
+// actively playing an item. Without these calls, "Now Playing" in the Jellyfin
+// dashboard stays empty and resume positions are not updated server-side.
 export async function reportPlaybackStart(payload: {
   userId: string
   itemId: string

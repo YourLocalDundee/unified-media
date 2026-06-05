@@ -1,5 +1,17 @@
 'use client'
 
+/**
+ * Reset-password page — accepts the `?token=` query param from the emailed
+ * link and lets the user set a new password via POST /api/auth/reset-password.
+ *
+ * The token is passed to the server for SHA-256 comparison against the stored
+ * hash. On success, all sessions for the user are revoked so any stolen session
+ * cannot persist after a credential reset.
+ *
+ * Missing or absent token redirects immediately to /forgot so the user can
+ * restart the flow rather than seeing a confusing empty form.
+ */
+
 import { useState, useEffect, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { Loader2, Eye, EyeOff, Check, X, CheckCircle2 } from 'lucide-react'
@@ -28,6 +40,8 @@ function ResetForm() {
   const [error, setError] = useState('')
   const [fieldErrors, setFieldErrors] = useState<string[]>([])
 
+  // replace() rather than push() so the token-less URL is not in history;
+  // hitting Back after being redirected to /forgot won't loop back here.
   useEffect(() => {
     if (!token) router.replace('/forgot')
   }, [token, router])
@@ -147,6 +161,7 @@ export default function ResetPasswordPage() {
           <p className="mt-2 text-sm text-muted-foreground">Choose a strong password for your account.</p>
         </div>
         <div className="rounded-xl border border-border bg-card p-8 shadow-lg">
+          {/* Suspense required because ResetForm calls useSearchParams() */}
           <Suspense fallback={<Loader2 className="h-6 w-6 animate-spin text-muted-foreground mx-auto" />}>
             <ResetForm />
           </Suspense>

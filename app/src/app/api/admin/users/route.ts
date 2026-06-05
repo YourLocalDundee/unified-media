@@ -1,3 +1,8 @@
+// GET /api/admin/users
+// Server-paginated user list with optional search, role, and status filters.
+// Builds the WHERE clause dynamically to keep params as bound values (not interpolated)
+// and avoid SQLi while still supporting the full filter matrix.
+
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAdmin } from '@/lib/dal'
 import { getDb } from '@/lib/db/index'
@@ -14,10 +19,12 @@ export async function GET(req: NextRequest) {
   const status = searchParams.get('status') ?? 'all'
   const limit = 25
 
+  // Start with a tautology so every clause can be appended as AND without special-casing the first.
   let where = 'WHERE 1=1'
   const params: (string | number)[] = []
 
   if (search) {
+    // LOWER() on both sides for case-insensitive match without a collation change.
     where += ' AND (LOWER(username) LIKE ? OR LOWER(COALESCE(email,\'\')) LIKE ?)'
     params.push(`%${search.toLowerCase()}%`, `%${search.toLowerCase()}%`)
   }

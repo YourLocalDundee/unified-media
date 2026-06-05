@@ -1,3 +1,7 @@
+// POST /api/admin/users/[id]/activate
+// Re-enables a previously suspended account. No self-suspension guard needed here
+// because the suspend route already prevents an admin from suspending themselves.
+
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAdmin, logEvent } from '@/lib/dal'
 import { getDb } from '@/lib/db/index'

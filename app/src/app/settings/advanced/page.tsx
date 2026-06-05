@@ -1,3 +1,13 @@
+/**
+ * /settings/advanced — escape hatches for debugging and preference resets.
+ * All state here is client-only (localStorage). There is no server-side
+ * component because nothing here touches the DB or authenticated APIs.
+ *
+ * The Jellyfin URL override lets a user point the browser at a different
+ * Jellyfin base URL for video streaming without changing the server-side
+ * JELLYFIN_URL env var (useful when streaming via a direct LAN path vs. the
+ * reverse-proxy path).
+ */
 'use client'
 
 import { useState } from 'react'
@@ -5,6 +15,7 @@ import { AlertTriangle } from 'lucide-react'
 
 export default function AdvancedSettingsPage() {
   const [jellyfinUrl, setJellyfinUrl] = useState(() => {
+    // Lazy initializer to safely read localStorage — runs only on the client
     if (typeof window !== 'undefined') {
       return localStorage.getItem('unified-jellyfin-url-override') ?? ''
     }
@@ -47,7 +58,7 @@ export default function AdvancedSettingsPage() {
         <h2 className="text-lg font-semibold">Download Client</h2>
         <div className="flex items-center justify-between py-2">
           <span className="text-sm font-medium">Active Client</span>
-          <span className="text-sm text-muted-foreground">qBittorrent</span>
+          <span className="text-sm text-muted-foreground">UMT</span>
         </div>
         <p className="text-xs text-muted-foreground">
           Changing the download client requires a container restart and is configured via environment

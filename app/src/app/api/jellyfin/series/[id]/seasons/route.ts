@@ -1,3 +1,5 @@
+// Season list for a TV series. Sorts by IndexNumber with the Specials season
+// (IndexNumber=0) moved to the end of the list since it is less commonly accessed.
 import { NextRequest, NextResponse } from 'next/server'
 import { getSeasons } from '@/lib/jellyfin/api'
 

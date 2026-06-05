@@ -1,3 +1,6 @@
+// Typed Radarr API helpers. All functions run server-side.
+// Movies are identified by Radarr's internal integer ID for mutations;
+// TMDB ID is used for lookups and adds.
 import { radarrFetch } from './client'
 import type {
   RadarrQualityProfile,
@@ -39,6 +42,8 @@ export function removeQueueItem(id: number, blacklist = false): Promise<void> {
   return radarrFetch(`/queue/${id}?blacklist=${blacklist}`, { method: 'DELETE' })
 }
 
+// Note: the command name is 'MoviesSearch' (plural) and accepts an array of IDs,
+// even when searching a single movie. This matches Radarr's v3 API spec.
 export function commandSearch(movieId: number): Promise<void> {
   return radarrFetch('/command', {
     method: 'POST',

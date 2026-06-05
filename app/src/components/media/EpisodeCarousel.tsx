@@ -47,7 +47,7 @@ export default function EpisodeCarousel({ seriesId, seasonId }: EpisodeCarouselP
         aVal = a.episode_number ?? 0
         bVal = b.episode_number ?? 0
       } else if (sortBy === 'airdate') {
-        // native DB doesn't store air date; fall back to episode number
+        // Air date is not stored in the native media DB — episode number is the best proxy.
         aVal = a.episode_number ?? 0
         bVal = b.episode_number ?? 0
       } else {
@@ -59,6 +59,7 @@ export default function EpisodeCarousel({ seriesId, seasonId }: EpisodeCarouselP
     return list
   }, [episodes, sortBy, sortOrder, filter])
 
+  // First episode that is fully unwatched (not partially in-progress) — episode 1 if all are played.
   const upNextIndex = useMemo(() => {
     if (!episodes || episodes.length === 0) return 0
     const idx = episodes.findIndex((ep) => ep.played === 0 && ep.position_ticks === 0)

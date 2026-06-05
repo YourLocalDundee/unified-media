@@ -1,3 +1,8 @@
+// Subtitle downloader for the native subtitle system (Independence Build Phase 4).
+// Processes all 'wanted' rows from the subtitle_wants table one at a time,
+// with a 1-second delay between downloads to respect OpenSubtitles rate limits.
+// The free tier allows only 5 downloads per day — skipping (no results found)
+// does not consume a quota slot, but a successful getDownloadLink call does.
 import fs from 'fs/promises'
 import path from 'path'
 import { getWantedSubtitles, updateSubtitleStatus } from './monitor'
@@ -25,6 +30,8 @@ async function writeSrtFile(want: SubtitleWant, content: string): Promise<string
   }
 
   try {
+    // Output file follows the Jellyfin/Plex naming convention:
+    // <basename>.<language_code>.srt (e.g. Movie.en.srt) for auto-pickup.
     const ext = path.extname(want.media_path)
     const base = want.media_path.slice(0, want.media_path.length - ext.length)
     const outPath = `${base}.${want.language}.srt`
@@ -83,6 +90,11 @@ async function processOnePending(want: SubtitleWant): Promise<'downloaded' | 'sk
 }
 
 async function downloadPendingSubtitles(): Promise<{ downloaded: number; skipped: number; failed: number }> {
+  if (!process.env.OPENSUBTITLES_API_KEY) {
+    console.warn('[subtitle] OPENSUBTITLES_API_KEY not set — subtitle downloads skipped')
+    return { downloaded: 0, skipped: 0, failed: 0 }
+  }
+
   const wants = await getWantedSubtitles()
 
   let downloaded = 0
@@ -95,6 +107,8 @@ async function downloadPendingSubtitles(): Promise<{ downloaded: number; skipped
     else if (result === 'skipped') skipped++
     else failed++
 
+    // 1-second pause between downloads to avoid hammering OpenSubtitles and
+    // to stay well within the free tier's burst rate limit.
     await new Promise(r => setTimeout(r, 1000))
   }
 

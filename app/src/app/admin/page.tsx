@@ -1,3 +1,6 @@
+// Admin overview page — rendered server-side so it can query the SQLite DB directly
+// without a round-trip through an API route. All data is point-in-time on load.
+
 import { requireAdmin } from '@/lib/dal'
 import { getDb } from '@/lib/db/index'
 import { formatDate } from '@/lib/utils'
@@ -42,19 +45,21 @@ export default async function AdminOverviewPage() {
     `SELECT * FROM audit_log ORDER BY created_at DESC LIMIT 20`
   ).all() as AuditRow[]
 
+  // "Active now" means last seen within the last 5 minutes
   const activeSessions = db.prepare(
     `SELECT s.last_seen, s.ip_address, u.username
      FROM sessions s JOIN users u ON s.user_id = u.id
      WHERE s.last_seen > ? ORDER BY s.last_seen DESC`
   ).all(now - 5 * 60 * 1000) as SessionRow[]
 
-  // Watch volume last 14 days
+  // Group by integer day (epoch ms / ms-per-day) so bars align with calendar days
   const watchDays = db.prepare(
     `SELECT (started_at / 86400000) as day, COUNT(*) as count
      FROM watch_events WHERE started_at > ?
      GROUP BY day ORDER BY day`
   ).all(now - 14 * dayMs) as WatchDayRow[]
 
+  // Avoid division by zero when there are no watch events
   const maxCount = Math.max(...watchDays.map(d => d.count), 1)
 
   return (

@@ -41,6 +41,12 @@ export async function PATCH(
     torznab_url: string
     api_key: string
     enabled: number
+    description: string
+    base_url: string
+    requires_auth: number
+    requires_flaresolverr: number
+    search_type: string
+    pending_credentials: string
   }>
 
   const updated = updateIndexer(id, body)

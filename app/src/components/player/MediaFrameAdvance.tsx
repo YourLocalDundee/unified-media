@@ -1,8 +1,13 @@
+// Frame-by-frame advance/rewind panel.
+// Assumes 24 fps — the most common film frame rate. The browser has no API to
+// query the actual frame rate of the loaded video, so 1/24 s is a reasonable
+// constant. Users can nudge manually if the content is 25/30/60 fps.
 'use client'
 
 import { useEffect, useState } from 'react'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 
+// Step size in seconds. 1/24 ≈ 41.67ms per frame.
 const FRAME_DURATION = 1 / 24
 
 interface Props {
@@ -39,6 +44,8 @@ export default function MediaFrameAdvance({ videoRef }: Props) {
   const handleForward = () => {
     const video = videoRef.current
     if (!video) return
+    // Must pause before seeking; seeking a playing video causes the browser to
+    // resume from the new position, making the step invisible to the user.
     video.pause()
     video.currentTime += FRAME_DURATION
   }
@@ -47,9 +54,11 @@ export default function MediaFrameAdvance({ videoRef }: Props) {
     const video = videoRef.current
     if (!video) return
     video.pause()
+    // Clamp to 0 to avoid negative currentTime which some browsers reject.
     video.currentTime = Math.max(0, video.currentTime - FRAME_DURATION)
   }
 
+  // Approximate frame counter, assuming 24 fps.
   const frameNumber = Math.floor(currentTime * 24)
 
   return (

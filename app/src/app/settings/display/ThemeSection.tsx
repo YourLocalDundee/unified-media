@@ -1,7 +1,16 @@
+/**
+ * Theme picker within /settings/display.
+ * Renders built-in themes plus any user-created custom themes from localStorage
+ * (`unified-custom-themes`). Custom theme CSS is injected as <style> elements
+ * so the preview swatches apply correctly before the user selects a theme.
+ *
+ * The StorageEvent listener keeps multiple open tabs in sync — selecting a
+ * theme in one tab updates this component in any other open settings tab.
+ */
 'use client'
 
-import { useState, useEffect } from 'react'
-import { Plus, X, Check } from 'lucide-react'
+import { useState, useEffect, useRef } from 'react'
+import { Plus, X, Check, Upload, Download } from 'lucide-react'
 import {
   BUILTIN_THEMES,
   CreateThemeModal,
@@ -28,10 +37,16 @@ export default function ThemeSection() {
   const [active, setActive] = useState<string>('dark')
   const [customThemes, setCustomThemes] = useState<CustomTheme[]>([])
   const [modalOpen, setModalOpen] = useState(false)
+  const [copiedId, setCopiedId] = useState<string | null>(null)
+  const [importOpen, setImportOpen] = useState(false)
+  const [importValue, setImportValue] = useState('')
+  const [importError, setImportError] = useState<string | null>(null)
+  const importInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     const saved = loadCustomThemes()
     setCustomThemes(saved)
+    // Inject CSS for every custom theme so their color swatches render correctly
     for (const ct of saved) {
       injectCustomThemeStyle(ct.id, buildCustomThemeCSS(ct.id, ct.colors))
     }
@@ -69,7 +84,55 @@ export default function ThemeSection() {
     setActive(theme.id)
   }
 
+  function handleExport(ct: CustomTheme, e: React.MouseEvent) {
+    e.stopPropagation()
+    const shareString = btoa(JSON.stringify(ct))
+    navigator.clipboard.writeText(shareString).then(() => {
+      setCopiedId(ct.id)
+      setTimeout(() => setCopiedId(prev => (prev === ct.id ? null : prev)), 1800)
+    })
+  }
+
+  function handleImport() {
+    setImportError(null)
+    const raw = importValue.trim()
+    if (!raw) return
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(atob(raw))
+    } catch {
+      setImportError('Invalid theme string')
+      setTimeout(() => setImportError(null), 2500)
+      return
+    }
+    if (
+      typeof parsed !== 'object' ||
+      parsed === null ||
+      typeof (parsed as Record<string, unknown>).name !== 'string' ||
+      typeof (parsed as Record<string, unknown>).colors !== 'object' ||
+      (parsed as Record<string, unknown>).colors === null
+    ) {
+      setImportError('Invalid theme string')
+      setTimeout(() => setImportError(null), 2500)
+      return
+    }
+    const incoming = parsed as CustomTheme
+    const newTheme: CustomTheme = {
+      ...incoming,
+      id: `custom-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    }
+    setCustomThemes(prev => {
+      const next = [...prev, newTheme]
+      saveCustomThemes(next)
+      injectCustomThemeStyle(newTheme.id, buildCustomThemeCSS(newTheme.id, newTheme.colors))
+      return next
+    })
+    setImportValue('')
+    setImportOpen(false)
+  }
+
   function handleDelete(id: string, e: React.MouseEvent) {
+    // Stop propagation so the card's onClick (which would select the theme) doesn't fire
     e.stopPropagation()
     removeCustomThemeStyle(id)
     setCustomThemes(prev => {
@@ -77,6 +140,7 @@ export default function ThemeSection() {
       saveCustomThemes(next)
       return next
     })
+    // Fall back to dark if the active theme is the one being deleted
     if (active === id) {
       setActive('dark')
       applyTheme('dark')

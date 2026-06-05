@@ -1,3 +1,18 @@
+/**
+ * Admin Request Bridge Page (/admin/automation/bridge)
+ *
+ * Shows all monitored items that were created via the request approval bridge —
+ * items that have a tmdb_id, meaning they came from an approved media request
+ * rather than being manually added through the main automation page.
+ *
+ * Two actions are available:
+ *   - "Check Availability Now" — triggers a manual availability sync (POST /api/automation/sync)
+ *     which polls media_items and advances grabbed → imported for any finished downloads
+ *   - Refresh button — re-fetches the bridged items list
+ *
+ * The stats row (Total / Wanted / Grabbed / Imported) gives a quick pipeline health snapshot.
+ */
+
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
@@ -24,6 +39,7 @@ function relativeTime(ms: number): string {
   return `${Math.floor(diff / 86_400_000)}d ago`
 }
 
+// Static map avoids constructing Tailwind class strings dynamically (which get purged)
 const STATUS_BADGE: Record<BridgedItem['status'], string> = {
   wanted: 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30',
   grabbed: 'bg-blue-500/20 text-blue-400 border border-blue-500/30',
@@ -64,8 +80,10 @@ export default function BridgePage() {
         setSyncResult(`Error: ${data.error ?? 'Unknown error'}`)
       } else {
         const count = data.updated ?? 0
+        // Human-readable result stays visible in the header until the next sync
         setSyncResult(count > 0 ? `${count} item${count === 1 ? '' : 's'} updated` : 'Nothing new found')
       }
+      // Refresh the table so updated statuses (grabbed → imported) are reflected immediately
       void fetchItems()
     } catch (err) {
       setSyncResult(`Error: ${String(err)}`)
@@ -74,6 +92,7 @@ export default function BridgePage() {
     }
   }
 
+  // Derived stats computed client-side from the already-loaded items list
   const total = items.length
   const wanted = items.filter(i => i.status === 'wanted').length
   const grabbed = items.filter(i => i.status === 'grabbed').length
@@ -161,6 +180,7 @@ export default function BridgePage() {
                       </span>
                     </td>
                     <td className="px-4 py-3 text-muted-foreground">
+                      {/* Link to TMDB so admins can quickly verify the correct item was matched */}
                       <a
                         href={`https://www.themoviedb.org/${item.type === 'tv' ? 'tv' : 'movie'}/${item.tmdb_id}`}
                         target="_blank"

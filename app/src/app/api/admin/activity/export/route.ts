@@ -1,3 +1,7 @@
+// GET /api/admin/activity/export
+// Streams the full untruncated watch_events table as a CSV download.
+// No pagination — this is intentionally a full dump for offline analysis.
+
 import { NextResponse } from 'next/server'
 import { requireAdmin } from '@/lib/dal'
 import { getDb } from '@/lib/db/index'
@@ -21,6 +25,7 @@ export async function GET() {
   ).all() as WatchRow[]
 
   const header = 'username,title,type,series,season,episode,progress_pct,watched_sec,duration_sec,completed,started_at\n'
+  // Each cell is JSON.stringify'd to handle commas and quotes inside strings safely.
   const body = rows.map(r =>
     [r.username, r.item_title, r.item_type, r.series_title ?? '', r.season_num ?? '', r.episode_num ?? '',
      r.progress_pct ?? '', r.watched_sec ?? '', r.duration_sec ?? '', r.completed,
@@ -30,6 +35,7 @@ export async function GET() {
   return new NextResponse(header + body, {
     headers: {
       'Content-Type': 'text/csv',
+      // Content-Disposition triggers browser "Save As" dialog with a default filename.
       'Content-Disposition': 'attachment; filename="watch-activity.csv"',
     },
   })

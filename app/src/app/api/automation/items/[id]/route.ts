@@ -1,3 +1,12 @@
+/**
+ * GET    /api/automation/items/[id]  — fetch a single monitored item
+ * PATCH  /api/automation/items/[id]  — update fields on a monitored item
+ * DELETE /api/automation/items/[id]  — remove from monitoring (does not delete grab history)
+ *
+ * Admin-only. The PATCH body passes through to monitor.updateItem which has its own
+ * allowlist-based SQL injection guard — no need to re-validate field names here.
+ */
+
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAdmin } from '@/lib/dal'
 import { getItemById, updateItem, deleteItem } from '@/lib/automation/monitor'
@@ -11,6 +20,7 @@ export async function GET(
 ) {
   await requireAdmin()
 
+  // params is a Promise in Next.js 15 App Router — must be awaited before reading
   const { id: idStr } = await params
   const id = parseInt(idStr, 10)
   if (isNaN(id)) {
@@ -37,11 +47,13 @@ export async function PATCH(
     return NextResponse.json({ error: 'Invalid id' }, { status: 400 })
   }
 
+  // Pre-check existence to return 404 before attempting a no-op update
   const existing = getItemById(id)
   if (!existing) {
     return NextResponse.json({ error: 'Item not found' }, { status: 404 })
   }
 
+  // Body is typed loosely here — updateItem's ITEM_ALLOWED_FIELDS set is the real safety net
   const body = await req.json() as Partial<{
     title: string
     tmdb_id: number | null
@@ -74,5 +86,6 @@ export async function DELETE(
     return NextResponse.json({ error: 'Item not found' }, { status: 404 })
   }
 
+  // 204 No Content — standard REST response for a successful DELETE with no body
   return new NextResponse(null, { status: 204 })
 }

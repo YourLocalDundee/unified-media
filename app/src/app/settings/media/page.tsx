@@ -1,3 +1,12 @@
+/**
+ * /settings/media — read-only status dashboard for the *arr stack (Prowlarr
+ * indexers, Sonarr/Radarr quality profiles and root folders, Bazarr subtitle
+ * providers). Admin-only; regular users are blocked by requireAdmin().
+ *
+ * All fetches run in parallel with Promise.allSettled so one failing service
+ * (e.g. Prowlarr down) doesn't block the page — the relevant tab just shows
+ * an "unavailable" state instead of a 500 error.
+ */
 import { requireAdmin } from '@/lib/dal'
 import { prowlarrFetch } from '@/lib/prowlarr/client'
 import { sonarrFetch } from '@/lib/sonarr/client'

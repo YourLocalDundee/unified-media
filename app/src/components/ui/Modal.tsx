@@ -25,6 +25,8 @@ export function Modal({ isOpen, onClose, title, children, className }: ModalProp
       ref={ref}
       onClose={onClose}
       onClick={(e) => {
+        // The dialog element itself is the backdrop — clicking outside the inner
+        // content hits the dialog directly, so target === ref.current means backdrop.
         if (e.target === ref.current) onClose()
       }}
       className={cn(

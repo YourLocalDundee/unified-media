@@ -1,3 +1,10 @@
+/**
+ * Client component for /settings/profile.
+ * Manages four independent save flows (demographics, display name, email,
+ * password) each with their own status state rather than a single global
+ * save to allow per-section feedback without blocking unrelated fields.
+ * Session management (list + revoke) is handled by the nested SessionsSection.
+ */
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
@@ -6,9 +13,11 @@ import { useState, useEffect, useCallback } from 'react'
 // Helpers
 // ---------------------------------------------------------------------------
 
+// Deterministic hue from username so the same user always gets the same avatar color
 function usernameToHue(username: string): number {
   let hash = 0
   for (const c of username) {
+    // djb2-style hash; &0xffffffff keeps it 32-bit to avoid floating point drift
     hash = (hash * 31 + c.charCodeAt(0)) & 0xffffffff
   }
   return Math.abs(hash) % 360
@@ -48,6 +57,7 @@ function inferDevice(userAgent: string | null): string {
 // Password rule checker (mirrors validatePassword logic from password.ts)
 // ---------------------------------------------------------------------------
 
+// Must stay in sync with the server-side SPECIAL_CHARS list in src/lib/password.ts
 const SPECIAL_CHARS = '!@#$%^&*()-_=+[]{}|;:,.<>?/~`\'"\\'.split('')
 
 interface PwRules {
@@ -189,6 +199,7 @@ function SessionsSection({ currentSessionId }: { currentSessionId: string }) {
       if (!res.ok) {
         setError('Failed to revoke sessions')
       } else {
+        // Optimistically remove all non-current sessions from the list without a refetch
         setSessions((prev) => prev.filter((s) => s.id === currentSessionId))
       }
     } catch {

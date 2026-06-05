@@ -1,3 +1,11 @@
+/**
+ * /search — server component that runs the TMDB search and renders results.
+ * The query, page, and type filter come from URL search params so that results
+ * are linkable, bookmarkable, and rendered server-side (no client-side fetch
+ * waterfall). The SearchInput client component pushes new params with
+ * router.push() so the server re-renders with fresh results on each keystroke
+ * (debounced 300ms).
+ */
 import type { Metadata } from 'next'
 import { searchTMDB } from '@/lib/media-server/tmdb'
 import SearchInput from './SearchInput'
@@ -32,6 +40,8 @@ export default async function SearchPage({
   const mediaType: MediaType =
     type === 'movie' || type === 'tv' ? type : 'all'
 
+  // Swallow errors rather than propagating to the error boundary — a failed
+  // TMDB call renders as "no results" rather than crashing the page.
   const searchData = query
     ? await searchTMDB(query, mediaType, pageNum).catch(() => null)
     : null
@@ -48,7 +58,8 @@ export default async function SearchPage({
           <h1 className="text-3xl font-bold tracking-tight">Search</h1>
           <SearchInput initialQuery={query ?? ''} />
 
-          {/* Type tabs */}
+          {/* Type tabs — plain <a> tags so they cause a full navigation to the
+              server component with updated search params; no client routing needed */}
           <div className="flex gap-1">
             {TYPE_TABS.map((tab) => {
               const isActive = mediaType === tab.value

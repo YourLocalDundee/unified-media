@@ -1,3 +1,8 @@
+// TypeScript shapes for the Jellyfin HTTP API.
+// Field names use Jellyfin's PascalCase convention as returned in JSON — no
+// adapter mapping. PlaybackPositionTicks is in 10,000ths of a second (100ns units).
+// Used by client.ts, api.ts, and playback.ts (all server-only).
+
 export interface JellyfinUserData {
   IsFavorite: boolean
   PlayCount: number
@@ -8,6 +13,10 @@ export interface JellyfinUserData {
   Key?: string
 }
 
+// JellyfinItem covers every media type returned by /Users/{id}/Items.
+// All image-related fields (ImageTags, BackdropImageTags, Parent*) are optional
+// because episodes and albums often lack their own images and fall back to the
+// parent's image — see getImageUrl in api.ts for the fallback chain logic.
 export interface JellyfinItem {
   Id: string
   Name: string
@@ -83,6 +92,9 @@ export interface MediaStream {
   VideoRange?: string
 }
 
+// MediaSource is the top-level container returned by /Items/{id}/PlaybackInfo.
+// There is usually one source per item, but re-encodes or multi-version libraries
+// can return several. Only MediaSources[0] is used by getPlaybackData().
 export interface MediaSource {
   Id: string
   Path?: string

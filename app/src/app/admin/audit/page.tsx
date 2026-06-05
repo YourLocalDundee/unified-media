@@ -1,3 +1,5 @@
+// Admin audit log — server-paginated view of the audit_log table. Rows with a
+// non-empty `details` JSON field are expandable inline to inspect event metadata.
 'use client'
 
 import { useState, useEffect } from 'react'
@@ -33,7 +35,13 @@ export default function AdminAuditPage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold text-foreground">Audit Log</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold text-foreground">Audit Log</h1>
+        <a href="/api/admin/audit/export" download="audit-log.csv"
+           className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium bg-zinc-800 text-zinc-300 hover:bg-zinc-700">
+          Export CSV
+        </a>
+      </div>
 
       {loading ? <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /> : (
         <div className="rounded-xl border border-border bg-card overflow-hidden">
@@ -57,6 +65,7 @@ export default function AdminAuditPage() {
                     <td className="px-4 py-2 font-mono text-xs text-muted-foreground">{entry.ip_address ?? '—'}</td>
                     <td className="px-4 py-2 text-muted-foreground">{entry.country ?? '—'}</td>
                     <td className="px-4 py-2">
+                      {/* Only show the expand toggle when details is a non-empty JSON object */}
                       {entry.details && entry.details !== '{}' && (
                         expanded.has(entry.id)
                           ? <ChevronDown className="h-4 w-4 text-muted-foreground" />
@@ -67,6 +76,7 @@ export default function AdminAuditPage() {
                   {expanded.has(entry.id) && entry.details && (
                     <tr key={`${entry.id}-detail`} className="bg-muted/10">
                       <td colSpan={6} className="px-4 py-2">
+                        {/* Re-parse + re-stringify for pretty-printing; details is stored as compact JSON */}
                         <pre className="text-xs font-mono text-muted-foreground whitespace-pre-wrap">
                           {JSON.stringify(JSON.parse(entry.details), null, 2)}
                         </pre>

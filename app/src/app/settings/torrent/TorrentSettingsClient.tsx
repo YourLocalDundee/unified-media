@@ -1,3 +1,15 @@
+/**
+ * Full qBittorrent settings UI (tabs: Downloads, Connection, Speed, BitTorrent,
+ * Queue, Privacy, Advanced, RSS, WebUI, Interface).
+ *
+ * The first 9 tabs read/write qBittorrent directly via GET /api/qbit/app/preferences
+ * and POST /api/qbit/app/setPreferences. Only the diff for the active tab's
+ * fields is sent on save — not the entire preferences object — to avoid
+ * accidentally overwriting settings changed by another client since load time.
+ *
+ * The "Interface" tab is localStorage-only (TorrentUIPreferences) and never
+ * touches qBittorrent; it controls how the /downloads page renders locally.
+ */
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
@@ -230,7 +242,8 @@ const TABS = [
   { id: 'interface', label: 'Interface' },
 ]
 
-// Fields owned by each qBit tab (used for diff & dirty detection)
+// Maps each tab ID to the QbtPreferences fields it owns. Used both to compute
+// the save diff (only changed fields in scope) and to highlight dirty tabs.
 const TAB_FIELDS: Record<string, (keyof QbtPreferences)[]> = {
   downloads: [
     'save_path', 'temp_path_enabled', 'temp_path', 'incomplete_files_ext',
@@ -362,6 +375,7 @@ function loadUIPrefs(): TorrentUIPreferences {
   try {
     const raw = localStorage.getItem(UI_PREFS_KEY)
     if (!raw) return DEFAULT_UI_PREFS
+    // Spread defaults first so new fields added in future versions get their defaults
     return { ...DEFAULT_UI_PREFS, ...JSON.parse(raw) }
   } catch {
     return DEFAULT_UI_PREFS
@@ -454,7 +468,8 @@ export default function TorrentSettingsClient() {
     setSaveError(null)
     setSaveSuccess(false)
 
-    // Compute diff for current tab's fields only
+    // Send only the changed fields in scope for the active tab; qBittorrent
+    // accepts a partial JSON object and merges it into its preferences.
     const tabFields = TAB_FIELDS[activeTab] ?? []
     const diff: Record<string, unknown> = {}
     const cur = current as unknown as Record<string, unknown>
@@ -471,6 +486,8 @@ export default function TorrentSettingsClient() {
     }
 
     try {
+      // qBittorrent's setPreferences endpoint expects form-urlencoded with a
+      // single "json" field containing the stringified diff object.
       const body = new URLSearchParams({ json: JSON.stringify(diff) })
       const res = await fetch('/api/qbit/app/setPreferences', {
         method: 'POST',
@@ -478,7 +495,7 @@ export default function TorrentSettingsClient() {
         body: body.toString(),
       })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      // Merge saved fields into original
+      // Advance the baseline so the dirty indicator resets without a full refetch
       setOriginal((prev) => prev ? { ...prev, ...diff } as QbtPreferences : prev)
       setSaveSuccess(true)
       setTimeout(() => setSaveSuccess(false), 2000)

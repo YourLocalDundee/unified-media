@@ -1,3 +1,9 @@
+/**
+ * /settings/about — version info, changelog, and help tips.
+ * Rendered at build time (force-static) because the version and changelog
+ * never change at runtime. The changelog is parsed directly from
+ * CHANGELOG.md at the repo root at build time — no API call needed.
+ */
 import type { Metadata } from 'next'
 import { readFileSync } from 'fs'
 import path from 'path'
@@ -5,6 +11,7 @@ import pkg from '../../../../package.json'
 
 export const metadata: Metadata = { title: 'About — Settings' }
 
+// Static render — changelog is baked in at build; no need to re-render per request
 export const dynamic = 'force-static'
 
 interface ChangelogVersion {
@@ -15,8 +22,11 @@ interface ChangelogVersion {
 
 function parseChangelog(): ChangelogVersion[] {
   try {
+    // CHANGELOG.md lives one level above the app/ directory in the repo root
     const raw = readFileSync(path.join(process.cwd(), '..', 'CHANGELOG.md'), 'utf8')
+    // Each version block starts with "## ["; split on that boundary
     const chunks = raw.split(/\n## \[/).slice(1)
+    // Only show the three most recent versions to avoid an overwhelming list
     return chunks.slice(0, 3).map((chunk) => {
       const firstLine = chunk.split('\n')[0]
       const versionMatch = firstLine.match(/^([^\]]+)\]/)

@@ -1,6 +1,14 @@
+// Core indexer logic for the native indexer system (Independence Build Phase 1).
+// Provides Torznab XML parsing, per-indexer search with timeout, fan-out search
+// across all enabled indexers with deduplication, and a health check capability.
+// All network I/O here is direct from the Next.js server to the indexer URLs —
+// not proxied through Prowlarr.
 import { parseStringPromise } from 'xml2js'
 import { getEnabledIndexers } from './config'
 import type { Indexer, TorznabResult, TorznabSearchParams, IndexerHealth } from './types'
+import { searchYts } from './adapters/yts'
+import { searchEztv } from './adapters/eztv'
+import { searchNyaa } from './adapters/nyaa'
 
 // ---------------------------------------------------------------------------
 // Simple concurrency limiter (semaphore) — p-limit v6+ is ESM-only and this
@@ -74,7 +82,8 @@ export async function parseXml(xml: string, indexerName: string): Promise<Torzna
         const name = obj.$?.name
         const value = obj.$?.value
         if (name && value !== undefined) {
-          // Collect all category values into an array; other attrs take first value
+          // An item can appear in multiple categories (e.g. 2000 and 2030);
+          // collect all of them. For all other attrs keep only the first value.
           if (name === 'category') {
             categoryValues.push(value)
           } else if (!attrMap.has(name)) {
@@ -157,6 +166,8 @@ export async function searchIndexer(
   if (params.season) url.searchParams.set('season', params.season)
   if (params.ep) url.searchParams.set('ep', params.ep)
 
+  // 10-second timeout prevents a slow indexer from blocking the entire
+  // fan-out. AbortController is the only cross-runtime cancellation mechanism.
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), 10_000)
 
@@ -199,7 +210,19 @@ export async function searchAllIndexers(
   const limit = createLimit(3)
 
   const settled = await Promise.allSettled(
-    indexers.map(indexer => limit(() => searchIndexer(indexer, params))),
+    indexers.map(indexer => limit(async () => {
+      switch (indexer.search_type) {
+        case 'yts':
+          return params.q ? searchYts(params.q) : []
+        case 'eztv':
+          return params.imdbid ? searchEztv(params.imdbid) : []
+        case 'nyaa':
+          return params.q ? searchNyaa(params.q) : []
+        default:
+          // 'torznab' or any unrecognized type — use existing Torznab path
+          return searchIndexer(indexer, params)
+      }
+    })),
   )
 
   // Merge all results

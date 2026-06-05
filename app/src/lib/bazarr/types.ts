@@ -1,3 +1,8 @@
+// TypeScript interfaces for the Bazarr REST API.
+// Bazarr runs with network_mode: host — reached via 192.168.0.50:6767.
+// Auth is a static X-API-KEY header (note uppercase KEY vs *arr services).
+// Bazarr wraps most list responses in a { data: T[] } envelope.
+
 export interface BazarrLanguage {
   name: string
   code2: string
@@ -86,6 +91,8 @@ export interface BazarrSystemStatus {
   cpu_cores: number
 }
 
+// Note: Bazarr encodes hi/forced/audio_exclude as the strings "True"/"False",
+// not actual booleans — compare with === 'True', not a truthy check.
 export interface BazarrLanguageProfile {
   profileId: number
   name: string

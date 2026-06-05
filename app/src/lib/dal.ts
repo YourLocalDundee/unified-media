@@ -1,3 +1,21 @@
+/**
+ * Data Access Layer (DAL) — session management and audit logging.
+ *
+ * All exports are server-only (enforced by the 'server-only' sentinel).
+ * This is the single authoritative location for reading/writing sessions;
+ * nothing else in the app touches the sessions table directly.
+ *
+ * Session lifecycle:
+ *   - 30-day rolling TTL — each request bumps last_seen and extends expires_at
+ *   - 24-hour rotation — after 24h from creation the session ID is replaced
+ *     and a new cookie is issued (limits the window for stolen-cookie reuse)
+ *   - 90-day absolute maximum — rotation resets created_at so this is the
+ *     wall-clock limit regardless of continuous activity
+ *
+ * Cookie mutations (set/delete) throw in Server Component render context under
+ * Next.js 15. Every mutation site is wrapped in try/catch so that Route
+ * Handlers and Server Actions work normally while Server Components no-op.
+ */
 import 'server-only'
 import { cookies } from 'next/headers'
 import { redirect } from 'next/navigation'
@@ -12,10 +30,12 @@ export interface SessionData {
 }
 
 const SESSION_COOKIE = 'unified-session'
-const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000
-const ROTATION_INTERVAL_MS = 24 * 60 * 60 * 1000
-const ABSOLUTE_TTL_MS = 90 * 24 * 60 * 60 * 1000
+const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000       // rolling window
+const ROTATION_INTERVAL_MS = 24 * 60 * 60 * 1000       // re-issue session ID after this long
+const ABSOLUTE_TTL_MS = 90 * 24 * 60 * 60 * 1000      // hard ceiling regardless of activity
 
+// Uses Web Crypto (available in both Node.js 15+ and Edge Runtime).
+// Modulo bias is negligible for 62 chars over a 256-value byte.
 function makeId(size: number): string {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
   let result = ''
@@ -43,6 +63,8 @@ export async function getSession(): Promise<SessionData | null> {
   const db = getDb()
   const now = Date.now()
 
+  // JOIN with users lets us check is_active in one query, avoiding a second
+  // round-trip and preventing suspended accounts from slipping through on cached sessions.
   const session = db.prepare(
     `SELECT s.id, s.user_id, s.created_at, s.expires_at, s.last_seen,
             u.username, u.role
@@ -58,12 +80,16 @@ export async function getSession(): Promise<SessionData | null> {
     return null
   }
 
+  // Absolute TTL enforced here because rotation resets created_at — without this
+  // check a very active user could hold a session indefinitely.
   if (now - session.created_at > ABSOLUTE_TTL_MS) {
     db.prepare('DELETE FROM sessions WHERE id = ?').run(sessionId)
     try { cookieStore.delete(SESSION_COOKIE) } catch { /* server component context */ }
     return null
   }
 
+  // Replace the session ID every 24h to limit stolen-cookie replay window.
+  // created_at is also reset so the absolute TTL clock restarts from this rotation.
   if (now - session.created_at > ROTATION_INTERVAL_MS) {
     const newId = makeId(32)
     db.prepare(
@@ -85,6 +111,8 @@ export async function getSession(): Promise<SessionData | null> {
   return { userId: session.user_id, username: session.username, role: session.role, sessionId }
 }
 
+// redirect() throws a special Next.js error — TypeScript doesn't narrow the return
+// type here, but calling code can rely on it never returning null.
 export async function requireAuth(): Promise<SessionData> {
   const session = await getSession()
   if (!session) redirect('/login')
@@ -93,6 +121,7 @@ export async function requireAuth(): Promise<SessionData> {
 
 export async function requireAdmin(): Promise<SessionData> {
   const session = await requireAuth()
+  // Non-admins get a silent redirect to home rather than a 403 to avoid leaking route existence
   if (session.role !== 'admin') redirect('/')
   return session
 }
@@ -115,6 +144,8 @@ export async function deleteSession(sessionId: string): Promise<void> {
   getDb().prepare('DELETE FROM sessions WHERE id = ?').run(sessionId)
 }
 
+// logEvent is fire-and-forget — audit failures must never surface to the user.
+// Geo lookup (ip-api.com) is skipped when no IP is supplied, e.g. for system events.
 export async function logEvent(
   eventType: string,
   details: Record<string, unknown>,
@@ -129,6 +160,7 @@ export async function logEvent(
       country = geo.country
       city = geo.city
     }
+    // details is serialised to JSON string; the column type is TEXT, not JSONB
     db.prepare(
       `INSERT INTO audit_log (user_id, username, event_type, details, ip_address, country, city, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`

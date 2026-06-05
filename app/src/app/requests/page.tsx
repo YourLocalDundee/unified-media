@@ -12,7 +12,7 @@ export const metadata: Metadata = {
 // Helpers
 // ---------------------------------------------------------------------------
 
-type FilterValue = 'all' | 'pending' | 'approved' | 'declined' | 'available'
+type FilterValue = 'all' | 'pending' | 'approved' | 'declined' | 'available' | 'expired'
 
 const FILTER_TABS: { value: FilterValue; label: string }[] = [
   { value: 'all', label: 'All' },
@@ -20,6 +20,7 @@ const FILTER_TABS: { value: FilterValue; label: string }[] = [
   { value: 'approved', label: 'Approved' },
   { value: 'declined', label: 'Declined' },
   { value: 'available', label: 'Available' },
+  { value: 'expired', label: 'Expired' },
 ]
 
 // ---------------------------------------------------------------------------
@@ -80,7 +81,7 @@ export default async function RequestsPage({
   const { filter } = await searchParams
 
   const filterValue = (
-    ['all', 'pending', 'approved', 'declined', 'available'].includes(filter ?? '')
+    ['all', 'pending', 'approved', 'declined', 'available', 'expired'].includes(filter ?? '')
       ? filter
       : 'all'
   ) as FilterValue
@@ -89,12 +90,16 @@ export default async function RequestsPage({
 
   const isAdmin = session.role === 'admin'
 
-  const [requests, counts] = await Promise.all([
+  // Always fetch the full unfiltered list so slot counts are accurate regardless of the active filter.
+  const [allRequests, counts] = await Promise.all([
     isAdmin
-      ? Promise.resolve(getAllRequests(statusOpt ? { status: statusOpt } : undefined))
-      : Promise.resolve(getUserRequests(session.userId, statusOpt ? { status: statusOpt } : undefined)),
+      ? Promise.resolve(getAllRequests())
+      : Promise.resolve(getUserRequests(session.userId)),
     Promise.resolve(getRequestCounts()),
   ])
+
+  // Filter in-memory for display — avoids a second DB round-trip.
+  const requests = statusOpt ? allRequests.filter((r) => r.status === statusOpt) : allRequests
 
   return (
     <div className="min-h-screen bg-zinc-950 text-white">
@@ -117,18 +122,13 @@ export default async function RequestsPage({
           <FilterTabs active={filterValue} />
         </div>
 
-        {/* Table */}
-        {requests.length === 0 ? (
-          <div className="flex h-40 items-center justify-center rounded-lg bg-zinc-900 text-zinc-500">
-            No requests found.
-          </div>
-        ) : (
-          <RequestsTable
-            requests={requests}
-            isAdmin={isAdmin}
-            currentUserId={session.userId}
-          />
-        )}
+        {/* Table — always rendered so the slot meter shows even when filtered list is empty */}
+        <RequestsTable
+          requests={requests}
+          allRequests={allRequests}
+          isAdmin={isAdmin}
+          currentUserId={session.userId}
+        />
       </div>
     </div>
   )

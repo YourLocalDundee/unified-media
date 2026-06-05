@@ -1,3 +1,7 @@
+// Aspect ratio selector panel inside MediaToolsPanel's Playback tab.
+// This component is purely presentational — it calls onAspectRatioChange and lets
+// the parent (VideoPlayer) apply the CSS. The actual aspect-ratio CSS is handled
+// by VideoPlayer which translates the mode string into object-fit / aspect-ratio styles.
 'use client'
 
 import { AspectRatioMode } from './types'

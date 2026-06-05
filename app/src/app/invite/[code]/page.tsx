@@ -1,3 +1,16 @@
+/**
+ * Invite landing page — validates the invite code from the URL segment and
+ * renders either a "You're Invited" card with a link to /register?code=... or
+ * an "Invalid Invite" card if the code is expired, exhausted, or not found.
+ *
+ * Registration is now open enrollment (no code required), but invite links
+ * still function for direct onboarding. The code is passed through to the
+ * register page purely as a convenience — /register does not enforce it.
+ *
+ * Validation is done server-side in the Server Component render; no API round-
+ * trip is needed. The code is upper-cased to make links case-insensitive.
+ */
+
 import { getDb } from '@/lib/db/index'
 import Link from 'next/link'
 
@@ -7,6 +20,8 @@ export default async function InvitePage({ params }: Props) {
   const { code } = await params
   const db = getDb()
 
+  // expires_at IS NULL means no expiry; max_uses = 0 means unlimited uses.
+  // Both conditions must hold simultaneously for the invite to be valid.
   const invite = db.prepare(
     'SELECT * FROM invite_codes WHERE code = ? AND (expires_at IS NULL OR expires_at > ?) AND (max_uses = 0 OR use_count < max_uses)'
   ).get(code.toUpperCase(), Date.now()) as { code: string; label: string | null; created_by: string } | undefined

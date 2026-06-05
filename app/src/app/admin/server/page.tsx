@@ -1,3 +1,5 @@
+// Admin server status page — polls the server-status API every 15 seconds to show
+// live Node.js process stats, SQLite DB row counts, and external service health.
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
@@ -30,12 +32,14 @@ export default function AdminServerPage() {
 
   useEffect(() => {
     void refresh()
+    // 15s polling keeps the page fresh without hammering the API.
+    // clearInterval on unmount prevents stale callbacks after navigation.
     const iv = setInterval(() => void refresh(), 15_000)
     return () => clearInterval(iv)
   }, [refresh])
 
   const services = data ? [
-    { name: 'qBittorrent', ok: data.qbit.ok, version: data.qbit.version },
+    { name: 'Unified Media Torrent (UMT)', ok: data.qbit.ok, version: data.qbit.version },
   ] : []
 
   return (

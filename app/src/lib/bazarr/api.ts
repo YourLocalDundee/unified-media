@@ -1,3 +1,6 @@
+// Typed Bazarr API helpers. All functions run server-side.
+// Most list endpoints use offset/length pagination (not page/pageSize).
+// Subtitle download triggers are PATCH requests, not POST — that's Bazarr's API design.
 import { bazarrFetch } from './client'
 import type {
   BazarrProvider,

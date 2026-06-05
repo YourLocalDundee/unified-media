@@ -1,3 +1,9 @@
+// Types for the native subtitle management system (Independence Build Phase 4).
+// Subtitle wants are stored in unified.db (`subtitle_wants` table).
+// Downloads go through the OpenSubtitles v3 REST API (free tier: 5/day).
+// The workflow: scanner creates 'wanted' rows → downloader processes them →
+// status transitions to 'downloaded', 'skipped', or 'failed'.
+
 export type SubtitleStatus = 'wanted' | 'downloaded' | 'skipped' | 'failed'
 
 export interface SubtitleWant {
@@ -76,6 +82,9 @@ export interface OSSearchResponse {
   per_page: number
 }
 
+// Response from POST /download. `remaining` is the daily quota left after this
+// request. The free tier resets at midnight UTC (reset_time_utc). When remaining
+// hits 0 the downloader logs a warning and the current run stops downloading.
 export interface OSDownloadResponse {
   link: string
   file_name: string
@@ -86,6 +95,8 @@ export interface OSDownloadResponse {
   reset_time_utc: string
 }
 
+// imdb_id must be the numeric portion only — strip the "tt" prefix before passing.
+// The OpenSubtitles API rejects IDs with the prefix.
 export interface SubtitleSearchParams {
   imdb_id?: string     // numeric IMDB ID without "tt" prefix, e.g. "1234567"
   tmdb_id?: number

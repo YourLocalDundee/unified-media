@@ -1,3 +1,7 @@
+// Quality selector dropdown rendered in the player controls bar (not inside MediaToolsPanel).
+// Calls onQualityChange with the selected QualityOption; VideoPlayer handles swapping the
+// stream URL and triggering HLS reinitialisation. Hidden entirely when only one quality is
+// available to avoid showing a non-functional control.
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
@@ -18,6 +22,8 @@ export function MediaQualitySelector({
   const [open, setOpen] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
 
+  // Close the dropdown on any click outside the component.
+  // Listener is only attached while the dropdown is open to avoid an always-on global listener.
   useEffect(() => {
     if (!open) return
     function handleMouseDown(e: MouseEvent) {

@@ -1,3 +1,12 @@
+/**
+ * PATCH /api/auth/profile/display-name — updates the authenticated user's
+ * display_name field (max 64 chars). An empty string after trim is stored as
+ * NULL so the UI can fall back to the username for display.
+ *
+ * Display names are not unique — two users can share a display name. Only
+ * username uniqueness is enforced at the DB level.
+ */
+
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth } from '@/lib/dal'
 import { getDb } from '@/lib/db/index'
@@ -19,6 +28,8 @@ export async function PATCH(req: NextRequest) {
   }
 
   const db = getDb()
+  // Store null (not empty string) when display name is cleared so the UI's
+  // `display_name ?? username` fallback logic works without string length checks.
   db.prepare('UPDATE users SET display_name = ?, updated_at = ? WHERE id = ?')
     .run(trimmed || null, Date.now(), session.userId)
 

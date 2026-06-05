@@ -1,3 +1,14 @@
+// qBittorrent implementation of the DownloadClient interface.
+// This client is self-contained: it manages its own SID session cache as an
+// instance variable (vs. the module-level cache in lib/qbittorrent/session.ts).
+// The two implementations intentionally coexist: session.ts powers the
+// /api/qbit proxy routes; this class powers the download-client registry used
+// by the automation system.
+//
+// qBittorrent does NOT use API keys — auth is cookie-based only. The SID is
+// obtained by POSTing credentials and then passed as Cookie on every request.
+// On 403, the session is cleared and re-login is attempted exactly once.
+
 // This file runs only on the server (used only in API routes / server actions)
 
 import type {
@@ -21,7 +32,7 @@ interface SessionCache {
 }
 
 // Raw qBittorrent API response shapes — intentionally loose since we only
-// access the fields we care about.
+// access the fields we care about. The full Torrent shape is in lib/qbittorrent/types.ts.
 interface RawTorrent {
   hash?: string
   name?: string
@@ -113,6 +124,8 @@ function normaliseTorrent(raw: RawTorrent): Torrent {
   }
 }
 
+// Only emit keys that are present in the delta — do not override existing state
+// with undefined for fields the server omitted from the incremental update.
 function normalisePartialTorrent(raw: RawTorrent): Partial<Torrent> {
   const out: Partial<Torrent> = {}
   if (raw.hash !== undefined) out.hash = raw.hash
@@ -152,6 +165,7 @@ export class QBittorrentClient implements DownloadClient {
   private sessionCache: SessionCache | null = null
 
   constructor(url: string, username?: string, password?: string) {
+    // Strip trailing slash so every path can be prefixed with / without doubling.
     this.url = url.replace(/\/$/, '')
     this.username = username ?? 'admin'
     this.password = password ?? ''
@@ -180,7 +194,9 @@ export class QBittorrentClient implements DownloadClient {
     }
 
     const setCookie = res.headers.get('set-cookie') ?? ''
-    const sidMatch = setCookie.match(/SID=([^;]+)/)
+    // v5 uses QBT_SID_<port>=VALUE; v4 uses SID=VALUE. Capture the full
+    // NAME=VALUE pair so it can be passed directly as the Cookie header.
+    const sidMatch = setCookie.match(/((?:QBT_SID_\d+|SID)=[^;]+)/)
     if (!sidMatch) throw new Error('qBittorrent login: no SID in response')
 
     return sidMatch[1]
@@ -204,10 +220,12 @@ export class QBittorrentClient implements DownloadClient {
     path: string,
     options?: { method?: 'GET' | 'POST'; body?: URLSearchParams }
   ): Promise<T> {
+    // sid is the full NAME=VALUE cookie string (e.g. "QBT_SID_8080=abc" for v5
+    // or "SID=abc" for v4) — used directly as the Cookie header value.
     const sid = await this.getSession()
     const method = options?.method ?? 'GET'
 
-    const headers: HeadersInit = { Cookie: `SID=${sid}` }
+    const headers: HeadersInit = { Cookie: sid }
     if (method === 'POST' && options?.body) {
       headers['Content-Type'] = 'application/x-www-form-urlencoded'
     }
@@ -223,7 +241,7 @@ export class QBittorrentClient implements DownloadClient {
       // Re-auth once on 403
       this.clearSession()
       const newSid = await this.getSession()
-      const retryHeaders: HeadersInit = { Cookie: `SID=${newSid}` }
+      const retryHeaders: HeadersInit = { Cookie: newSid }
       if (method === 'POST' && options?.body) {
         retryHeaders['Content-Type'] = 'application/x-www-form-urlencoded'
       }
@@ -296,7 +314,11 @@ export class QBittorrentClient implements DownloadClient {
     if (payload.savePath !== undefined) body.set('savepath', payload.savePath)
     if (payload.category !== undefined) body.set('category', payload.category)
     if (payload.tags !== undefined) body.set('tags', payload.tags)
-    if (payload.paused !== undefined) body.set('paused', String(payload.paused))
+    // v5 renamed the paused flag to stopped; set both for compatibility
+    if (payload.paused !== undefined) {
+      body.set('stopped', String(payload.paused))
+      body.set('paused', String(payload.paused))
+    }
     await this.apiFetch<string>('/api/v2/torrents/add', { method: 'POST', body })
   }
 

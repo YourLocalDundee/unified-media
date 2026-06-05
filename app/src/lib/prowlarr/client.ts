@@ -1,3 +1,7 @@
+// Server-only Prowlarr HTTP client.
+// Prowlarr uses X-Api-Key header auth on the /api/v1 base path.
+// GET responses bypass the Next.js cache — indexer status must always be live.
+
 const PROWLARR_URL = process.env.PROWLARR_URL ?? 'http://192.168.0.50:9696'
 const PROWLARR_API_KEY = process.env.PROWLARR_API_KEY ?? ''
 

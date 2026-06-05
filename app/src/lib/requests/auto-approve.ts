@@ -1,29 +1,46 @@
+// Auto-approval logic for 'quick' requests (Phase 7 independence build).
+// A quick request is approved without admin intervention if three conditions are met:
+//   1. The content's release year is strictly before the current year (not current-year releases).
+//   2. The user hasn't hit the per-media-type concurrent quick limit (1 movie, 2 TV shows).
+//   3. The downstream automation system accepts the item (or it already exists there).
+// Marked 'server-only' because it writes to the DB and calls internal automation — never expose client-side.
+
 import 'server-only'
 import { getDb } from '@/lib/db/index'
 import { getRequestById, updateRequestStatus } from './monitor'
 import { createItem } from '@/lib/automation/monitor'
 
+// Hard limits for concurrent auto-approved quick requests per user, per media type.
+// TV gets 2 because multi-season requests are common and shouldn't block each other.
 const LIMITS = { movie: 1, tv: 2 } as const
 
+// Counts requests that are currently consuming a quick slot (approved but not yet expired/declined).
+// 'available' is included because the item is still occupying that slot until the 48h window closes.
 export function getActiveAutoApprovedCount(userId: string, mediaType: 'movie' | 'tv'): number {
-  // Count requests where: user_id = userId, media_type = mediaType,
-  // auto_approved = 1, status IN ('approved', 'available')
   const row = getDb().prepare(
     `SELECT COUNT(*) as cnt FROM media_requests
-     WHERE user_id = ? AND media_type = ? AND auto_approved = 1
+     WHERE user_id = ? AND media_type = ? AND request_type = 'quick'
      AND status IN ('approved', 'available')`
   ).get(userId, mediaType) as { cnt: number }
   return row.cnt
 }
 
+// Attempts to auto-approve a newly created quick request. Returns true if approved, false otherwise.
+// The caller (POST /api/requests) is responsible for deleting the row if this returns false.
 export function tryAutoApprove(requestId: number): boolean {
   const request = getRequestById(requestId)
   if (!request) return false
 
   const mediaType = request.media_type as 'movie' | 'tv'
+
+  // Only quick+auto-pick requests grab immediately; anything else goes to admin queue.
+  if (request.request_type !== 'quick') return false
+  if (request.request_method !== 'auto-pick') return false
+
   const currentYear = new Date().getFullYear()
 
-  // Must have a known year strictly before current year
+  // Current-year content is excluded — those titles are still in active release windows
+  // and auto-approving them could create rights/availability issues.
   if (!request.year || request.year >= currentYear) return false
 
   // Check concurrent limit
@@ -31,7 +48,13 @@ export function tryAutoApprove(requestId: number): boolean {
   const limit = LIMITS[mediaType]
   if (active >= limit) return false
 
-  // Auto-approve
+  // Push the item to the automation layer (Radarr/Sonarr equivalent).
+  // Scope fields are forwarded from the request so the grabber targets exactly what the user requested.
+  const scopeType = (request as unknown as Record<string, unknown>).scope_type as string | undefined
+  const scopeSeasonsRaw = (request as unknown as Record<string, unknown>).scope_seasons as string | null | undefined
+  const scopeEpisodesRaw = (request as unknown as Record<string, unknown>).scope_episodes as string | null | undefined
+  const monitorFuture = (request as unknown as Record<string, unknown>).monitor_future as number | undefined
+
   try {
     createItem({
       tmdb_id: request.tmdb_id,
@@ -41,15 +64,41 @@ export function tryAutoApprove(requestId: number): boolean {
       year: request.year ?? undefined,
       quality_profile_id: 1,
       root_path: '',
+      scope_type: (scopeType as 'full' | 'seasons' | 'episodes' | 'movie' | null) ?? null,
+      scope_seasons: scopeSeasonsRaw ? (JSON.parse(scopeSeasonsRaw) as number[]) : null,
+      scope_episodes: scopeEpisodesRaw ? (JSON.parse(scopeEpisodesRaw) as Array<{s:number;e:number}>) : null,
+      monitor_future: Boolean(monitorFuture),
     })
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
+    // 'already exists' means a previous request already queued it — not an error.
+    // Any other failure is unexpected; bail out so the request isn't falsely marked approved.
     if (!msg.toLowerCase().includes('already exists')) return false
-    // Already in queue is fine — still mark approved
   }
 
   updateRequestStatus(requestId, 'approved')
+  // auto_approved flag is stored separately from status so the UI can show "auto" vs "admin" badge.
   getDb().prepare('UPDATE media_requests SET auto_approved = 1 WHERE id = ?').run(requestId)
+
+  // Fire immediate grab — non-blocking, cron retries on failure.
+  // Capture language here so the IIFE doesn't close over a mutable variable.
+  const grabLanguage = request.language ?? 'any'
+  void (async () => {
+    try {
+      const { getAllItems } = await import('@/lib/automation/monitor')
+      const { grabItem } = await import('@/lib/automation/grabber')
+      const items = getAllItems()
+      const item = items.find(
+        i => i.tmdb_id === request.tmdb_id && i.type === (request.media_type === 'movie' ? 'movie' : 'tv')
+      )
+      if (item && item.status === 'wanted') {
+        const result = await grabItem(item, { language: grabLanguage })
+        console.log(`[auto-approve] Immediate grab for "${item.title}": ${result}`)
+      }
+    } catch (err) {
+      console.warn('[auto-approve] Immediate grab failed (cron will retry):', err)
+    }
+  })()
 
   return true
 }

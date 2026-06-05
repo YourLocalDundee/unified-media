@@ -1,3 +1,5 @@
+// Jump-to-time panel inside MediaToolsPanel's Playback tab.
+// Accepts freeform text in MM:SS or HH:MM:SS format and seeks the video directly.
 'use client'
 
 import { useEffect, useState } from 'react'
@@ -11,6 +13,9 @@ function formatTime(s: number): string {
   return Math.floor(s / 60) + ':' + String(Math.floor(s) % 60).padStart(2, '0')
 }
 
+// Returns total seconds, or null if the format is unrecognised.
+// Only two-part (MM:SS) and three-part (HH:MM:SS) are accepted; single-part
+// (raw seconds) is intentionally excluded to avoid ambiguity.
 function parseTimeInput(input: string): number | null {
   const parts = input.trim().split(':')
   if (parts.length < 2 || parts.length > 3) return null

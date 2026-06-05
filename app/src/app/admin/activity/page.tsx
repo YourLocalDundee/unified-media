@@ -1,3 +1,5 @@
+// Admin watch activity page — server-paginated log of every watch_events row
+// across all users. Includes a one-click CSV export of the full untruncated dataset.
 'use client'
 
 import { useState, useEffect } from 'react'
@@ -27,6 +29,8 @@ export default function AdminActivityPage() {
   async function exportCsv() {
     const res = await fetch('/api/admin/activity/export')
     const blob = await res.blob()
+    // Programmatic anchor click triggers the browser's native file save dialog.
+    // URL.revokeObjectURL frees the Blob memory after the click fires.
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url; a.download = 'watch-activity.csv'; a.click()

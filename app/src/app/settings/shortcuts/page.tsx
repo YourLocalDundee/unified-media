@@ -1,3 +1,10 @@
+/**
+ * /settings/shortcuts — static reference table of player keyboard shortcuts.
+ * These are defined here as a static list rather than auto-generated from the
+ * player component because there is no centralized shortcut registry yet (see
+ * CLAUDE.md backlog). If shortcuts are changed in the player, this table must
+ * be updated manually.
+ */
 import type { Metadata } from 'next'
 
 export const metadata: Metadata = { title: 'Keyboard Shortcuts — Settings' }

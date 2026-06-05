@@ -1,7 +1,17 @@
+/**
+ * Left sidebar for the /downloads page that filters the torrent list by status,
+ * category, and tag. Receives all filter state as props and calls parent
+ * callbacks on change — it holds no filtering state itself.
+ *
+ * STATUS_FILTERS is exported so TorrentRow.tsx can use the same state groupings
+ * when computing which action buttons to show.
+ */
 'use client'
 
 import type { Torrent } from '@/lib/qbittorrent/types'
 
+// Maps each UI filter key to the set of raw UMT state strings it covers.
+// null means "show all" (no state filtering).
 export const STATUS_FILTERS = {
   all: null,
   downloading: ['downloading', 'forcedDL', 'metaDL', 'stalledDL'],
@@ -195,6 +205,7 @@ export default function FilterSidebar({
                   </button>
                 </li>
                 {tags.map((tag) => {
+                  // qBittorrent stores tags as a comma-separated string on each torrent object
                   const count = torrents.filter((t) =>
                     t.tags
                       .split(',')

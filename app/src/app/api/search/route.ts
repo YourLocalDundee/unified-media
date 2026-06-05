@@ -1,7 +1,14 @@
+/**
+ * GET /api/search — JSON search API backed by TMDB (via the native media
+ * server's tmdb wrapper). Exists as a separate endpoint so client components
+ * that need search results without a full page navigation can call it directly.
+ * The main /search page uses searchTMDB server-side, not this route.
+ */
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth } from '@/lib/dal'
 import { searchTMDB } from '@/lib/media-server/tmdb'
 
+// Required because TMDB results change with every query; CDN caching would serve stale data
 export const dynamic = 'force-dynamic'
 
 export async function GET(req: NextRequest) {

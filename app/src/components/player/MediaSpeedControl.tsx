@@ -1,3 +1,6 @@
+// Playback speed control panel inside MediaToolsPanel's Playback tab.
+// Reads/writes video.playbackRate directly and persists the last-used speed to
+// localStorage so it survives tab reloads within the same session.
 'use client'
 
 import { useEffect, useState } from 'react'
@@ -14,6 +17,8 @@ export default function MediaSpeedControl({ videoRef }: Props) {
   useEffect(() => {
     const video = videoRef.current
     if (!video) return
+    // Restore persisted rate on mount; validate against the known set to avoid
+    // applying an arbitrary value if the storage entry is stale or corrupted.
     const stored = localStorage.getItem('unified-player-speed')
     if (stored) {
       const rate = parseFloat(stored)
@@ -21,6 +26,7 @@ export default function MediaSpeedControl({ videoRef }: Props) {
         video.playbackRate = rate
       }
     }
+    // Mirror the video's actual rate into state (handles external changes, e.g. HLS reinit).
     const handleRateChange = () => setCurrentRate(video.playbackRate)
     video.addEventListener('ratechange', handleRateChange)
     return () => video.removeEventListener('ratechange', handleRateChange)

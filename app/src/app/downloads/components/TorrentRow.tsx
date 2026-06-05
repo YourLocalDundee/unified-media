@@ -1,3 +1,16 @@
+/**
+ * Single row in the /downloads torrent table. Renders a dynamic set of columns
+ * based on the user's TorrentUIPreferences (which columns are visible). Each
+ * column's content is produced by the Cell switch so adding a new column only
+ * requires a new case there plus a new key in the ColumnKey union.
+ *
+ * Also renders the right-click context menu (ContextMenu), which is positioned
+ * at the cursor coordinates using fixed positioning so it escapes any overflow
+ * clipping on the table container.
+ *
+ * Exports fmtDate, fmtEta, fmtTimeActive, and STATE_COLOR_CLASSES so DetailPanel
+ * can reuse the same formatting without duplicating the logic.
+ */
 'use client'
 
 import { useCallback, useState, useRef, useEffect } from 'react'

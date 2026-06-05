@@ -1,3 +1,7 @@
+/**
+ * TMDB reverse proxy — injects the Bearer token so client components can fetch
+ * TV show details without the API key ever reaching the browser.
+ */
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth } from '@/lib/dal'
 

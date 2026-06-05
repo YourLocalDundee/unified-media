@@ -1,3 +1,7 @@
+// Video color/filter adjustment panel inside MediaToolsPanel's Video tab.
+// All effects are applied as a CSS filter string via the onFilterChange callback —
+// the parent VideoPlayer sets it on the <video> element's style.filter property.
+// Settings are persisted to localStorage so they survive panel close/reopen.
 'use client'
 
 import { useState, useEffect } from 'react'
@@ -28,6 +32,10 @@ const DEFAULTS: ExtendedFilterState = {
   sepia: false,
 }
 
+// Continuous filters (brightness, contrast, saturation, hue, blur) are always
+// included because omitting them from the CSS filter string would reset them to
+// browser defaults. Toggle filters (grayscale, invert, sepia) are only appended
+// when active to keep the string short.
 function buildCssFilter(state: ExtendedFilterState): string {
   const parts: string[] = [
     `brightness(${state.brightness}%)`,
@@ -49,13 +57,17 @@ export default function MediaVideoEffects({ onFilterChange }: MediaVideoEffectsP
     try {
       const saved = localStorage.getItem(STORAGE_KEY)
       if (saved) {
+        // Spread over DEFAULTS so any new keys added in future code don't break old stored state.
         const parsed = { ...DEFAULTS, ...JSON.parse(saved) } as ExtendedFilterState
         setFilters(parsed)
+        // Apply immediately so the video loads with the user's saved settings.
         onFilterChange(buildCssFilter(parsed))
       }
     } catch {
       // ignore malformed storage
     }
+  // onFilterChange is intentionally excluded — including it would cause this to
+  // re-fire whenever the parent re-renders, clobbering mid-session changes.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 

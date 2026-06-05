@@ -1,7 +1,19 @@
+/**
+ * POST /api/auth/resend-verification — issues a fresh 6-digit code for an
+ * existing pending_registrations row identified by pendingId.
+ *
+ * Resets the attempt counter and extends the TTL by 10 minutes so the user
+ * gets a full window after resending. The old code is invalidated by overwrite.
+ *
+ * Rate limit: 3 resend attempts per IP per 10 minutes, stricter than the
+ * initial registration limit to reduce email-spam potential.
+ */
+
 import { NextRequest, NextResponse } from 'next/server'
 import { getDb } from '@/lib/db/index'
 import { checkRateLimit } from '@/lib/rate-limit'
 import { sendEmail, buildVerificationEmail } from '@/lib/email'
+import { verifyOrigin } from '@/lib/csrf'
 
 function makeCode(): string {
   const array = new Uint8Array(6)
@@ -16,6 +28,7 @@ function getClientIp(req: NextRequest): string {
 interface PendingRow { id: string; email: string; username: string; expires_at: number }
 
 export async function POST(req: NextRequest) {
+  if (!verifyOrigin(req)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   const ip = getClientIp(req)
   const rl = checkRateLimit(`resend-verification:${ip}`, 3, 10 * 60 * 1000)
   if (!rl.allowed) {
@@ -38,6 +51,7 @@ export async function POST(req: NextRequest) {
   const code = makeCode()
   const expiresAt = Date.now() + 10 * 60 * 1000
 
+  // Reset attempts to 0 so the user gets a full 5 tries on the new code.
   db.prepare('UPDATE pending_registrations SET code = ?, attempts = 0, expires_at = ? WHERE id = ?').run(code, expiresAt, pending.id)
 
   const emailPayload = buildVerificationEmail(code, pending.username)

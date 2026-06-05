@@ -24,6 +24,7 @@ export async function enrichItem(item: MediaItem): Promise<void> {
              runtime_ticks  = @runtime_ticks,
              poster_path    = @poster_path,
              backdrop_path  = @backdrop_path,
+             genres         = @genres,
              updated_at     = @updated_at
          WHERE id = @id`,
       ).run({
@@ -35,6 +36,7 @@ export async function enrichItem(item: MediaItem): Promise<void> {
         runtime_ticks: movie.runtime ? movie.runtime * 600_000_000 : null,
         poster_path: tmdbImageUrl(movie.poster_path, 'w342'),
         backdrop_path: tmdbImageUrl(movie.backdrop_path, 'w780'),
+        genres: JSON.stringify(movie.genres?.map(g => g.name) ?? []),
         updated_at: now,
       })
       return
@@ -50,12 +52,13 @@ export async function enrichItem(item: MediaItem): Promise<void> {
 
       db.prepare(
         `UPDATE media_items
-         SET tmdb_id    = @tmdb_id,
-             tvdb_id    = @tvdb_id,
-             overview   = @overview,
-             year       = @year,
+         SET tmdb_id     = @tmdb_id,
+             tvdb_id     = @tvdb_id,
+             overview    = @overview,
+             year        = @year,
              poster_path = @poster_path,
-             updated_at = @updated_at
+             genres      = @genres,
+             updated_at  = @updated_at
          WHERE id = @id`,
       ).run({
         id: item.id,
@@ -64,6 +67,7 @@ export async function enrichItem(item: MediaItem): Promise<void> {
         overview: show.overview ?? null,
         year: airYear,
         poster_path: tmdbImageUrl(show.poster_path, 'w342'),
+        genres: JSON.stringify((show as unknown as { genres?: { id: number; name: string }[] }).genres?.map(g => g.name) ?? []),
         updated_at: now,
       })
     }

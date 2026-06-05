@@ -1,15 +1,34 @@
+/**
+ * Automation scheduler: registers the three background cron jobs for the pipeline.
+ *
+ * Called once from src/instrumentation.ts (Next.js server startup hook).
+ * The 'started' guard prevents double-registration on hot-reload in dev — Node module
+ * cache resets between HMR cycles but instrumentation.ts can fire multiple times.
+ *
+ * Cron schedule summary:
+ *   every 15 min  — grab loop: search indexers for all wanted items
+ *   every 30 min  — availability check: promote grabbed -> imported
+ *   top of hour   — auto-delete: remove expired quick-request content
+ *
+ * auto-delete is imported dynamically to avoid loading the 'server-only' fs module at
+ * startup before the module graph is fully resolved.
+ */
+
 import cron from 'node-cron'
 import { getWantedItems } from './monitor'
 import { grabItem } from './grabber'
 import { checkAvailability } from './availability'
+import { runImportCheck } from './importer'
 
+// Module-level flag prevents double-scheduling if initScheduler is called more than once
 let started = false
 
 export function initScheduler(): void {
   if (started) return
   started = true
 
-  // Run every 15 minutes
+  // Grab loop: search all indexers for every wanted item sequentially to avoid
+  // hammering indexers with concurrent requests on large want lists
   cron.schedule('*/15 * * * *', async () => {
     const wanted = getWantedItems()
     if (wanted.length === 0) return
@@ -20,7 +39,8 @@ export function initScheduler(): void {
     }
   })
 
-  // Availability check every 30 minutes
+  // Availability check: polls media_items for items that have been grabbed but not
+  // yet confirmed imported; 30 minutes matches a typical download + scan cycle
   cron.schedule('*/30 * * * *', async () => {
     const updated = await checkAvailability()
     if (updated > 0) {
@@ -28,7 +48,15 @@ export function initScheduler(): void {
     }
   })
 
-  // Auto-delete expired auto-approved content hourly
+  // Import check: polls qBittorrent for completed grabbed torrents and moves them
+  // into the library path via setLocation, then triggers a media scan.
+  // 2-minute interval keeps import lag short without hammering qBit.
+  cron.schedule('*/2 * * * *', async () => {
+    await runImportCheck()
+  })
+
+  // Auto-delete: runs at the top of every hour; dynamic import keeps the fs-heavy
+  // auto-delete module out of the initial module graph
   cron.schedule('0 * * * *', async () => {
     const { runAutoDelete } = await import('./auto-delete')
     const count = await runAutoDelete()

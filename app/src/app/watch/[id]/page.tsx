@@ -1,3 +1,9 @@
+/**
+ * /watch/[id] — native media server player (backed by getNativePlaybackData).
+ * Distinct from /play/[id] only in its route segment; both use the same VideoPlayer
+ * component and playback data source. /watch is the target of next-episode autoplay and
+ * the episode carousel; /play is linked from the library detail page.
+ */
 import type { Metadata } from 'next'
 import { notFound } from 'next/navigation'
 import VideoPlayer from '@/components/media/VideoPlayer'
@@ -11,7 +17,6 @@ interface Props {
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { id } = await params
   try {
-    // Use a placeholder userId for metadata generation — no auth required here
     const data = await getNativePlaybackData(id, '')
     const title = data.seriesTitle
       ? `${data.seriesTitle}${data.seasonEpisode ? ` · ${data.seasonEpisode}` : ''} · ${data.itemTitle}`

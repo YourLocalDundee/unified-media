@@ -1,3 +1,8 @@
+// Home dashboard page — the landing screen after login.
+// Aggregates data from four independent sources (native media server, native requests,
+// qBittorrent) into a single-page view. Each section is wrapped in its own Suspense
+// boundary so one slow/failing data source doesn't block the rest from rendering.
+
 import { Suspense } from 'react'
 import Link from 'next/link'
 import { getResumeItems, getWatchState, getRecentlyAdded, getItemById } from '@/lib/media-server/library'
@@ -67,6 +72,7 @@ function SectionSkeleton({ title }: { title: string }) {
     <section>
       <SectionHeading title={title} />
       <div className="flex items-center gap-4 overflow-x-hidden pb-2">
+        {/* Staggered animation delay gives the skeleton a natural "loading wave" feel */}
         {Array.from({ length: 6 }).map((_, i) => (
           <div
             key={i}
@@ -92,6 +98,8 @@ function UnavailableMessage({ message }: { message: string }) {
 // ---------------------------------------------------------------------------
 
 async function ContinueWatchingSection() {
+  // requireAuth is called again here (not just in HomePage) because server component
+  // async functions each need their own auth check — they may render independently.
   const session = await requireAuth()
   const userId = session.userId
   let items: ContinueWatchingItem[] = []
@@ -103,17 +111,20 @@ async function ContinueWatchingSection() {
 
     for (const item of raw) {
       const watchState: WatchState | undefined = getWatchState(userId, item.id)
+      // progress is 0 if watch state is missing or runtime is unknown (e.g. live)
       const progress =
         watchState && item.runtime_ticks && item.runtime_ticks > 0
           ? watchState.position_ticks / item.runtime_ticks
           : 0
 
+      // Poster comes from TMDB — the media server stores the TMDB path, not a local URL.
       const imageUrl = item.poster_path
         ? `https://image.tmdb.org/t/p/w185${item.poster_path}`
         : undefined
 
       if (item.type === 'episode') {
-        // Fetch parent series title if available
+        // For episodes we show the series title as the card title so the row
+        // is recognizable at a glance; the episode code goes into the subtitle.
         let seriesTitle = item.title
         let subtitle: string | undefined
         if (item.series_id) {
@@ -181,6 +192,7 @@ async function ContinueWatchingSection() {
                 href={`/play/${item.id}`}
               />
               {item.progress > 0 && (
+                // Progress bar overlaid at the card bottom; bottom-9 clears the title text below
                 <div className="absolute bottom-9 left-0 right-0 h-1 bg-zinc-700 rounded-b">
                   <div
                     className="h-full bg-primary rounded-b"
@@ -340,7 +352,8 @@ async function PendingRequestsSection() {
 // Active Downloads
 // ---------------------------------------------------------------------------
 
-// Map getTorrentStateColor return values to Tailwind text classes
+// getTorrentStateColor returns a color name string, not a Tailwind class directly.
+// This map bridges it to actual Tailwind text utilities.
 const stateColorClass: Record<string, string> = {
   blue: 'text-blue-400',
   green: 'text-green-400',
@@ -358,7 +371,7 @@ async function ActiveDownloadsSection() {
     return (
       <section>
         <SectionHeading title="Active Downloads" viewAllHref="/downloads" />
-        <UnavailableMessage message="qBittorrent unavailable." />
+        <UnavailableMessage message="UMT unavailable." />
       </section>
     )
   }

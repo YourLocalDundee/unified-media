@@ -1,3 +1,7 @@
+// Download client singleton registry.
+// createClient() is called once at module load time and the result is cached.
+// Importing getClient() from multiple places returns the same instance, so the
+// UMT SID cache inside QBittorrentClient is shared across all callers.
 import { getDownloadClientConfig } from './config'
 import type { DownloadClient } from './types'
 import { QBittorrentClient } from './qbittorrent'
@@ -8,7 +12,7 @@ function createClient(): DownloadClient {
   const config = getDownloadClientConfig()
 
   switch (config.type) {
-    case 'qbittorrent':
+    case 'umt':
       return new QBittorrentClient(config.url, config.username, config.password)
     case 'transmission':
       return new TransmissionClient()

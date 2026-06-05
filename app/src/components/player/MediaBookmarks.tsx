@@ -1,3 +1,7 @@
+// Bookmark management panel inside MediaToolsPanel's Info tab.
+// Bookmarks are stored in localStorage under a per-item key (storageKey prop)
+// so different media items have independent bookmark lists. Labels are editable
+// inline by clicking on the text.
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
@@ -14,6 +18,8 @@ function formatTime(s: number): string {
 }
 
 export default function MediaBookmarks({ videoRef, storageKey }: MediaBookmarksProps) {
+  // Initialise from localStorage immediately in the state initialiser to avoid
+  // a flash of empty state on mount before a useEffect would run.
   const [bookmarks, setBookmarks] = useState<Bookmark[]>(() => {
     try {
       return JSON.parse(localStorage.getItem(storageKey) ?? '[]') as Bookmark[]
@@ -48,12 +54,15 @@ export default function MediaBookmarks({ videoRef, storageKey }: MediaBookmarksP
   }, [editingId])
 
   const handleAdd = () => {
+    // Read currentTime directly from the DOM element for the most up-to-date value;
+    // the state variable lags by up to 250ms (timeupdate fire interval).
     const time = videoRef.current?.currentTime ?? currentTime
     const bookmark: Bookmark = {
       id: crypto.randomUUID(),
       label: formatTime(time),
       time,
     }
+    // Keep the list sorted chronologically regardless of insertion order.
     setBookmarks((prev) => [...prev, bookmark].sort((a, b) => a.time - b.time))
   }
 

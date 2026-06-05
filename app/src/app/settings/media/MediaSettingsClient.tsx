@@ -1,3 +1,13 @@
+/**
+ * Client shell for the /settings/media page. Receives pre-fetched (or null)
+ * data from the server component and manages the active tab. null props mean
+ * the corresponding service was unreachable at render time — each tab handles
+ * that case with a graceful "unavailable" fallback.
+ *
+ * Indexer toggle/test calls go directly to the Prowlarr proxy routes
+ * (/api/prowlarr/...) rather than through the server component to avoid a
+ * full page re-render just for a status update.
+ */
 'use client'
 
 import { useState } from 'react'
@@ -82,6 +92,8 @@ function IndexersTab({ indexers }: { indexers: ProwlarrIndexer[] | null }) {
 
   if (indexers === null) return <Unavailable label="Prowlarr" />
 
+  // localEnabled overrides the server-supplied value while the toggle is in
+  // flight; falls back to the original indexer.enable once the page re-renders.
   function isEnabled(indexer: ProwlarrIndexer) {
     return indexer.id in localEnabled ? localEnabled[indexer.id] : indexer.enable
   }
@@ -211,7 +223,7 @@ function IndexersTab({ indexers }: { indexers: ProwlarrIndexer[] | null }) {
 // ---------------------------------------------------------------------------
 
 function QualityProfileCard({ profile }: { profile: SonarrQualityProfile | RadarrQualityProfile }) {
-  // Count leaf quality items that are allowed
+  // Quality items can be nested (groups); recurse to count actual leaf-level allowed entries
   function countAllowed(items: SonarrQualityProfile['items'] | RadarrQualityProfile['items']): number {
     let n = 0
     for (const item of items) {
@@ -417,7 +429,8 @@ function SubtitlesTab({
               </thead>
               <tbody>
                 {providers.map((provider) => {
-                  const good = provider.status.toLowerCase() === 'good' || provider.status === ''
+                  // Bazarr returns '' for healthy providers and an error string otherwise
+        const good = provider.status.toLowerCase() === 'good' || provider.status === ''
                   return (
                     <tr key={provider.name} className="border-b border-border last:border-0">
                       <td className="px-4 py-3 font-medium">{provider.name}</td>

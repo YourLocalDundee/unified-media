@@ -1,7 +1,16 @@
+/**
+ * GET /api/automation/items  — list all monitored items (admin only)
+ * POST /api/automation/items — manually add a new monitored item (admin only)
+ *
+ * Admin-only; all methods call requireAdmin() which throws a redirect on failure.
+ * force-dynamic prevents Next.js from caching this route since the DB changes frequently.
+ */
+
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAdmin } from '@/lib/dal'
 import { getAllItems, createItem } from '@/lib/automation/monitor'
 
+// Opt out of static rendering — this route hits the DB on every request
 export const dynamic = 'force-dynamic'
 
 export async function GET() {
@@ -13,6 +22,7 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   await requireAdmin()
 
+  // Accept unknown body shape and validate each field explicitly to avoid trusting client types
   const body = await req.json() as {
     type?: unknown
     title?: unknown
@@ -31,6 +41,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'title must be a non-empty string' }, { status: 400 })
   }
 
+  // Optional numeric fields default to undefined (not null) so createItem's ?? defaults apply
   const item = createItem({
     type: body.type,
     title: body.title.trim(),

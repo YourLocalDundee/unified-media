@@ -1,3 +1,7 @@
+// Subtitle track proxy: fetches a WebVTT subtitle stream from Jellyfin and serves
+// it to the browser. Required because the Jellyfin subtitle URL includes a token
+// and is on the internal host IP, neither of which can be exposed to the client.
+// streamIndex is the subtitle track index from Jellyfin's MediaStreams array.
 import { NextRequest } from 'next/server'
 import { JELLYFIN_URL, JELLYFIN_API_KEY } from '@/lib/jellyfin/client'
 

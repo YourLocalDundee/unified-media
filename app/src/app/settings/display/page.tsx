@@ -1,3 +1,9 @@
+/**
+ * /settings/display — controls for visual appearance, home page carousels,
+ * library grid layout, and sidebar. All preferences are persisted to
+ * localStorage via the useDisplayPrefs hook; no server round-trip on change.
+ * ThemeSection is split out because it owns additional theme-creation state.
+ */
 'use client'
 
 import { useDisplayPrefs } from '@/hooks/useSettings'
@@ -51,6 +57,7 @@ function Select<T extends string | number>({
       value={value}
       onChange={(e) => {
         const raw = e.target.value
+        // Map back through options to preserve the original type (number vs string)
         const match = options.find((o) => String(o.value) === raw)
         if (match !== undefined) onChange(match.value)
       }}

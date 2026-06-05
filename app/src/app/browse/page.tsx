@@ -1,3 +1,16 @@
+/**
+ * browse/page.tsx
+ *
+ * Main browse page — entry point for all content discovery. Supports two modes:
+ *   - "discover" (default): TMDB trending/popular/genre browsing, cross-referenced
+ *     against the local library so "In Library" / request status are shown inline.
+ *   - "library" (all / movies / shows): paginated grid of locally available media,
+ *     driven entirely by the native media server (no TMDB network calls).
+ *
+ * All data fetching happens in async Server Components so there are no client
+ * waterfalls. The page shell renders instantly while Suspense handles the grid.
+ */
+
 import { Suspense } from 'react'
 import type { Metadata } from 'next'
 import MediaCard from '@/components/media/MediaCard'
@@ -8,8 +21,10 @@ import type { MediaItem } from '@/lib/media-server/types'
 import { requireAuth } from '@/lib/dal'
 import { getUserRequests } from '@/lib/requests/monitor'
 import type { RequestStatus } from '@/lib/requests/types'
+import type { RequestType } from '@/lib/requests/types'
 import DiscoverResults from './DiscoverResults'
 import type { DiscoverItem } from './DiscoverResults'
+import RescanButton from './RescanButton'
 
 export const metadata: Metadata = {
   title: 'Browse — unified-frontend',
@@ -35,7 +50,7 @@ const TRENDING_CATEGORIES: { value: TrendingCategory; label: string }[] = [
 ]
 
 interface BrowsePageProps {
-  searchParams: Promise<{ q?: string; page?: string; type?: string; year?: string; sort?: string; cat?: string; genre?: string }>
+  searchParams: Promise<{ q?: string; page?: string; type?: string; year?: string; sort?: string; cat?: string; genre?: string; count?: string }>
 }
 
 // ---------------------------------------------------------------------------
@@ -48,14 +63,16 @@ async function BrowseGrid({
   itemType,
   year,
   sort,
+  count,
 }: {
   query?: string
   page: number
   itemType: string
   year?: number
   sort: SortKey
+  count: number
 }) {
-  const limit = 60
+  const limit = count
   const offset = (page - 1) * limit
 
   let items: MediaItem[] = []
@@ -63,16 +80,20 @@ async function BrowseGrid({
 
   if (query && query.trim().length > 0) {
     items = await searchItems(query.trim(), limit)
+    // Search returns all matches up to limit; no server-side pagination for search results
     totalCount = items.length
   } else if (itemType === 'movies') {
     items = getItemsByType('movie', limit, offset, year, sort)
     const counts = getTotalCount()
+    // When filtering by year, the full count is unknown without scanning — use actual slice length
     totalCount = year ? items.length : counts.movies
   } else if (itemType === 'shows') {
     items = getItemsByType('series', limit, offset, year, sort)
     const counts = getTotalCount()
     totalCount = year ? items.length : counts.series
   } else {
+    // "all" mode: pull an equal split of movies and series then re-sort in memory.
+    // This means "all" is always one page — no offset pagination across mixed types.
     const half = Math.floor(limit / 2)
     const movies = getItemsByType('movie', half, 0, year, sort)
     const series = getItemsByType('series', half, 0, year, sort)
@@ -90,6 +111,8 @@ async function BrowseGrid({
     totalCount = year ? items.length : counts.movies + counts.series
   }
 
+  // "all" view and year-filtered views are single-page — pagination would require
+  // knowing the combined sorted position across two separate collections.
   const totalPages = (itemType === 'all' || year) ? 1 : Math.ceil(totalCount / limit)
 
   return (
@@ -120,7 +143,7 @@ async function BrowseGrid({
       )}
 
       {!query && !year && totalPages > 1 && (
-        <Pagination currentPage={page} totalPages={totalPages} itemType={itemType} sort={sort} />
+        <Pagination currentPage={page} totalPages={totalPages} itemType={itemType} sort={sort} count={count} />
       )}
     </div>
   )
@@ -226,15 +249,18 @@ async function DiscoverGrid({
     totalPages = trendData?.totalPages ?? 0
   }
 
+  // Batch TMDB-ID lookup against local library to get native item IDs in one pass
   const tmdbIds = results.map((r) => r.tmdbId)
   const libraryMap = tmdbIds.length > 0 ? getItemsByTmdbIds(tmdbIds) : {}
 
-  // Build request status map for current user
+  // Build request status map for current user so each card reflects the user's own state.
+  // Expired slots are excluded so the item appears requestable again rather than stuck.
   const userRequests = getUserRequests(userId)
-  const requestMap: Record<string, RequestStatus> = {}
+  const requestMap: Record<string, { status: RequestStatus; requestType: RequestType }> = {}
   for (const req of userRequests) {
-    if (req.status === 'expired') continue   // slot is free — show as requestable
-    requestMap[`${req.media_type}-${req.tmdb_id}`] = req.status
+    if (req.status === 'expired') continue
+    // Composite key avoids collision between movie/tv items that share a TMDB ID
+    requestMap[`${req.media_type}-${req.tmdb_id}`] = { status: req.status, requestType: req.request_type }
   }
 
   const items: DiscoverItem[] = results.map((r) => ({
@@ -246,7 +272,8 @@ async function DiscoverGrid({
     rating: r.rating,
     overview: r.overview,
     libraryId: libraryMap[r.tmdbId] ?? null,
-    requestStatus: requestMap[`${r.mediaType}-${r.tmdbId}`] ?? null,
+    requestStatus: requestMap[`${r.mediaType}-${r.tmdbId}`]?.status ?? null,
+    requestType: requestMap[`${r.mediaType}-${r.tmdbId}`]?.requestType ?? null,
   }))
 
   const pageBase = query
@@ -308,15 +335,17 @@ function Pagination({
   totalPages,
   itemType,
   sort,
+  count,
   year,
 }: {
   currentPage: number
   totalPages: number
   itemType: string
   sort: SortKey
+  count: number
   year?: number
 }) {
-  const extra = `&sort=${sort}${year ? `&year=${year}` : ''}`
+  const extra = `&sort=${sort}&count=${count}${year ? `&year=${year}` : ''}`
   const prev = currentPage - 1
   const next = currentPage + 1
   const pageNums = Array.from({ length: totalPages }, (_, i) => i + 1).filter(
@@ -375,6 +404,9 @@ function BrowseGridSkeleton() {
 // Filter bar
 // ---------------------------------------------------------------------------
 
+const COUNT_OPTIONS = [10, 25, 50, 100] as const
+type PageCount = typeof COUNT_OPTIONS[number]
+
 function FilterBar({
   query,
   sort,
@@ -382,6 +414,7 @@ function FilterBar({
   itemType,
   years,
   isDiscover,
+  count,
 }: {
   query?: string
   sort: SortKey
@@ -389,6 +422,7 @@ function FilterBar({
   itemType: string
   years: number[]
   isDiscover: boolean
+  count: number
 }) {
   return (
     <form method="GET" action="/browse" className="flex flex-wrap items-center gap-2">
@@ -425,6 +459,19 @@ function FilterBar({
         </select>
       )}
 
+      {!isDiscover && (
+        <select
+          name="count"
+          defaultValue={count}
+          className="rounded-lg bg-zinc-800 px-3 py-2 text-sm text-white outline-none focus:ring-2 focus:ring-white/20 cursor-pointer"
+          title="Items per page"
+        >
+          {COUNT_OPTIONS.map((n) => (
+            <option key={n} value={n}>{n} / page</option>
+          ))}
+        </select>
+      )}
+
       <input type="hidden" name="type" value={itemType} />
 
       <button
@@ -450,14 +497,13 @@ function FilterBar({
 // Type tabs
 // ---------------------------------------------------------------------------
 
-function TypeTabs({ active, query, sort, year }: { active: string; query?: string; sort: SortKey; year?: number }) {
+function TypeTabs({ active, query, sort, year, count }: { active: string; query?: string; sort: SortKey; year?: number; count: number }) {
   const tabs = [
     { value: 'discover', label: '✦ Browse' },
-    { value: 'all',      label: 'Library' },
     { value: 'movies',   label: 'Movies' },
     { value: 'shows',    label: 'TV Shows' },
   ]
-  const extra = `&sort=${sort}${year ? `&year=${year}` : ''}${query ? `&q=${encodeURIComponent(query)}` : ''}`
+  const extra = `&sort=${sort}&count=${count}${year ? `&year=${year}` : ''}${query ? `&q=${encodeURIComponent(query)}` : ''}`
   return (
     <div className="flex gap-1">
       {tabs.map((tab) => (
@@ -505,6 +551,12 @@ export default async function BrowsePage({ searchParams }: BrowsePageProps) {
 
   const genreId = params.genre ? parseInt(params.genre, 10) || undefined : undefined
 
+  const VALID_COUNTS = [10, 25, 50, 100] as const
+  const rawCount = parseInt(params.count ?? '25', 10)
+  const count: PageCount = (VALID_COUNTS as readonly number[]).includes(rawCount)
+    ? (rawCount as PageCount)
+    : 25
+
   const filterType = itemType === 'movies' ? 'movie' : itemType === 'shows' ? 'series' : undefined
   const filters = isDiscover ? { genres: [], years: [] } : getAvailableFilters(filterType)
 
@@ -512,7 +564,10 @@ export default async function BrowsePage({ searchParams }: BrowsePageProps) {
     <div className="min-h-screen bg-zinc-950 text-white">
       <div className="mx-auto max-w-screen-2xl px-4 py-8 sm:px-6 lg:px-8">
         <div className="mb-8 flex flex-col gap-4">
-          <h1 className="text-3xl font-bold tracking-tight">Browse</h1>
+          <div className="flex items-center justify-between">
+            <h1 className="text-3xl font-bold tracking-tight">Browse</h1>
+            <RescanButton />
+          </div>
 
           <FilterBar
             query={query}
@@ -521,9 +576,10 @@ export default async function BrowsePage({ searchParams }: BrowsePageProps) {
             itemType={itemType}
             years={filters.years}
             isDiscover={isDiscover}
+            count={count}
           />
 
-          <TypeTabs active={itemType} query={query} sort={sort} year={year} />
+          <TypeTabs active={itemType} query={query} sort={sort} year={year} count={count} />
         </div>
 
         {isDiscover ? (
@@ -538,7 +594,7 @@ export default async function BrowsePage({ searchParams }: BrowsePageProps) {
           </Suspense>
         ) : (
           <Suspense fallback={<BrowseGridSkeleton />}>
-            <BrowseGrid query={query} page={page} itemType={itemType} year={year} sort={sort} />
+            <BrowseGrid query={query} page={page} itemType={itemType} year={year} sort={sort} count={count} />
           </Suspense>
         )}
       </div>

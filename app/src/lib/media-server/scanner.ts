@@ -30,6 +30,8 @@ function isTvRoot(rootPath: string): boolean {
 }
 
 function resolveType(filePath: string, parsedIsEpisode: boolean): 'movie' | 'episode' {
+  // Directory root wins over filename heuristic — a file inside /media/tv is an episode
+  // even if its name doesn't match the S01E02 pattern.
   const root = knownRoots.find(r => filePath.startsWith(r + '/') || filePath === r)
   if (root) return isTvRoot(root) ? 'episode' : 'movie'
   return parsedIsEpisode ? 'episode' : 'movie'

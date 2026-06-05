@@ -1,3 +1,10 @@
+/**
+ * Overflow tabs for the torrent settings page: Advanced, RSS, and WebUI.
+ * Split into a separate file to keep TorrentSettingsClient.tsx under a
+ * manageable size. These tabs share the same SettingRow/Toggle/SelectField/
+ * NumberInput/TextInput/SectionCard primitives, re-declared here because they
+ * are file-scoped — there is no shared primitive module for the settings UI.
+ */
 'use client'
 import type { QbtPreferences } from '@/types/torrent'
 

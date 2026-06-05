@@ -9,7 +9,35 @@ import { Button } from '@/components/ui/Button'
 import MediaCard from '@/components/media/MediaCard'
 import { requireAuth } from '@/lib/dal'
 import { getRequestByTmdb } from '@/lib/requests/monitor'
-import { RequestButton } from '@/components/media/RequestButton'
+import { RequestOptions } from '@/components/media/RequestOptions'
+import { radarrFetch } from '@/lib/radarr/client'
+import { sonarrFetch } from '@/lib/sonarr/client'
+import type { RadarrMovie } from '@/lib/radarr/types'
+import type { SonarrSeries } from '@/lib/sonarr/types'
+
+interface ArrStatus {
+  monitored: boolean
+  arr: 'sonarr' | 'radarr'
+}
+
+async function getArrStatus(item: MediaItem): Promise<ArrStatus | null> {
+  if (!item.tmdb_id) return null
+  try {
+    if (item.type === 'movie') {
+      const movies = await radarrFetch<RadarrMovie[]>(`/movie?tmdbId=${item.tmdb_id}`)
+      if (!Array.isArray(movies) || movies.length === 0) return null
+      return { monitored: movies[0].monitored, arr: 'radarr' }
+    }
+    if (item.type === 'series') {
+      const series = await sonarrFetch<SonarrSeries[]>(`/series?tmdbId=${item.tmdb_id}`)
+      if (!Array.isArray(series) || series.length === 0) return null
+      return { monitored: series[0].monitored, arr: 'sonarr' }
+    }
+    return null
+  } catch {
+    return null
+  }
+}
 
 interface Props {
   params: Promise<{ id: string }>
@@ -52,6 +80,8 @@ export default async function BrowseDetailPage({ params }: Props) {
         item.type === 'movie' ? 'movie' : 'tv'
       )
     : undefined
+
+  const arrStatus = await getArrStatus(item)
 
   const episodes: MediaItem[] = item.type === 'series' ? getEpisodesForSeries(id) : []
   const similar: MediaItem[] = item.type !== 'episode' ? getSimilarItems(id, 12) : []
@@ -109,6 +139,19 @@ export default async function BrowseDetailPage({ params }: Props) {
           <div className="flex-1 min-w-0">
             <h1 className="text-3xl font-bold text-white mb-2">{item.title}</h1>
 
+            {/* Arr monitoring badge */}
+            {arrStatus && (
+              <div className="mb-3">
+                <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
+                  arrStatus.monitored
+                    ? 'bg-green-900/40 text-green-400'
+                    : 'bg-zinc-800 text-zinc-500'
+                }`}>
+                  {arrStatus.arr === 'radarr' ? 'Radarr' : 'Sonarr'} · {arrStatus.monitored ? 'Monitored' : 'Not monitored'}
+                </span>
+              </div>
+            )}
+
             {/* Metadata row */}
             <div className="flex items-center gap-2 text-zinc-400 text-sm mb-4 flex-wrap">
               {year && <span>{year}</span>}
@@ -136,7 +179,7 @@ export default async function BrowseDetailPage({ params }: Props) {
                 </span>
               )}
               {canRequest && (
-                <RequestButton
+                <RequestOptions
                   tmdbId={item.tmdb_id!}
                   mediaType={item.type === 'movie' ? 'movie' : 'tv'}
                   title={item.title}
@@ -144,6 +187,7 @@ export default async function BrowseDetailPage({ params }: Props) {
                   posterPath={item.poster_path}
                   overview={item.overview}
                   existingStatus={existingRequest?.status}
+                  existingRequestType={existingRequest?.request_type}
                 />
               )}
             </div>

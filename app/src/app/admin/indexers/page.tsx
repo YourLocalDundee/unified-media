@@ -1,3 +1,6 @@
+// Admin indexer management — CRUD for Torznab/Newznab indexers stored in unified.db.
+// Each indexer can be tested live; the result updates the row's health badge
+// and persists back to the health_status column via the test API route.
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
@@ -11,6 +14,12 @@ interface Indexer {
   enabled: number
   last_health_check: number | null
   health_status: string | null
+  requires_auth: number
+  requires_flaresolverr: number
+  search_type: string
+  description: string | null
+  pending_credentials: string | null  // JSON: { fieldName: label }
+  base_url: string | null
 }
 
 interface TestResult {
@@ -65,6 +74,109 @@ function HealthBadge({ status, lastCheck }: { status: string | null; lastCheck: 
   return <span className="text-muted-foreground text-sm">—</span>
 }
 
+// ---------------------------------------------------------------------------
+// Pending indexers — auth-required indexers waiting for credentials
+// ---------------------------------------------------------------------------
+
+interface PendingCardProps {
+  indexer: Indexer
+  onActivated: () => void
+}
+
+function PendingIndexerCard({ indexer, onActivated }: PendingCardProps) {
+  const fields: Record<string, string> = indexer.pending_credentials
+    ? JSON.parse(indexer.pending_credentials) as Record<string, string>
+    : {}
+
+  const [values, setValues] = useState<Record<string, string>>(
+    Object.fromEntries(Object.keys(fields).map(k => [k, ''])),
+  )
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [success, setSuccess] = useState(false)
+
+  async function handleActivate(e: React.FormEvent) {
+    e.preventDefault()
+    setBusy(true)
+    setError(null)
+    try {
+      const res = await fetch(`/api/indexer/${indexer.id}/activate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ credentials: values }),
+      })
+      const data = await res.json() as { ok?: boolean; error?: string }
+      if (!res.ok) {
+        setError(data.error ?? `Activation failed (${res.status})`)
+      } else {
+        setSuccess(true)
+        onActivated()
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Network error')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="rounded-xl border border-border bg-card p-5">
+      <div className="flex items-start justify-between gap-4 mb-3">
+        <div>
+          <h3 className="font-semibold text-foreground">{indexer.name}</h3>
+          {indexer.description && (
+            <p className="text-sm text-muted-foreground mt-0.5">{indexer.description}</p>
+          )}
+          {indexer.base_url && (
+            <a
+              href={indexer.base_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-xs text-primary hover:underline"
+            >
+              {indexer.base_url}
+            </a>
+          )}
+        </div>
+        <span className="shrink-0 rounded px-2 py-0.5 text-xs font-medium bg-yellow-600/20 text-yellow-400">
+          Needs credentials
+        </span>
+      </div>
+
+      {success ? (
+        <p className="text-sm text-green-400">Activated successfully.</p>
+      ) : (
+        <form onSubmit={e => void handleActivate(e)} className="space-y-3">
+          {Object.entries(fields).map(([key, label]) => (
+            <div key={key}>
+              <label className="block text-xs text-muted-foreground mb-1">{label}</label>
+              <input
+                type={key.toLowerCase().includes('key') || key.toLowerCase().includes('pass') ? 'password' : 'text'}
+                value={values[key] ?? ''}
+                onChange={e => setValues(v => ({ ...v, [key]: e.target.value }))}
+                placeholder={label}
+                required
+                className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary font-mono"
+              />
+            </div>
+          ))}
+          {error && (
+            <p className="text-xs text-red-400 bg-red-500/10 rounded px-3 py-2">{error}</p>
+          )}
+          <button
+            type="submit"
+            disabled={busy}
+            className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+          >
+            {busy && <Loader2 className="h-4 w-4 animate-spin" />}
+            {busy ? 'Testing & Enabling…' : 'Test & Enable'}
+          </button>
+        </form>
+      )}
+    </div>
+  )
+}
+
 export default function AdminIndexersPage() {
   const [indexers, setIndexers] = useState<Indexer[]>([])
   const [loading, setLoading] = useState(true)
@@ -77,10 +189,10 @@ export default function AdminIndexersPage() {
   const [formErrors, setFormErrors] = useState<Partial<FormState>>({})
   const [submitting, setSubmitting] = useState(false)
 
-  // per-row test state: id → 'testing' | result
+  // Keyed by indexer ID so each row can show its own loading/result state independently.
   const [testState, setTestState] = useState<Record<number, 'testing' | TestResult>>({})
 
-  // per-row toggle loading
+  // Separate from testState because toggling replaces the health badge; testing doesn't.
   const [toggling, setToggling] = useState<Set<number>>(new Set())
 
   const fetchIndexers = useCallback(async () => {
@@ -197,7 +309,7 @@ export default function AdminIndexersPage() {
       const res = await fetch(`/api/indexer/${id}/test`, { method: 'POST' })
       const data = await res.json() as TestResult
       setTestState(prev => ({ ...prev, [id]: data }))
-      // also refresh list so health_status column updates
+      // Refresh list so the persisted health_status from the test route is reflected
       void fetchIndexers()
     } catch (e) {
       setTestState(prev => ({
@@ -332,6 +444,31 @@ export default function AdminIndexersPage() {
           </div>
         )}
       </section>
+
+      {/* Pending indexers — auth-required, waiting for credentials */}
+      {!loading && (() => {
+        const pending = indexers.filter(i => i.requires_auth === 1 && i.enabled === 0)
+        if (pending.length === 0) return null
+        return (
+          <section className="space-y-4">
+            <div>
+              <h2 className="text-lg font-semibold text-foreground">Pending Indexers</h2>
+              <p className="text-sm text-muted-foreground mt-0.5">
+                These indexers require account credentials. Enter them below to test and enable.
+              </p>
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              {pending.map(i => (
+                <PendingIndexerCard
+                  key={i.id}
+                  indexer={i}
+                  onActivated={() => void fetchIndexers()}
+                />
+              ))}
+            </div>
+          </section>
+        )
+      })()}
 
       {/* Add / Edit modal */}
       {modalOpen && (

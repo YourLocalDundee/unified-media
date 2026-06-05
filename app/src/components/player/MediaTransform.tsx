@@ -1,3 +1,8 @@
+// Video geometric transform panel inside MediaToolsPanel's Video tab.
+// Provides rotation (0/90/180/270°), horizontal/vertical flip, zoom presets, and
+// a 3×3 alignment grid. All transforms are emitted as CSS strings via callbacks
+// to the parent VideoPlayer, which applies them on the <video> element.
+// Settings persist to localStorage and are restored on mount.
 'use client'
 
 import { useState, useEffect } from 'react'
@@ -59,6 +64,8 @@ const ALIGNMENT_GRID: { label: string; value: string }[][] = [
   ],
 ]
 
+// Returns an empty string when all transforms are at their identity values so the
+// parent can set style.transform = '' and not create a stacking context unnecessarily.
 function buildTransform(state: TransformState): string {
   const parts: string[] = []
   if (state.rotate !== 0) parts.push(`rotate(${state.rotate}deg)`)
@@ -75,14 +82,17 @@ export default function MediaTransform({ onTransformChange, onAlignmentChange }:
     try {
       const saved = localStorage.getItem(STORAGE_KEY)
       if (saved) {
+        // Spread over DEFAULTS so newly added fields don't break old stored objects.
         const parsed = { ...DEFAULTS, ...JSON.parse(saved) } as TransformState
         setState(parsed)
+        // Apply immediately so the video loads with saved rotation/zoom — avoids a visible jump.
         onTransformChange(buildTransform(parsed))
         onAlignmentChange(parsed.alignment)
       }
     } catch {
       // ignore malformed storage
     }
+  // Callbacks are excluded to match the MediaVideoEffects pattern — see its comment.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 

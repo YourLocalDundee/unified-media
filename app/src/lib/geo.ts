@@ -1,5 +1,6 @@
 interface GeoResult { country: string; city: string }
 interface CacheEntry { data: GeoResult; expiresAt: number }
+// In-process cache — good enough for admin dashboards; ip-api free tier is 45 req/min.
 const cache = new Map<string, CacheEntry>()
 const UNKNOWN: GeoResult = { country: 'Unknown', city: '' }
 

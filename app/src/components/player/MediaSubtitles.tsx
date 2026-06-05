@@ -1,3 +1,7 @@
+// Subtitle appearance settings panel inside MediaToolsPanel's Subtitles tab.
+// Styles are applied by injecting a <style> tag with ::cue pseudo-element rules —
+// the only CSS mechanism for styling HTML5 native subtitle tracks (WebVTT cues).
+// Settings are persisted to localStorage and restored on mount.
 'use client'
 
 import { useEffect, useState } from 'react'
@@ -36,6 +40,8 @@ function buildCueStyle(
   return `::cue { font-size: ${fontSize}; color: ${color}; background-color: ${background}; text-align: ${align}; text-shadow: ${SHADOW_MAP[shadow]}; opacity: ${opacity / 100}; }`
 }
 
+// Upsert a single <style> tag with a stable ID so repeated calls replace the
+// previous rules rather than accumulating duplicate stylesheet elements.
 function injectStyle(css: string) {
   let el = document.getElementById('unified-subtitle-cue') as HTMLStyleElement | null
   if (!el) {
@@ -46,6 +52,9 @@ function injectStyle(css: string) {
   el.textContent = css
 }
 
+// _videoRef is unused here because subtitle delay is currently UI-state-only;
+// actual per-cue timestamp offset would require manipulating WebVTT cue objects,
+// which is not yet implemented.
 export default function MediaSubtitles({ videoRef: _videoRef }: Props) {
   const [delay, setDelay] = useState(0)
   const [fontSize, setFontSize] = useState<FontSize>('100%')

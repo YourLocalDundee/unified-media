@@ -1,3 +1,16 @@
+/**
+ * GET /api/auth/check-username?username=... — live availability check used
+ * by the registration form's debounced username field.
+ *
+ * Checks both `users` and active `pending_registrations` so a username that
+ * is mid-verification elsewhere is reported as unavailable. The server will
+ * re-enforce uniqueness at verify-email time regardless.
+ *
+ * force-dynamic ensures Next.js never caches the response; a cached "available"
+ * reply could let two users register the same username simultaneously.
+ * Rate limit: 20 requests per IP per minute (generous for debounce at 500ms).
+ */
+
 import { NextRequest, NextResponse } from 'next/server'
 import { checkRateLimit } from '@/lib/rate-limit'
 import { getDb } from '@/lib/db/index'

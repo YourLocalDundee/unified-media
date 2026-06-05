@@ -1,3 +1,7 @@
+/**
+ * Internal Torznab search endpoint consumed by the automation layer.
+ * No session auth — callers are server-side scheduled jobs, not browser clients.
+ */
 import { NextRequest, NextResponse } from 'next/server'
 import { searchAllIndexers } from '@/lib/indexer/index'
 import type { TorznabSearchParams } from '@/lib/indexer/types'

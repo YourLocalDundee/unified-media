@@ -1,14 +1,31 @@
+/**
+ * POST /api/auth/profile/change-password — allows a logged-in user to change
+ * their own password from the /settings/profile page.
+ *
+ * Differs from /api/auth/change-password (the force_pw_change route) in that
+ * this requires an active session and the user is already authenticated with
+ * a valid session cookie. Rate-limited per userId (not per IP) so a shared NAT
+ * IP doesn't block one user when another triggers the limit.
+ *
+ * On success: current session is preserved; all other sessions are revoked
+ * so devices the user may have lost access to are signed out.
+ */
+
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth, logEvent } from '@/lib/dal'
 import { verifyPassword, validatePassword, hashPassword } from '@/lib/password'
 import { getDb } from '@/lib/db/index'
 import { checkRateLimit } from '@/lib/rate-limit'
+import { verifyOrigin } from '@/lib/csrf'
 
 interface UserRow { password_hash: string }
 
 export async function POST(req: NextRequest) {
+  if (!verifyOrigin(req)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   const session = await requireAuth()
 
+  // Rate limit keyed on userId (not IP) so users behind shared NAT don't block
+  // each other, and so a user cannot evade the limit by switching IPs.
   const rl = checkRateLimit(`change-password:${session.userId}`, 5, 15 * 60 * 1000)
   if (!rl.allowed) {
     return NextResponse.json({ error: 'Too many attempts. Please try again later.' }, { status: 429 })
@@ -46,6 +63,8 @@ export async function POST(req: NextRequest) {
   const hash = await hashPassword(newPassword)
   db.prepare('UPDATE users SET password_hash = ?, force_pw_change = 0, updated_at = ? WHERE id = ?')
     .run(hash, Date.now(), session.userId)
+  // Revoke all sessions except the current one so other devices must re-login
+  // with the new password. Keeps this device's session to avoid forcing a login.
   db.prepare('DELETE FROM sessions WHERE user_id = ? AND id != ?')
     .run(session.userId, session.sessionId)
 

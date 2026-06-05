@@ -1,3 +1,6 @@
+// Admin subtitle management — wraps the native subtitle system (Bazarr replacement).
+// "Scan Library" discovers media without subtitles and creates wanted entries.
+// "Download Pending" triggers an OpenSubtitles lookup and writes .srt files to disk.
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
@@ -222,6 +225,7 @@ export default function AdminSubtitlesPage() {
                   </td>
                   <td className="px-4 py-3 text-muted-foreground">{item.jellyfin_item_type}</td>
                   <td className="px-4 py-3">
+                    {/* Guard against blank/malformed IMDB IDs before constructing the URL */}
                     {item.imdb_id && /\d/.test(item.imdb_id) ? (
                       <a
                         href={`https://www.imdb.com/title/tt${item.imdb_id}`}

@@ -1,3 +1,7 @@
+/**
+ * Next.js server startup hook. Runs once per worker process on boot.
+ * Guards on NEXT_RUNTIME to avoid executing in the Edge runtime (e.g. middleware).
+ */
 export async function register() {
   if (process.env.NEXT_RUNTIME === 'nodejs') {
     const required = ['ADMIN_USERNAME', 'ADMIN_PASSWORD']
@@ -21,5 +25,10 @@ export async function register() {
 
     const { initWatcher } = await import('@/lib/media-server/scanner')
     initWatcher()
+
+    const { initIndexerDiscovery } = await import('@/lib/indexer/discovery')
+    initIndexerDiscovery().catch(err => {
+      console.warn('[indexer] Discovery error (non-fatal):', err)
+    })
   }
 }

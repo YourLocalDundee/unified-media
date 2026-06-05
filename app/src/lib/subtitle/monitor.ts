@@ -1,3 +1,8 @@
+// SQLite CRUD layer for the `subtitle_wants` table in unified.db.
+// This module is the source of truth for what subtitles have been requested,
+// their current status, and where downloaded .srt files are on disk.
+// upsertSubtitleWant uses INSERT OR IGNORE so duplicate wants (same item +
+// language + forced + hi) are silently skipped on repeated scans.
 import { getDb } from '@/lib/db/index'
 import type { SubtitleStatus, SubtitleWant } from './types'
 

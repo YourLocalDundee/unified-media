@@ -1,3 +1,9 @@
+/**
+ * /play/[id] — native media server player (backed by getNativePlaybackData).
+ * Distinct from /watch/[id] only in its route segment; both use the same VideoPlayer
+ * component and playback data source. /play is linked from the library detail page;
+ * /watch is linked from the native episode carousel.
+ */
 import type { Metadata } from 'next'
 import { notFound } from 'next/navigation'
 import VideoPlayer from '@/components/media/VideoPlayer'

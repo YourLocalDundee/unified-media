@@ -1,3 +1,11 @@
+/**
+ * Controlled search input that drives the server-rendered /search page.
+ * Debounces keystrokes (300ms) and calls router.push() to update the URL,
+ * which causes the server component to re-run with the new query param.
+ * useTransition marks the navigation as a non-blocking transition so the
+ * spinner shows while the server component is rendering without freezing the
+ * input field.
+ */
 'use client'
 
 import { useState, useEffect, useRef, useTransition } from 'react'
@@ -40,6 +48,7 @@ export default function SearchInput({ initialQuery }: SearchInputProps) {
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
+    // Cancel any pending debounce so the explicit submit fires immediately
     if (debounceRef.current) clearTimeout(debounceRef.current)
     navigate(value)
   }

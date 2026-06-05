@@ -1,3 +1,5 @@
+// Admin settings page — reads/writes key-value settings stored in the app_settings
+// SQLite table via /api/admin/settings. Currently exposes only auto_approve.
 'use client'
 
 import { useEffect, useState } from 'react'
@@ -9,6 +11,7 @@ export default function AdminSettingsPage() {
   const [saved, setSaved] = useState(false)
 
   useEffect(() => {
+    // Settings are stored as strings in the DB ('0'/'1'), so compare against '1' not 1.
     fetch('/api/admin/settings')
       .then((r) => r.json())
       .then((data: Record<string, string>) => {

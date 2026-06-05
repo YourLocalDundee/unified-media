@@ -1,3 +1,6 @@
+// Admin invite management — generate single-use or multi-use invite codes with
+// optional expiry. Registration no longer requires an invite by default (v0.5.3+),
+// but admins can still hand out invite links for controlled onboarding.
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
@@ -66,6 +69,7 @@ export default function AdminInvitesPage() {
     setTimeout(() => setCopied(false), 2000)
   }
 
+  // "Active" includes unlimited-use codes that have been used but aren't exhausted.
   const active = invites.filter(i => !i.used_at || (i.max_uses === 0 || i.use_count < i.max_uses))
   const used = invites.filter(i => i.use_count > 0)
 

@@ -1,6 +1,11 @@
+// Admin section layout — enforces admin role at render time and renders a
+// persistent sidebar (desktop) / horizontal tab bar (mobile) for all /admin/* pages.
+
 import { requireAdmin } from '@/lib/dal'
 import Link from 'next/link'
 
+// Central nav definition shared between the desktop sidebar and the mobile tab bar.
+// Kept here (not in a separate file) to keep the layout self-contained.
 const NAV = [
   { href: '/admin', label: 'Overview' },
   { href: '/admin/monitoring', label: 'User Monitoring' },
@@ -15,10 +20,13 @@ const NAV = [
   { href: '/admin/automation/bridge', label: 'Request Bridge' },
   { href: '/admin/subtitles', label: 'Subtitles' },
   { href: '/admin/media-server', label: 'Media Server' },
+  { href: '/admin/quality-profiles', label: 'Quality Profiles' },
   { href: '/admin/settings', label: 'Settings' },
 ]
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
+  // Server-side admin gate — throws a redirect to /login if session is missing or non-admin.
+  // This is the security boundary; do not rely on client-side role checks alone.
   await requireAdmin()
 
   return (
@@ -37,7 +45,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
         ))}
       </nav>
 
-      {/* Mobile tabs */}
+      {/* Mobile tabs — fixed at the top so they stay visible while the content scrolls */}
       <div className="flex md:hidden overflow-x-auto border-b border-border bg-card px-4 gap-1 shrink-0 fixed top-0 left-0 right-0 z-10">
         {NAV.map(({ href, label }) => (
           <Link
@@ -50,6 +58,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
         ))}
       </div>
 
+      {/* pt-14 on mobile offsets the fixed tab bar height; md:pt-6 reverts to normal padding */}
       <main className="flex-1 p-6 md:p-8 mt-0 md:mt-0 pt-14 md:pt-6 min-w-0">
         {children}
       </main>

@@ -1,3 +1,9 @@
+/**
+ * Settings section layout — persistent sidebar nav shared by all /settings/*
+ * pages. Runs as a server component so it can read the session role without
+ * a client-side fetch. The "Admin Panel" link is conditionally rendered only
+ * for admin accounts to avoid exposing the route to regular users.
+ */
 import Link from 'next/link'
 import { requireAuth } from '@/lib/dal'
 
@@ -29,6 +35,7 @@ export default async function SettingsLayout({ children }: { children: React.Rea
           ))}
           {isAdmin && (
             <>
+              {/* Divider only visible on md+ where the nav is vertical */}
               <div className="hidden md:block h-px bg-border my-1" />
               <Link href="/admin"
                 className="flex-shrink-0 rounded-md px-3 py-2 text-sm font-medium hover:bg-accent hover:text-accent-foreground transition-colors text-purple-400 hover:text-purple-300">

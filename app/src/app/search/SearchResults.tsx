@@ -1,3 +1,9 @@
+/**
+ * Client component that renders the TMDB search result grid and handles the
+ * "Request" button state for each card. Request state is intentionally local
+ * to this component — it only needs to persist for the lifetime of the current
+ * search session, not across navigations.
+ */
 'use client'
 
 import { useState } from 'react'
@@ -30,6 +36,8 @@ export default function SearchResults({ results, query }: Props) {
           overview: result.overview,
         }),
       })
+      // 409 Conflict means the item was already requested — treat it as success
+      // so the UI still transitions to the "Requested" state.
       if (res.ok || res.status === 409) {
         setRequestedIds((prev) => new Set(prev).add(result.tmdbId))
       } else {
@@ -67,7 +75,8 @@ export default function SearchResults({ results, query }: Props) {
 
         return (
           <div
-            key={`${result.mediaType}-${result.tmdbId}`}
+            // Compound key because TMDB IDs are not unique across movie and TV namespaces
+          key={`${result.mediaType}-${result.tmdbId}`}
             className="group flex flex-col overflow-hidden rounded-lg bg-zinc-900 ring-1 ring-white/5 transition hover:ring-white/20"
           >
             {/* Poster */}

@@ -118,10 +118,10 @@ export function RequestButton({
   const sizeCompact = 'px-2 py-1 text-xs'
   const sz = compact ? sizeCompact : sizeNormal
 
-  // Static status badges (disabled states)
+  // declined and expired fall through to the request buttons below — they allow re-requesting.
   if (currentStatus && currentStatus !== 'declined' && currentStatus !== 'expired') {
     if (uiState === 'success' && currentStatus === 'pending') {
-      // Brief "Requested!" flash before settling into badge
+      // Brief "Requested!" flash before settling into the static badge.
       setTimeout(() => setUiState('idle'), 1500)
       return (
         <span className={`inline-flex items-center rounded-lg ${sz} font-medium bg-green-900/60 text-green-300`}>

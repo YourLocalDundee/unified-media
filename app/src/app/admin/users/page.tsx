@@ -1,3 +1,5 @@
+// Admin user management table — server-paginated list with search, role, and status
+// filters. Supports bulk suspend/activate and per-row actions (reset password, delete).
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
@@ -26,6 +28,7 @@ export default function AdminUsersPage() {
   const [actionLoading, setActionLoading] = useState<string | null>(null)
   const [resetResult, setResetResult] = useState<{ userId: string; tempPw: string } | null>(null)
 
+  // Wrapped in useCallback so the effect dependency array stays stable between renders.
   const fetchUsers = useCallback(async () => {
     setLoading(true)
     try {
@@ -66,6 +69,8 @@ export default function AdminUsersPage() {
     }
   }
 
+  // Bulk actions are serial on purpose — avoids flooding the API and keeps audit
+  // log entries individually identifiable per user.
   async function bulkAction(action: 'suspend' | 'activate') {
     for (const id of selected) await doAction(id, action)
     setSelected(new Set())

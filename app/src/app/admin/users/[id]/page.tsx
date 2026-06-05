@@ -1,3 +1,6 @@
+// Per-user admin detail page — shows profile, all sessions, full watch history,
+// audit log, and login attempts in a five-tab layout. All actions (suspend, reset
+// password, role changes, delete) mutate via API routes so they hit the auth layer.
 'use client'
 
 import { useState, useEffect, use } from 'react'
@@ -33,6 +36,7 @@ function fmtDur(sec: number | null) {
 }
 
 export default function UserDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  // `use(params)` is required in Next.js 15+ because params is a Promise in client components.
   const { id } = use(params)
   const router = useRouter()
   const [data, setData] = useState<MonitorData | null>(null)
@@ -65,7 +69,7 @@ export default function UserDetailPage({ params }: { params: Promise<{ id: strin
       } else if (action === 'demote') {
         await fetch(`/api/admin/users/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ role: 'user' }) })
       }
-      // Reload
+      // Re-fetch the full monitoring payload so all tabs reflect the updated state
       const res = await fetch(`/api/admin/users/${id}/monitoring`)
       setData(await res.json() as MonitorData)
     } finally {
@@ -225,6 +229,7 @@ export default function UserDetailPage({ params }: { params: Promise<{ id: strin
                     <td className="px-4 py-3 text-xs text-muted-foreground">{fmt(s.last_seen)}</td>
                     <td className="px-4 py-3 text-xs text-muted-foreground">{fmt(s.expires_at)}</td>
                     <td className="px-4 py-3">
+                      {/* Active/expired is determined client-side against Date.now() — no DB query needed */}
                       <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${expired ? 'bg-muted text-muted-foreground' : 'bg-green-500/20 text-green-400'}`}>
                         {expired ? 'Expired' : 'Active'}
                       </span>

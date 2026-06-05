@@ -1,3 +1,6 @@
+// Reports playback progress to Jellyfin (POST /Sessions/Playing/Progress).
+// Called periodically by VideoPlayer (e.g. every 10s during playback) so Jellyfin
+// tracks resume position and shows accurate progress in its clients.
 import { NextRequest, NextResponse } from 'next/server'
 import { jellyfinFetch } from '@/lib/jellyfin/client'
 

@@ -1,3 +1,7 @@
+// Continue-watching feed for the home page dashboard.
+// Reads from the native media server's media_watch_state table (Phase 5) rather
+// than calling Jellyfin directly, so it reflects the independence-build playback state.
+// Returns at most 10 items: one episode per series (most recent) plus all in-progress movies.
 import { NextResponse } from 'next/server'
 import { requireAuth } from '@/lib/dal'
 import { getDb } from '@/lib/db/index'
@@ -57,7 +61,8 @@ export async function GET() {
       )
       .all(session.userId) as ResumeRow[]
 
-    // De-duplicate episodes by series: keep most recently played per series
+    // Show only the most recently watched episode per series rather than one row
+    // per episode — the home page card links to that episode, so duplicates are noise.
     const seriesMap = new Map<string, ResumeRow>()
     const movies: ResumeRow[] = []
 
@@ -88,6 +93,7 @@ export async function GET() {
         title: ep.series_title ?? ep.title,
         subtitle,
         type: 'Episode',
+        // Use series poster for the card image; fall back to episode thumb if orphaned.
         imageId: ep.series_id ?? ep.id,
         progress:
           ep.runtime_ticks && ep.runtime_ticks > 0
@@ -117,6 +123,8 @@ export async function GET() {
 
     return NextResponse.json(items)
   } catch {
+    // Return empty array on any error so the home page still renders — this is a
+    // non-critical widget and a thrown error should not break the whole dashboard.
     return NextResponse.json([], { status: 200 })
   }
 }

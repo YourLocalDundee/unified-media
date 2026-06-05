@@ -32,19 +32,16 @@ export async function GET(
 
     const raw = await tmdbFetch(`/tv/${id}/season/${season}?language=en-US`)
 
-    const episodes = (raw.episodes ?? []).map((ep: Record<string, unknown>) => ({
-      id: ep.id,
-      name: ep.name,
-      overview: ep.overview ?? '',
-      airDate: ep.air_date ?? null,
-      episodeNumber: ep.episode_number,
-      stillPath: ep.still_path ?? null,
-      runtime: ep.runtime ?? null,
-      voteAverage: ep.vote_average ?? null,
-    }))
+    const episodes = (raw.episodes ?? [])
+      .filter((ep: Record<string, unknown>) => ep.episode_number)
+      .map((ep: Record<string, unknown>) => ({
+        episodeNumber: ep.episode_number as number,
+        name: (ep.name as string) ?? null,
+        airDate: (ep.air_date as string) ?? null,
+      }))
 
     return NextResponse.json({ episodes })
-  } catch (err) {
-    return NextResponse.json({ error: String(err) }, { status: 500 })
+  } catch (_err) {
+    return NextResponse.json({ episodes: [] })
   }
 }

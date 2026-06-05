@@ -1,3 +1,7 @@
+// Chapter navigation panel inside MediaToolsPanel's Info tab.
+// Chapter data comes from Jellyfin (MediaChapter[] with startPositionTicks in 100ns ticks).
+// The current chapter is determined by scanning the list for the last chapter whose
+// start time is <= the current playback position.
 'use client'
 
 import { useEffect, useState } from 'react'
@@ -25,6 +29,7 @@ export default function MediaChapters({ videoRef, chapters, duration: _duration 
     return () => video.removeEventListener('timeupdate', handleTimeUpdate)
   }, [videoRef])
 
+  // Convert 100-nanosecond ticks to seconds: 10,000,000 ticks = 1 second.
   const chapterTimes = chapters.map((c) => c.startPositionTicks / 10_000_000)
 
   const currentIndex = (() => {

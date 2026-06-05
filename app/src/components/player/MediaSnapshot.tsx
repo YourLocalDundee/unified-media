@@ -1,3 +1,7 @@
+// Snapshot panel inside MediaToolsPanel's Info tab.
+// Draws the current video frame onto an off-screen canvas and triggers a PNG
+// download. The canvas approach is required because <video> elements cannot be
+// right-click-saved when CORS headers are absent on the stream URL.
 'use client'
 
 import { useState } from 'react'
@@ -19,6 +23,7 @@ export default function MediaSnapshot({ videoRef, title }: MediaSnapshotProps) {
       return
     }
 
+    // Canvas is sized to the video's intrinsic resolution, not the rendered size.
     const canvas = document.createElement('canvas')
     canvas.width = video.videoWidth
     canvas.height = video.videoHeight
@@ -31,7 +36,9 @@ export default function MediaSnapshot({ videoRef, title }: MediaSnapshotProps) {
       const timestamp = Date.now()
       a.href = url
       a.download = `${title}-${timestamp}.png`
+      // Programmatic click triggers the browser's save dialog without a user gesture on the link.
       a.click()
+      // Revoke immediately after click — the browser has already queued the download.
       URL.revokeObjectURL(url)
       setFeedback('saved')
       setTimeout(() => setFeedback('idle'), 2000)

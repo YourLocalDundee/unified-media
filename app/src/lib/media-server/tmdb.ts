@@ -238,7 +238,7 @@ export async function getTrendingContent(
       return mapMovie(r as unknown as TMDBMovieListItem)
     })
 
-  void isMovie
+  void isMovie // suppress unused-variable warning; kept for readability of the isTv/isMovie pair above
 
   return {
     results,

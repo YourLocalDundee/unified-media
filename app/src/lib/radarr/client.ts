@@ -1,3 +1,8 @@
+// Server-only Radarr HTTP client.
+// Radarr uses X-Api-Key header auth on the /api/v3 base path.
+// GET responses bypass the Next.js cache so movie availability
+// and queue status are always fresh.
+
 const RADARR_URL = process.env.RADARR_URL ?? 'http://192.168.0.50:7878'
 const RADARR_API_KEY = process.env.RADARR_API_KEY ?? ''
 

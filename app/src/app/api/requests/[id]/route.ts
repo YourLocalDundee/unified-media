@@ -21,6 +21,7 @@ export async function GET(
     return NextResponse.json({ error: 'Request not found' }, { status: 404 })
   }
 
+  // 404 rather than 403 to avoid leaking that the request ID exists.
   if (session.role !== 'admin' && request.user_id !== session.userId) {
     return NextResponse.json({ error: 'Request not found' }, { status: 404 })
   }

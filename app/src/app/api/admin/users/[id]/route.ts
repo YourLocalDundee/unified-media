@@ -1,17 +1,33 @@
+// DELETE + PATCH /api/admin/users/[id]
+// DELETE: hard-deletes a non-admin user and their sessions/watch history.
+// PATCH: applies a safe partial update (role, is_active, force_pw_change) from
+//        an allowlist — arbitrary column writes are not accepted.
+
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAdmin, logEvent } from '@/lib/dal'
+import { checkRateLimit } from '@/lib/rate-limit'
 import { getDb } from '@/lib/db/index'
 
 interface UserRow { role: string; username: string }
 
-export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await requireAdmin()
+
+  const ip = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? '127.0.0.1'
+  const rl = checkRateLimit(`admin-users:${ip}`, 30, 10 * 60 * 1000)
+  if (!rl.allowed) {
+    return NextResponse.json({ error: 'Too many requests. Try again later.' }, { status: 429 })
+  }
+
   const { id } = await params
+  // Prevent the acting admin from deleting their own account.
   if (id === session.userId) return NextResponse.json({ error: 'Cannot delete yourself' }, { status: 400 })
   const user = getDb().prepare('SELECT role FROM users WHERE id = ?').get(id) as UserRow | undefined
   if (!user) return NextResponse.json({ error: 'User not found' }, { status: 404 })
+  // Admins are protected from deletion to prevent accidental lockout.
   if (user.role === 'admin') return NextResponse.json({ error: 'Cannot delete admin accounts' }, { status: 400 })
   const db = getDb()
+  // Cascade-delete sessions and watch history before the user row to avoid orphaned data.
   db.prepare('DELETE FROM sessions WHERE user_id = ?').run(id)
   db.prepare('DELETE FROM watch_events WHERE user_id = ?').run(id)
   db.prepare('DELETE FROM users WHERE id = ?').run(id)
@@ -21,6 +37,13 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await requireAdmin()
+
+  const ip = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? '127.0.0.1'
+  const rl = checkRateLimit(`admin-users:${ip}`, 30, 10 * 60 * 1000)
+  if (!rl.allowed) {
+    return NextResponse.json({ error: 'Too many requests. Try again later.' }, { status: 429 })
+  }
+
   const { id } = await params
   let body: { role?: string; is_active?: number; force_pw_change?: number }
   try { body = await req.json() as typeof body }
@@ -28,10 +51,12 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
   const user = getDb().prepare('SELECT role, username FROM users WHERE id = ?').get(id) as UserRow | undefined
   if (!user) return NextResponse.json({ error: 'User not found' }, { status: 404 })
+  // Guard against an admin accidentally demoting themselves and losing access.
   if (id === session.userId && body.role !== undefined && body.role !== 'admin') {
     return NextResponse.json({ error: 'Cannot demote yourself' }, { status: 400 })
   }
 
+  // Build the SET clause from the allowlist only — never trust raw field names from the client.
   const fields: string[] = []
   const values: (string | number)[] = []
   if (body.role !== undefined && ['admin', 'user'].includes(body.role)) {

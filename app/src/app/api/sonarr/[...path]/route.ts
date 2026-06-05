@@ -1,3 +1,6 @@
+// Authenticated proxy to Sonarr's REST API (v3).
+// All browser-side Sonarr calls go through here so the API key stays server-side.
+// Sonarr uses network_mode: host, so the default URL is the host IP, not a container name.
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth } from '@/lib/dal'
 
@@ -17,6 +20,8 @@ async function proxy(req: NextRequest, { params }: Params) {
   if (contentType) headers['Content-Type'] = contentType
 
   try {
+    // Read the body as a raw buffer to support both JSON and form payloads
+    // without needing to know the format in advance.
     const body = req.method !== 'GET' && req.method !== 'HEAD'
       ? await req.arrayBuffer()
       : undefined

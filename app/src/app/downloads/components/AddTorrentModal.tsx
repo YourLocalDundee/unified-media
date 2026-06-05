@@ -1,9 +1,21 @@
+/**
+ * Modal for adding a torrent by magnet link/URL or by uploading a .torrent file.
+ * Supports the full UMT /torrents/add form surface: save path, category,
+ * tags, and per-torrent toggles (paused, sequential, first/last piece, skip
+ * hash check, auto TMM).
+ *
+ * When a .torrent file is provided the request is sent as multipart/form-data;
+ * URL/magnet submissions use application/x-www-form-urlencoded. The proxy route
+ * at /api/qbit/[...path] handles both content types correctly (see CLAUDE.md
+ * § Unified Torrent System — multipart passthrough fix).
+ */
 'use client'
 
 import { useState, useRef, useCallback, useEffect } from 'react'
 
 interface AddTorrentModalProps {
   open: boolean
+  // Allows the parent to pre-populate the file picker (e.g. drag-and-drop onto the table)
   initialFile?: File | null
   categories: Record<string, { name: string; savePath: string }>
   tags: string[]
@@ -47,6 +59,8 @@ export default function AddTorrentModal({
     }
   }, [open, defaultSavePath])
 
+  // When a known category is selected and Auto TMM is off, pre-fill the save path
+  // with that category's configured path so the user doesn't have to type it.
   const handleCategoryChange = useCallback((val: string) => {
     setCategory(val)
     const cat = Object.values(categories).find((c) => c.name === val)
@@ -62,6 +76,7 @@ export default function AddTorrentModal({
   const handleSubmit = useCallback(async (e: React.FormEvent) => {
     e.preventDefault()
     setError(null)
+    // "Type new" input overrides the dropdown selection if both are filled
     const effectiveCategory = newCategory.trim() || category
     const tagsStr = selectedTags.join(',')
 

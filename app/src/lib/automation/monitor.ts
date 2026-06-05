@@ -1,3 +1,17 @@
+/**
+ * CRUD layer for the automation pipeline's two main tables: monitored_items and grab_history.
+ *
+ * monitored_items — the "want list": what media should be searched for and downloaded.
+ * grab_history    — an audit trail of every torrent sent to the download client.
+ *
+ * All DB access in this file uses the better-sqlite3 singleton from lib/db/index.
+ * Calls are synchronous (better-sqlite3 is a blocking API by design).
+ *
+ * This module is the single write path for item status transitions:
+ *   wanted → grabbed (grabber.ts sets this after a successful download client add)
+ *   grabbed → imported (availability.ts sets this after finding the item in media_items)
+ */
+
 import { getDb } from '@/lib/db/index'
 import type {
   GrabHistory,
@@ -17,6 +31,8 @@ export function getAllProfiles(): QualityProfile[] {
   return db.prepare('SELECT * FROM quality_profiles').all() as QualityProfile[]
 }
 
+// Returns undefined (not null) when the id doesn't exist; caller falls back to a synthetic
+// "Any" profile with empty conditions so grabs always proceed even after a profile is deleted.
 export function getProfileById(id: number): QualityProfile | undefined {
   const db = getDb()
   return db
@@ -28,6 +44,8 @@ export function getProfileById(id: number): QualityProfile | undefined {
 // Monitored Items
 // ---------------------------------------------------------------------------
 
+// Only items with monitored=1 are eligible for the scheduler's grab loop.
+// monitored=0 items are kept in the DB so their history is preserved but are skipped.
 export function getWantedItems(): MonitoredItem[] {
   const db = getDb()
   return db
@@ -59,6 +77,10 @@ export function createItem(data: {
   year?: number
   quality_profile_id?: number
   root_path?: string
+  scope_type?: 'full' | 'seasons' | 'episodes' | 'movie' | null
+  scope_seasons?: number[] | null
+  scope_episodes?: Array<{ s: number; e: number }> | null
+  monitor_future?: boolean
 }): MonitoredItem {
   const db = getDb()
   const now = Date.now()
@@ -67,10 +89,13 @@ export function createItem(data: {
     .prepare(
       `INSERT INTO monitored_items
         (type, title, tmdb_id, tvdb_id, year, quality_profile_id, root_path,
-         monitored, status, created_at, updated_at)
+         monitored, status, scope_type, scope_seasons, scope_episodes, monitor_future,
+         created_at, updated_at)
        VALUES
         (@type, @title, @tmdb_id, @tvdb_id, @year, @quality_profile_id, @root_path,
-         1, 'wanted', @created_at, @updated_at)`
+         1, 'wanted', @scope_type, @scope_seasons, @scope_episodes, @monitor_future,
+         @created_at, @updated_at)`
+      // New items always start monitored=1, status='wanted' so the next scheduler tick picks them up
     )
     .run({
       type: data.type,
@@ -78,8 +103,13 @@ export function createItem(data: {
       tmdb_id: data.tmdb_id ?? null,
       tvdb_id: data.tvdb_id ?? null,
       year: data.year ?? null,
+      // profile id=1 is the default "Any" profile seeded at DB init
       quality_profile_id: data.quality_profile_id ?? 1,
       root_path: data.root_path ?? '',
+      scope_type: data.scope_type ?? (data.type === 'movie' ? 'movie' : 'full'),
+      scope_seasons: data.scope_seasons != null ? JSON.stringify(data.scope_seasons) : null,
+      scope_episodes: data.scope_episodes != null ? JSON.stringify(data.scope_episodes) : null,
+      monitor_future: data.monitor_future ? 1 : 0,
       created_at: now,
       updated_at: now,
     })
@@ -87,7 +117,9 @@ export function createItem(data: {
   return getItemById(result.lastInsertRowid as number)!
 }
 
-// Explicit allowlist prevents injection through dynamic key names
+// Explicit allowlist prevents injection through dynamic key names.
+// The SET clause is built by interpolating key names, so an unfiltered caller-supplied
+// key would be a SQL injection vector.
 const ITEM_ALLOWED_FIELDS = new Set<string>([
   'title',
   'tmdb_id',
@@ -97,6 +129,10 @@ const ITEM_ALLOWED_FIELDS = new Set<string>([
   'root_path',
   'monitored',
   'status',
+  'scope_type',
+  'scope_seasons',
+  'scope_episodes',
+  'monitor_future',
 ])
 
 export function updateItem(
@@ -118,6 +154,7 @@ export function updateItem(
     ITEM_ALLOWED_FIELDS.has(key)
   )
 
+  // No-op guard: a bare "UPDATE ... SET WHERE id=?" with no SET clause is a SQL syntax error
   if (safeEntries.length === 0) {
     return getItemById(id)
   }
@@ -150,6 +187,8 @@ export function deleteItem(id: number): boolean {
 // Grab History
 // ---------------------------------------------------------------------------
 
+// import_status starts as 'pending'; availability.ts promotes it to 'imported'
+// once the media_items table confirms the file made it into the native library.
 export function recordGrab(data: {
   item_id: number
   indexer: string
@@ -179,6 +218,8 @@ export function recordGrab(data: {
     .get(result.lastInsertRowid as number) as GrabHistory
 }
 
+// Per-item history is unbounded (admin detail view); global history caps at 100 rows
+// to keep the admin queue page snappy without requiring pagination.
 export function getGrabHistory(itemId?: number): GrabHistory[] {
   const db = getDb()
 

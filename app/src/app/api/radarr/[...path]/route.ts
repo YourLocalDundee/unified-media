@@ -1,3 +1,6 @@
+// Authenticated proxy to Radarr's REST API (v3).
+// All browser-side Radarr calls go through here so the API key stays server-side.
+// Radarr uses network_mode: host, so the default URL is the host IP, not a container name.
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth } from '@/lib/dal'
 

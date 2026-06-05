@@ -1,3 +1,8 @@
+// Server-only Bazarr HTTP client.
+// Bazarr uses X-API-KEY header (uppercase KEY, unlike Sonarr/Radarr/Prowlarr
+// which use X-Api-Key). The base path is /api (not /api/v3).
+// GET responses bypass the Next.js cache — subtitle status must always be fresh.
+
 const BAZARR_URL = process.env.BAZARR_URL ?? 'http://192.168.0.50:6767'
 const BAZARR_API_KEY = process.env.BAZARR_API_KEY ?? ''
 

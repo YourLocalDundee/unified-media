@@ -1,3 +1,8 @@
+// Server-only Sonarr HTTP client.
+// Sonarr uses X-Api-Key header auth on the /api/v3 base path.
+// GET responses opt out of the Next.js data cache (no-store) so monitoring
+// status and queue counts are always current.
+
 const SONARR_URL = process.env.SONARR_URL ?? 'http://192.168.0.50:8989'
 const SONARR_API_KEY = process.env.SONARR_API_KEY ?? ''
 

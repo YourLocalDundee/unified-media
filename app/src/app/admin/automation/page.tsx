@@ -1,3 +1,17 @@
+/**
+ * Admin Automation Page (/admin/automation)
+ *
+ * Primary admin UI for the download automation pipeline. Shows two sections:
+ *   1. Monitored Items — the full want list with per-item Grab Now and Delete actions
+ *   2. Recent Grabs — the last 100 grab_history entries with expandable full-list toggle
+ *
+ * The "Add Item" modal lets admins manually add items to the want list without going
+ * through the request system (useful for backfills or content not on TMDB).
+ *
+ * All data is fetched client-side on mount; no live polling (admin manually refreshes).
+ * Grab state is tracked per item-id so multiple concurrent grabs can be in-flight.
+ */
+
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
@@ -34,6 +48,7 @@ interface GrabHistory {
   import_status: string
 }
 
+// Static Tailwind class maps avoid dynamic class construction which can be purged by the compiler
 const STATUS_BADGE: Record<MonitoredItem['status'], string> = {
   wanted:   'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30',
   grabbed:  'bg-blue-500/20 text-blue-400 border border-blue-500/30',
@@ -41,6 +56,7 @@ const STATUS_BADGE: Record<MonitoredItem['status'], string> = {
   ignored:  'bg-muted text-muted-foreground border border-border',
 }
 
+// import_status lives on grab_history rows; separate map from item status badges
 const IMPORT_STATUS_BADGE: Record<string, string> = {
   pending:  'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30',
   imported: 'bg-green-500/20 text-green-400 border border-green-500/30',
@@ -66,7 +82,7 @@ export default function AdminAutomationPage() {
   const [loadingHistory, setLoadingHistory] = useState(true)
   const [error, setError] = useState('')
 
-  // Grab state: itemId -> 'loading' | result string
+  // grabState maps item.id → current grab status string; absent key means idle
   const [grabState, setGrabState] = useState<Record<number, string>>({})
 
   // Modal state
@@ -100,6 +116,8 @@ export default function AdminAutomationPage() {
     try {
       const res = await fetch('/api/automation/profiles')
       if (res.ok) setProfiles(await res.json() as QualityProfile[])
+      // Profiles are only needed for the "Add Item" dropdown — failure is non-fatal;
+      // the dropdown will just be empty and the API will use the default profile
     } catch {
       // non-fatal
     }
@@ -130,10 +148,12 @@ export default function AdminAutomationPage() {
       const res = await fetch(`/api/automation/items/${item.id}/grab`, { method: 'POST' })
       const data = await res.json() as { result: string }
       setGrabState(s => ({ ...s, [item.id]: data.result }))
+      // On success, refresh both tables so status badge and grab history update immediately
       if (data.result === 'grabbed') {
         void fetchItems()
         void fetchHistory()
       }
+      // Auto-clear the per-item result after 4s so the button returns to its default state
       setTimeout(() => setGrabState(s => { const n = { ...s }; delete n[item.id]; return n }), 4000)
     } catch {
       setGrabState(s => ({ ...s, [item.id]: 'error' }))
@@ -198,9 +218,12 @@ export default function AdminAutomationPage() {
     setFormRootPath('')
   }
 
+  // Build id→name lookup so table rows can display the profile name instead of the raw id
   const profileMap = Object.fromEntries(profiles.map(p => [p.id, p.name]))
+  // Show last 20 grabs by default; "Show all" expands to full 100-row cap from the API
   const displayedHistory = showAllGrabs ? history : history.slice(0, 20)
 
+  // Label and class helpers keep the JSX rows clean; both derive from grabState[id]
   function grabButtonLabel(id: number): React.ReactNode {
     const state = grabState[id]
     if (!state) return <><Play className="h-3 w-3" />Grab Now</>
@@ -216,7 +239,7 @@ export default function AdminAutomationPage() {
     if (!state || state === 'loading') return `${base} bg-primary/10 hover:bg-primary/20 text-primary disabled:opacity-50`
     if (state === 'grabbed') return `${base} bg-green-500/20 text-green-400`
     if (state === 'not_found') return `${base} bg-yellow-500/20 text-yellow-400`
-    return `${base} bg-red-500/20 text-red-400`
+    return `${base} bg-red-500/20 text-red-400`  // covers 'error' and any unexpected state
   }
 
   return (
@@ -333,6 +356,8 @@ export default function AdminAutomationPage() {
                 </thead>
                 <tbody className="divide-y divide-border">
                   {displayedHistory.map(grab => {
+                    // Cross-reference grab history with the loaded items list for display name;
+                    // falls back to numeric ID if the item was deleted after the grab was recorded
                     const linkedItem = items.find(i => i.id === grab.item_id)
                     return (
                       <tr key={grab.id}>

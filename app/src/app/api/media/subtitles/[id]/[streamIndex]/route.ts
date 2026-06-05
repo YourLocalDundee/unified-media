@@ -34,6 +34,7 @@ export async function GET(
     )
     .all(item.file_path) as SubtitleWant[]
 
+  // streamIndex is a positional index into the downloaded-subtitle list, not the ffprobe stream index.
   const idx = parseInt(streamIndex, 10)
   const subtitle = subtitles[idx]
   if (!subtitle?.subtitle_path) {

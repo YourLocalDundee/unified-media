@@ -1,3 +1,13 @@
+/**
+ * Client-side settings hooks backed by localStorage.
+ * All preferences are stored as JSON under two keys:
+ *   - `unified-playback-prefs`  — video/audio/subtitle playback options
+ *   - `unified-display-prefs`   — home page carousels, library layout, sidebar
+ *
+ * Both hooks follow the same pattern: server-side rendering uses the in-memory
+ * defaults (localStorage is unavailable in RSC/SSR), then a useEffect hydrates
+ * from localStorage on the client. This avoids hydration mismatches.
+ */
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
@@ -7,6 +17,7 @@ import { useState, useEffect, useCallback } from 'react'
 // ---------------------------------------------------------------------------
 
 export interface PlaybackPrefs {
+  // 0 = "Auto" — let Jellyfin choose the highest quality it can direct-play
   quality: 0 | 120000000 | 20000000 | 8000000 | 4000000 | 1500000
   audioLang: string
   subtitleLang: string
@@ -69,10 +80,13 @@ const DISPLAY_DEFAULTS: DisplayPrefs = {
 // ---------------------------------------------------------------------------
 
 function readLS<T>(key: string, defaults: T): T {
+  // Guard for SSR — localStorage is browser-only
   if (typeof window === 'undefined') return defaults
   try {
     const raw = localStorage.getItem(key)
     if (!raw) return defaults
+    // Spread defaults first so any new preference fields added in future versions
+    // still get their default values when the stored JSON predates them
     return { ...defaults, ...JSON.parse(raw) } as T
   } catch {
     return defaults
@@ -93,6 +107,8 @@ function writeLS<T>(key: string, value: T): void {
 // ---------------------------------------------------------------------------
 
 export function usePlaybackPrefs() {
+  // Initialize with defaults; the effect below will overwrite with persisted values
+  // on the first client render, avoiding an SSR/client hydration mismatch.
   const [prefs, setPrefs] = useState<PlaybackPrefs>(PLAYBACK_DEFAULTS)
 
   useEffect(() => {

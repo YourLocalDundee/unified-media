@@ -1,3 +1,7 @@
+// Transmission stub — not yet implemented.
+// Transmission uses RPC over HTTP with X-Transmission-Session-Id token rotation,
+// which is more involved than qBittorrent's simple cookie flow.
+// All methods throw immediately so the registry can still be loaded without error.
 import type {
   AddTorrentPayload,
   DownloadClient,

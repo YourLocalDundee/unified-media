@@ -1,0 +1,528 @@
+'use client'
+
+import { useState, useEffect, useRef, useCallback } from 'react'
+import type { TorrentSearchResult } from '@/app/api/torrent-search/route'
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function formatBytes(bytes: number) {
+  if (!bytes) return '—'
+  if (bytes >= 1e12) return `${(bytes / 1e12).toFixed(2)} TB`
+  if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(2)} GB`
+  if (bytes >= 1e6) return `${(bytes / 1e6).toFixed(0)} MB`
+  return `${(bytes / 1e3).toFixed(0)} KB`
+}
+
+function formatAge(dateStr: string) {
+  if (!dateStr) return '—'
+  const ms = Date.now() - new Date(dateStr).getTime()
+  const d = Math.floor(ms / 86400000)
+  if (d < 1) return 'today'
+  if (d < 30) return `${d}d`
+  if (d < 365) return `${Math.floor(d / 30)}mo`
+  return `${Math.floor(d / 365)}y`
+}
+
+// Rough quality label from release title
+function qualityLabel(title: string): string {
+  const t = title.toUpperCase()
+  if (t.includes('2160P') || t.includes('4K') || t.includes('UHD')) return '4K'
+  if (t.includes('1080P')) return '1080p'
+  if (t.includes('720P')) return '720p'
+  if (t.includes('480P')) return '480p'
+  return ''
+}
+
+const QUALITY_COLORS: Record<string, string> = {
+  '4K': 'bg-purple-900/50 text-purple-300',
+  '1080p': 'bg-blue-900/50 text-blue-300',
+  '720p': 'bg-green-900/40 text-green-300',
+  '480p': 'bg-zinc-700 text-zinc-400',
+}
+
+type SortKey = 'seeders' | 'size' | 'age' | 'score'
+type QualityFilter = 'all' | '4K' | '1080p' | '720p' | 'other'
+type DurationChoice = 'quick' | 'longterm'
+
+// Client-side language detection for display purposes (mirrors parser.ts LANGUAGE_PATTERNS)
+const LANG_PATTERNS: Array<[RegExp, string]> = [
+  [/\b(English|ENG)\b/i, 'EN'],
+  [/\b(French|VF|VOSTFR|TRUEFRENCH)\b/i, 'FR'],
+  [/\b(German|Deutsch)\b/i, 'DE'],
+  [/\b(Spanish|Español|ESP)\b/i, 'ES'],
+  [/\b(Italian|Italiano)\b/i, 'IT'],
+  [/\b(Portuguese|Portugues)\b/i, 'PT'],
+  [/\b(Dutch|NL)\b/i, 'NL'],
+  [/\b(Japanese|JPN)\b/i, 'JA'],
+  [/\b(Chinese|CHI)\b/i, 'ZH'],
+  [/\b(Korean|KOR)\b/i, 'KO'],
+  [/\b(Russian|RUS)\b/i, 'RU'],
+]
+
+function detectLang(title: string): string | null {
+  for (const [re, code] of LANG_PATTERNS) {
+    if (re.test(title)) return code
+  }
+  return null
+}
+
+const LANGUAGE_OPTIONS = [
+  { value: 'any', label: 'Any language' },
+  { value: 'en',  label: 'English' },
+  { value: 'fr',  label: 'French' },
+  { value: 'de',  label: 'German' },
+  { value: 'es',  label: 'Spanish' },
+  { value: 'it',  label: 'Italian' },
+  { value: 'pt',  label: 'Portuguese' },
+  { value: 'nl',  label: 'Dutch' },
+  { value: 'ja',  label: 'Japanese' },
+  { value: 'zh',  label: 'Chinese' },
+  { value: 'ko',  label: 'Korean' },
+  { value: 'ru',  label: 'Russian' },
+]
+
+// ---------------------------------------------------------------------------
+// Modal
+// ---------------------------------------------------------------------------
+
+interface Props {
+  title: string
+  year: number | null
+  tmdbId: number
+  mediaType: 'movie' | 'tv'
+  posterPath: string | null
+  overview: string | null
+  isOldContent: boolean
+  defaultLanguage?: string
+  defaultRetention?: string
+  onClose: () => void
+  onPicked: (status: 'approved' | 'pending', type: DurationChoice) => void
+}
+
+export function TorrentPickModal({
+  title, year, tmdbId, mediaType, posterPath, overview,
+  isOldContent, defaultLanguage = 'any', defaultRetention, onClose, onPicked,
+}: Props) {
+  const [query, setQuery] = useState(title)
+  const [results, setResults] = useState<TorrentSearchResult[]>([])
+  const [loading, setLoading] = useState(false)
+  const [searched, setSearched] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const [sortKey, setSortKey] = useState<SortKey>('seeders')
+  const [qualityFilter, setQualityFilter] = useState<QualityFilter>('all')
+  const [indexerFilter, setIndexerFilter] = useState<string>('all')
+  const [picked, setPicked] = useState<TorrentSearchResult | null>(null)
+  const [duration, setDuration] = useState<DurationChoice>(
+    defaultRetention === 'quick' || defaultRetention === 'longterm'
+      ? (defaultRetention as DurationChoice)
+      : (isOldContent ? 'quick' : 'longterm')
+  )
+
+  const [language, setLanguage] = useState(defaultLanguage)
+  const [submitting, setSubmitting] = useState(false)
+  const [submitError, setSubmitError] = useState<string | null>(null)
+
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  const runSearch = useCallback(async (q: string) => {
+    if (!q.trim()) return
+    setLoading(true)
+    setError(null)
+    setSearched(true)
+    try {
+      const params = new URLSearchParams({ q: q.trim(), type: mediaType })
+      const res = await fetch(`/api/torrent-search?${params}`)
+      if (!res.ok) throw new Error(`Search failed (${res.status})`)
+      const data = await res.json() as { results: TorrentSearchResult[] }
+      setResults(data.results)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Search error')
+    } finally {
+      setLoading(false)
+    }
+  }, [mediaType])
+
+  // Auto-search on open
+  useEffect(() => {
+    void runSearch(title)
+    inputRef.current?.focus()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Indexer list for filter
+  const indexers = ['all', ...Array.from(new Set(results.map(r => r.indexerName))).sort()]
+
+  // Apply filters + sort
+  const visible = results
+    .filter(r => {
+      if (qualityFilter !== 'all') {
+        const ql = qualityLabel(r.title)
+        if (qualityFilter === 'other') {
+          if (['4K', '1080p', '720p'].includes(ql)) return false
+        } else if (ql !== qualityFilter) return false
+      }
+      if (indexerFilter !== 'all' && r.indexerName !== indexerFilter) return false
+      return true
+    })
+    .sort((a, b) => {
+      if (sortKey === 'seeders') return b.seeders - a.seeders
+      if (sortKey === 'size') return b.size - a.size
+      if (sortKey === 'age') return new Date(b.publishDate).getTime() - new Date(a.publishDate).getTime()
+      return b.score - a.score
+    })
+
+  async function handleSubmit() {
+    if (!picked) return
+    setSubmitting(true)
+    setSubmitError(null)
+
+    try {
+      const res = await fetch('/api/requests', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tmdbId,
+          mediaType,
+          title,
+          year,
+          posterPath,
+          overview,
+          requestType: duration,
+          requestMethod: 'interactive',
+          language,
+          pickedTorrent: {
+            magnetUrl: picked.magnetUrl,
+            downloadUrl: picked.downloadUrl,
+            infoHash: picked.infoHash,
+            indexerName: picked.indexerName,
+            releaseTitle: picked.title,
+            seeders: picked.seeders,
+            size: picked.size,
+          },
+        }),
+      })
+
+      // Interactive requests always return 'pending' (admin must approve)
+      if (res.status === 409) { onPicked('pending', duration); return }
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({})) as { error?: string }
+        throw new Error(data.error ?? `HTTP ${res.status}`)
+      }
+
+      onPicked('pending', duration)
+    } catch (e) {
+      setSubmitError(e instanceof Error ? e.message : String(e))
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+      onClick={e => { if (e.target === e.currentTarget) onClose() }}
+    >
+      <div className="flex flex-col w-full max-w-4xl max-h-[90vh] rounded-xl border border-zinc-700 bg-zinc-950 shadow-2xl overflow-hidden">
+
+        {/* Header */}
+        <div className="flex items-start justify-between gap-4 px-5 pt-5 pb-4 border-b border-zinc-800 shrink-0">
+          <div className="flex items-center gap-3 min-w-0">
+            {posterPath && (
+              <img
+                src={`https://image.tmdb.org/t/p/w92${posterPath}`}
+                alt={title}
+                className="h-14 w-10 rounded object-cover shrink-0"
+              />
+            )}
+            <div className="min-w-0">
+              <h2 className="font-semibold text-white truncate">{title}</h2>
+              <p className="text-xs text-zinc-500">{year} · {mediaType === 'movie' ? 'Movie' : 'TV Show'} · Choose a release</p>
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            className="shrink-0 text-zinc-500 hover:text-white transition-colors text-xl leading-none"
+          >
+            ✕
+          </button>
+        </div>
+
+        {/* Search bar */}
+        <div className="px-5 py-3 border-b border-zinc-800 shrink-0">
+          <form
+            onSubmit={e => { e.preventDefault(); void runSearch(query) }}
+            className="flex gap-2"
+          >
+            <input
+              ref={inputRef}
+              value={query}
+              onChange={e => setQuery(e.target.value)}
+              placeholder="Search torrent sites…"
+              className="flex-1 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:outline-none focus:ring-1 focus:ring-zinc-500"
+            />
+            <button
+              type="submit"
+              disabled={loading}
+              className="rounded-lg bg-zinc-700 hover:bg-zinc-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50 transition-colors"
+            >
+              {loading ? 'Searching…' : 'Search'}
+            </button>
+          </form>
+        </div>
+
+        {/* Filters */}
+        {searched && results.length > 0 && (
+          <div className="flex items-center gap-3 px-5 py-2 border-b border-zinc-800 shrink-0 overflow-x-auto">
+            {/* Quality */}
+            <div className="flex gap-1 shrink-0">
+              {(['all', '4K', '1080p', '720p', 'other'] as QualityFilter[]).map(q => (
+                <button
+                  key={q}
+                  onClick={() => setQualityFilter(q)}
+                  className={`rounded px-2 py-0.5 text-xs font-medium transition-colors ${
+                    qualityFilter === q ? 'bg-white text-black' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'
+                  }`}
+                >
+                  {q === 'all' ? 'All quality' : q}
+                </button>
+              ))}
+            </div>
+
+            <div className="h-4 w-px bg-zinc-700 shrink-0" />
+
+            {/* Indexer */}
+            <select
+              value={indexerFilter}
+              onChange={e => setIndexerFilter(e.target.value)}
+              className="rounded px-2 py-0.5 text-xs bg-zinc-800 border border-zinc-700 text-zinc-300 focus:outline-none"
+            >
+              {indexers.map(i => (
+                <option key={i} value={i}>{i === 'all' ? 'All indexers' : i}</option>
+              ))}
+            </select>
+
+            <div className="h-4 w-px bg-zinc-700 shrink-0" />
+
+            {/* Sort */}
+            <div className="flex gap-1 shrink-0">
+              {([['seeders', 'Seeds'], ['size', 'Size'], ['age', 'Newest'], ['score', 'Score']] as [SortKey, string][]).map(([k, label]) => (
+                <button
+                  key={k}
+                  onClick={() => setSortKey(k)}
+                  className={`rounded px-2 py-0.5 text-xs font-medium transition-colors ${
+                    sortKey === k ? 'bg-zinc-600 text-white' : 'text-zinc-500 hover:text-zinc-300'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            <span className="ml-auto text-xs text-zinc-600 shrink-0">{visible.length} results</span>
+          </div>
+        )}
+
+        {/* Results list */}
+        <div className="flex-1 overflow-y-auto">
+          {loading && (
+            <div className="flex items-center justify-center h-40 text-zinc-500 text-sm">
+              Searching all indexers…
+            </div>
+          )}
+
+          {error && (
+            <div className="flex items-center justify-center h-40 text-red-400 text-sm">
+              {error}
+            </div>
+          )}
+
+          {!loading && searched && !error && visible.length === 0 && (
+            <div className="flex items-center justify-center h-40 text-zinc-500 text-sm">
+              No results found. Try a different search or filter.
+            </div>
+          )}
+
+          {!loading && visible.length > 0 && (
+            <table className="w-full text-sm">
+              <thead className="sticky top-0 bg-zinc-950 border-b border-zinc-800">
+                <tr>
+                  <th className="py-2 pl-4 pr-2 text-left text-xs font-medium text-zinc-500 w-4"></th>
+                  <th className="py-2 px-2 text-left text-xs font-medium text-zinc-500">Release</th>
+                  <th className="py-2 px-2 text-left text-xs font-medium text-zinc-500 hidden sm:table-cell">Indexer</th>
+                  <th className="py-2 px-2 text-right text-xs font-medium text-zinc-500">Seeds</th>
+                  <th className="py-2 px-2 text-right text-xs font-medium text-zinc-500 hidden md:table-cell">Size</th>
+                  <th className="py-2 px-2 text-right text-xs font-medium text-zinc-500 hidden lg:table-cell">Lang</th>
+                  <th className="py-2 px-2 text-right text-xs font-medium text-zinc-500 hidden lg:table-cell">Age</th>
+                  <th className="py-2 pl-2 pr-4 text-right text-xs font-medium text-zinc-500">Pick</th>
+                </tr>
+              </thead>
+              <tbody>
+                {visible.map((r, i) => {
+                  const ql = qualityLabel(r.title)
+                  const isSelected = picked === r
+                  return (
+                    <tr
+                      key={r.infoHash || r.title + i}
+                      onClick={() => setPicked(isSelected ? null : r)}
+                      className={`border-b border-zinc-800/50 cursor-pointer transition-colors ${
+                        isSelected
+                          ? 'bg-blue-900/20 border-blue-800/50'
+                          : 'hover:bg-zinc-900/60'
+                      }`}
+                    >
+                      {/* Selection indicator */}
+                      <td className="py-2.5 pl-4 pr-2">
+                        <div className={`h-3.5 w-3.5 rounded-full border-2 flex items-center justify-center shrink-0 ${
+                          isSelected ? 'border-blue-400 bg-blue-400' : 'border-zinc-600'
+                        }`}>
+                          {isSelected && <div className="h-1.5 w-1.5 rounded-full bg-white" />}
+                        </div>
+                      </td>
+
+                      {/* Title + quality badge */}
+                      <td className="py-2.5 px-2 max-w-xs">
+                        <div className="flex items-start gap-1.5">
+                          {ql && (
+                            <span className={`shrink-0 mt-0.5 rounded px-1 py-0 text-[10px] font-semibold ${QUALITY_COLORS[ql] ?? 'bg-zinc-700 text-zinc-400'}`}>
+                              {ql}
+                            </span>
+                          )}
+                          <span className={`leading-tight text-xs line-clamp-2 ${isSelected ? 'text-white' : 'text-zinc-300'}`}>
+                            {r.title}
+                          </span>
+                        </div>
+                      </td>
+
+                      {/* Indexer */}
+                      <td className="py-2.5 px-2 hidden sm:table-cell">
+                        <span className="text-xs text-zinc-500 truncate block max-w-[130px]">{r.indexerName}</span>
+                      </td>
+
+                      {/* Seeders */}
+                      <td className="py-2.5 px-2 text-right">
+                        <span className={`text-xs font-medium ${r.seeders > 50 ? 'text-green-400' : r.seeders > 5 ? 'text-yellow-400' : 'text-red-400'}`}>
+                          {r.seeders}
+                        </span>
+                      </td>
+
+                      {/* Size */}
+                      <td className="py-2.5 px-2 text-right hidden md:table-cell">
+                        <span className="text-xs text-zinc-500">{formatBytes(r.size)}</span>
+                      </td>
+
+                      {/* Language badge */}
+                      <td className="py-2.5 px-2 text-right hidden lg:table-cell">
+                        {(() => { const l = detectLang(r.title); return l ? <span className="text-[10px] font-medium bg-zinc-700 text-zinc-300 rounded px-1">{l}</span> : <span className="text-[10px] text-zinc-700">—</span> })()}
+                      </td>
+
+                      {/* Age */}
+                      <td className="py-2.5 px-2 text-right hidden lg:table-cell">
+                        <span className="text-xs text-zinc-600">{formatAge(r.publishDate)}</span>
+                      </td>
+
+                      {/* Pick button */}
+                      <td className="py-2.5 pl-2 pr-4 text-right">
+                        <button
+                          onClick={e => { e.stopPropagation(); setPicked(isSelected ? null : r) }}
+                          className={`rounded px-2 py-0.5 text-xs font-medium transition-colors ${
+                            isSelected
+                              ? 'bg-blue-600 text-white'
+                              : 'bg-zinc-700 hover:bg-zinc-600 text-zinc-300'
+                          }`}
+                        >
+                          {isSelected ? 'Selected' : 'Pick'}
+                        </button>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+
+        {/* Footer — retention toggle + language + submit */}
+        <div className="shrink-0 border-t border-zinc-800 px-5 py-4 flex flex-col gap-3">
+          {/* Selected release summary */}
+          {picked ? (
+            <p className="text-xs text-zinc-400 truncate">
+              <span className="text-white font-medium">{picked.title.slice(0, 70)}{picked.title.length > 70 ? '…' : ''}</span>
+              {' '}· {picked.indexerName} · {picked.seeders} seeds
+            </p>
+          ) : (
+            <p className="text-xs text-zinc-500">Select a release from the list above.</p>
+          )}
+
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            {/* Left: Retention + Language */}
+            <div className="flex flex-col gap-1.5">
+              <div className="flex gap-2 items-center flex-wrap">
+                <span className="text-xs text-zinc-500">Retention:</span>
+                {isOldContent && (
+                  <button
+                    onClick={() => setDuration('quick')}
+                    className={`rounded px-2.5 py-1 text-xs font-medium transition-colors ${
+                      duration === 'quick'
+                        ? 'bg-amber-800/60 text-amber-300 ring-1 ring-amber-600'
+                        : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'
+                    }`}
+                  >
+                    48hr
+                  </button>
+                )}
+                <button
+                  onClick={() => setDuration('longterm')}
+                  className={`rounded px-2.5 py-1 text-xs font-medium transition-colors ${
+                    duration === 'longterm'
+                      ? 'bg-blue-900/50 text-blue-300 ring-1 ring-blue-700'
+                      : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'
+                  }`}
+                >
+                  Long-term
+                </button>
+              </div>
+
+              <div className="flex gap-2 items-center">
+                <span className="text-xs text-zinc-500">Language:</span>
+                <select
+                  value={language}
+                  onChange={e => setLanguage(e.target.value)}
+                  className="rounded px-1.5 py-0.5 text-xs bg-zinc-900 border border-zinc-700 text-zinc-300 focus:outline-none"
+                >
+                  {LANGUAGE_OPTIONS.map(opt => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
+                </select>
+              </div>
+
+              <p className="text-[10px] text-zinc-600">Interactive picks always go to admin queue regardless of retention.</p>
+            </div>
+
+            {/* Right: Cancel + Submit */}
+            <div className="flex gap-2 items-center self-end sm:self-auto">
+              {submitError && (
+                <span className="text-xs text-red-400 max-w-[180px]">{submitError}</span>
+              )}
+              <button
+                onClick={onClose}
+                className="rounded-lg border border-zinc-700 px-4 py-2 text-sm text-zinc-300 hover:bg-zinc-800 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => void handleSubmit()}
+                disabled={!picked || submitting}
+                className="rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-40 px-4 py-2 text-sm font-semibold text-white transition-colors min-w-[110px] text-center"
+              >
+                {submitting ? 'Requesting…' : `Request (${duration === 'quick' ? '48hr' : 'Long-term'})`}
+              </button>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  )
+}

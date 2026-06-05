@@ -1,3 +1,7 @@
+// A/B loop panel: lets the user mark two points in time and loop between them.
+// The loop is implemented with a setInterval poll rather than the 'timeupdate'
+// event because 'timeupdate' fires only 4× per second in most browsers, which
+// is too coarse for sub-second B-point precision at normal speeds.
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
@@ -17,6 +21,7 @@ export default function MediaABLoop({ videoRef }: Props) {
   const [active, setActive] = useState(false)
   const loopIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
+  // Ensure the interval is cleared when the component unmounts (e.g. panel closed while looping).
   useEffect(() => {
     return () => {
       if (loopIntervalRef.current !== null) {
@@ -44,8 +49,11 @@ export default function MediaABLoop({ videoRef }: Props) {
       }
       setActive(false)
     } else {
+      // Capture A/B into closure locals so the interval callback is not
+      // affected if the user updates pointA/pointB while the loop is active.
       const a = pointA
       const b = pointB
+      // Poll at 300ms — fine enough for practical loop accuracy without taxing the main thread.
       loopIntervalRef.current = setInterval(() => {
         const video = videoRef.current
         if (!video) return

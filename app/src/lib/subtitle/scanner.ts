@@ -1,3 +1,8 @@
+// Library scanner for the subtitle system (Independence Build Phase 4).
+// Walks all movie and episode rows in unified.db that have a file_path and
+// creates a 'wanted' subtitle row for each missing language combination.
+// Intended to run nightly via the scheduler; calling it more often is safe
+// because upsertSubtitleWant uses INSERT OR IGNORE.
 import { getDb } from '@/lib/db/index'
 import { upsertSubtitleWant } from './monitor'
 import type { MediaItem } from '@/lib/media-server/types'
@@ -61,6 +66,7 @@ export async function scanLibrary(): Promise<{ scanned: number; created: number 
         title = `${item.title} (${item.year ?? '?'})`
       }
 
+      // OpenSubtitles requires the numeric IMDB ID without the "tt" prefix.
       const rawImdb = item.imdb_id
       const imdb_id = rawImdb ? rawImdb.replace(/^tt/i, '') : undefined
 
@@ -73,6 +79,8 @@ export async function scanLibrary(): Promise<{ scanned: number; created: number 
         language,
       })
 
+      // INSERT OR IGNORE sets both created_at and updated_at to the same value;
+      // an existing row will have different timestamps if it was ever updated.
       if (existing.created_at === existing.updated_at) {
         created++
       }
