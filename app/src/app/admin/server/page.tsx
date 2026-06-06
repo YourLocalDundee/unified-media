@@ -9,6 +9,7 @@ interface ServerStatus {
   db: { size: number; users: number; sessions: number; watches: number; auditEntries: number }
   qbit: { ok: boolean; version: string | null }
   app: { nodeVersion: string; uptimeMs: number; memoryMb: number }
+  media?: { ok: boolean; root: string | null }
 }
 
 function formatUptime(ms: number): string {
@@ -40,6 +41,7 @@ export default function AdminServerPage() {
 
   const services = data ? [
     { name: 'Unified Media Torrent (UMT)', ok: data.qbit.ok, version: data.qbit.version },
+    ...(data.media ? [{ name: `Media Root${data.media.root ? ` (${data.media.root})` : ''}`, ok: data.media.ok, version: null }] : []),
   ] : []
 
   return (

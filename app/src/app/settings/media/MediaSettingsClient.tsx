@@ -102,16 +102,19 @@ function IndexersTab({ indexers }: { indexers: ProwlarrIndexer[] | null }) {
     const nextEnabled = !isEnabled(indexer)
     setToggling((prev) => new Set(prev).add(indexer.id))
     try {
-      const res = await fetch(`/api/prowlarr/indexer/${indexer.id}/toggle`, {
-        method: 'POST',
+      // Prowlarr has no /toggle endpoint — must GET the full indexer config and PUT
+      // it back with the enable field changed. A bare PATCH is not supported.
+      const current = await fetch(`/api/prowlarr/indexer/${indexer.id}`).then(r => r.json())
+      const res = await fetch(`/api/prowlarr/indexer/${indexer.id}`, {
+        method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ enable: nextEnabled }),
+        body: JSON.stringify({ ...current, enable: nextEnabled }),
       })
       if (res.ok) {
         setLocalEnabled((prev) => ({ ...prev, [indexer.id]: nextEnabled }))
       }
     } catch {
-      // silently ignore — toggle reverts
+      // silently ignore — toggle reverts to original state
     } finally {
       setToggling((prev) => {
         const next = new Set(prev)

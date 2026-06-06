@@ -91,22 +91,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid username or password' }, { status: 401 })
   }
 
-  if (user.force_pw_change) {
-    // Do not issue a session cookie — the client must complete /change-password
-    // before a real session is granted. Returning JSON only (no cookie) means
-    // the user cannot bypass this by ignoring the redirect.
-    return NextResponse.json({ requiresPasswordChange: true })
-  }
-
+  // Session is created before the force_pw_change check so /api/auth/change-password
+  // can call requireAuth() successfully. Without a session the change-password route
+  // redirects back to /login, trapping the user in an infinite loop.
   const sessionId = await createSession(user.id, ip, req.headers.get('user-agent') ?? undefined)
   db.prepare('UPDATE users SET last_login = ? WHERE id = ?').run(Date.now(), user.id)
   await logEvent('login_success', {}, { userId: user.id, username: user.username, ip })
 
   const cookieStore = await cookies()
-  // secure: true only in production so local dev (http://localhost) still works.
-  // SameSite=lax allows the cookie on top-level navigations (e.g. OAuth redirects)
-  // while blocking it on cross-site subrequests, which is sufficient without CSRF
-  // tokens given the app does not use GET to mutate state.
   cookieStore.set(SESSION_COOKIE, sessionId, {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
@@ -114,6 +106,12 @@ export async function POST(req: NextRequest) {
     path: '/',
     maxAge: SESSION_TTL_MS / 1000,
   })
+
+  if (user.force_pw_change) {
+    // Session cookie is already set above. The client redirects to /change-password
+    // which can now authenticate the user and clear force_pw_change.
+    return NextResponse.json({ requiresPasswordChange: true })
+  }
 
   return NextResponse.json({ username: user.username, role: user.role })
 }

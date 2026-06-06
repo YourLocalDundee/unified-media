@@ -4,7 +4,8 @@
 'use client'
 
 import Link from 'next/link'
-import { usePathname } from 'next/navigation'
+import { Suspense } from 'react'
+import { usePathname, useSearchParams } from 'next/navigation'
 import { Home, Film, Library, ClipboardList, Download, ChevronLeft, ChevronRight } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAppStore } from '@/store'
@@ -17,8 +18,50 @@ const navItems = [
   { href: '/downloads', icon: Download, label: 'Downloads' },
 ]
 
-export function Sidebar() {
+// Isolated into its own component so useSearchParams is inside a Suspense boundary
+// (Next.js requires this to avoid a prerender error on static pages).
+function SidebarNav({ sidebarOpen }: { sidebarOpen: boolean }) {
   const pathname = usePathname()
+  const searchParams = useSearchParams()
+
+  function isActive(href: string): boolean {
+    const [hrefPath, hrefQuery] = href.split('?')
+    if (hrefQuery) {
+      const paramKey = hrefQuery.split('=')[0]
+      const paramVal = hrefQuery.split('=')[1]
+      return pathname === hrefPath && searchParams.get(paramKey) === paramVal
+    }
+    if (href === '/') return pathname === '/'
+    // /browse is active only when NOT in library mode (type=all)
+    if (href === '/browse') {
+      return pathname.startsWith('/browse') && searchParams.get('type') !== 'all'
+    }
+    return pathname === href || pathname.startsWith(href)
+  }
+
+  return (
+    <nav className="flex flex-1 flex-col gap-1 p-2">
+      {navItems.map(({ href, icon: Icon, label }) => (
+        <Link
+          key={href}
+          href={href}
+          className={cn(
+            'flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
+            'hover:bg-accent hover:text-accent-foreground',
+            isActive(href) && 'bg-primary/10 text-primary',
+            !sidebarOpen && 'justify-center px-2',
+          )}
+          title={!sidebarOpen ? label : undefined}
+        >
+          <Icon className="h-5 w-5 flex-shrink-0" />
+          {sidebarOpen && <span>{label}</span>}
+        </Link>
+      ))}
+    </nav>
+  )
+}
+
+export function Sidebar() {
   const { sidebarOpen, toggleSidebar } = useAppStore()
 
   return (
@@ -41,29 +84,9 @@ export function Sidebar() {
         </button>
       </div>
 
-      {/* Nav */}
-      <nav className="flex flex-1 flex-col gap-1 p-2">
-        {navItems.map(({ href, icon: Icon, label }) => {
-          const isActive = pathname === href || (href !== '/' && pathname.startsWith(href))
-          return (
-            <Link
-              key={href}
-              href={href}
-              className={cn(
-                'flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
-                'hover:bg-accent hover:text-accent-foreground',
-                isActive && 'bg-primary/10 text-primary',
-                !sidebarOpen && 'justify-center px-2',
-              )}
-              // Show a tooltip with the label when collapsed so icon-only mode is still navigable.
-              title={!sidebarOpen ? label : undefined}
-            >
-              <Icon className="h-5 w-5 flex-shrink-0" />
-              {sidebarOpen && <span>{label}</span>}
-            </Link>
-          )
-        })}
-      </nav>
+      <Suspense fallback={<nav className="flex flex-1 flex-col gap-1 p-2" />}>
+        <SidebarNav sidebarOpen={sidebarOpen} />
+      </Suspense>
     </aside>
   )
 }

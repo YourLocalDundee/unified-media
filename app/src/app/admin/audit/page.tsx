@@ -2,7 +2,7 @@
 // non-empty `details` JSON field are expandable inline to inspect event metadata.
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, Fragment } from 'react'
 import { ChevronDown, ChevronRight, Loader2 } from 'lucide-react'
 
 interface AuditEntry {
@@ -55,8 +55,8 @@ export default function AdminAuditPage() {
             </thead>
             <tbody className="divide-y divide-border">
               {data?.entries.map(entry => (
-                <>
-                  <tr key={entry.id} className="hover:bg-muted/20 cursor-pointer" onClick={() => toggleExpand(entry.id)}>
+                <Fragment key={entry.id}>
+                  <tr className="hover:bg-muted/20 cursor-pointer" onClick={() => toggleExpand(entry.id)}>
                     <td className="px-4 py-2 text-xs text-muted-foreground whitespace-nowrap">
                       {new Date(entry.created_at).toLocaleString()}
                     </td>
@@ -83,7 +83,7 @@ export default function AdminAuditPage() {
                       </td>
                     </tr>
                   )}
-                </>
+                </Fragment>
               ))}
             </tbody>
           </table>

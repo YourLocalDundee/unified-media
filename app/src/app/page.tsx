@@ -248,6 +248,7 @@ async function LatestAddedSection() {
                 year={item.year ?? undefined}
                 imageUrl={imageUrl}
                 type={item.type === 'movie' ? 'Movie' : 'Series'}
+                href={`/play/${item.id}`}
               />
             </div>
           )
@@ -312,7 +313,8 @@ async function PendingRequestsSection() {
             const requestedAt = req.created_at ? formatDate(new Date(req.created_at).toISOString()) : '—'
 
             return (
-              <li key={req.id} className="flex items-center gap-4 px-4 py-3">
+              <li key={req.id} className="hover:bg-accent/30 transition-colors">
+                <a href="/requests" className="flex items-center gap-4 px-4 py-3">
                 {/* Poster thumbnail */}
                 {req.poster_path ? (
                   <img
@@ -339,6 +341,7 @@ async function PendingRequestsSection() {
                     {nativeStatusLabel(req.status)}
                   </Badge>
                 </div>
+                </a>
               </li>
             )
           })}

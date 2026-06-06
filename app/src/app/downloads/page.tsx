@@ -210,7 +210,7 @@ function SpeedLimitDropdown() {
 
   // Load current limit on mount
   useEffect(() => {
-    fetch('/api/qbt/app/preferences')
+    fetch('/api/qbit/app/preferences')
       .then((r) => r.json())
       .then((prefs) => {
         if (typeof prefs?.dl_rate_limit === 'number') {
@@ -235,7 +235,7 @@ function SpeedLimitDropdown() {
   const handleSelect = useCallback(async (bytes: number) => {
     setOpen(false)
     try {
-      await fetch('/api/qbt/app/setPreferences', {
+      await fetch('/api/qbit/app/setPreferences', {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({
