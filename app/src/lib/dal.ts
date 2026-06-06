@@ -90,11 +90,12 @@ export async function getSession(): Promise<SessionData | null> {
 
   // Replace the session ID every 24h to limit stolen-cookie replay window.
   // created_at is also reset so the absolute TTL clock restarts from this rotation.
+  // IMPORTANT: cookie set MUST precede the DB update. In Server Component context
+  // cookieStore.set() throws; catching it here keeps the existing row intact so the
+  // browser's current cookie stays valid. If the set succeeds (Route Handler context)
+  // the DB is updated atomically in the same try block.
   if (now - session.created_at > ROTATION_INTERVAL_MS) {
     const newId = makeId(32)
-    db.prepare(
-      'UPDATE sessions SET id = ?, expires_at = ?, last_seen = ?, created_at = ? WHERE id = ?'
-    ).run(newId, now + SESSION_TTL_MS, now, now, sessionId)
     try {
       cookieStore.set(SESSION_COOKIE, newId, {
         httpOnly: true,
@@ -103,8 +104,17 @@ export async function getSession(): Promise<SessionData | null> {
         path: '/',
         maxAge: SESSION_TTL_MS / 1000,
       })
-    } catch { /* server component context — rotation will retry on next request */ }
-    return { userId: session.user_id, username: session.username, role: session.role, sessionId: newId }
+      db.prepare(
+        'UPDATE sessions SET id = ?, expires_at = ?, last_seen = ?, created_at = ? WHERE id = ?'
+      ).run(newId, now + SESSION_TTL_MS, now, now, sessionId)
+      return { userId: session.user_id, username: session.username, role: session.role, sessionId: newId }
+    } catch {
+      // Cookie set failed (Server Component context) — skip rotation this request
+      // and keep the existing session row valid. Rotation will succeed on the next
+      // Route Handler request where cookie mutations are permitted.
+      db.prepare('UPDATE sessions SET last_seen = ? WHERE id = ?').run(now, sessionId)
+      return { userId: session.user_id, username: session.username, role: session.role, sessionId }
+    }
   }
 
   db.prepare('UPDATE sessions SET last_seen = ? WHERE id = ?').run(now, sessionId)
