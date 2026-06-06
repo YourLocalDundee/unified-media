@@ -5,9 +5,10 @@
  * /watch is linked from the native episode carousel.
  */
 import type { Metadata } from 'next'
-import { notFound } from 'next/navigation'
+import { notFound, redirect } from 'next/navigation'
 import VideoPlayer from '@/components/media/VideoPlayer'
 import { getNativePlaybackData } from '@/lib/media-server/playback'
+import { getItemById } from '@/lib/media-server/library'
 import { requireAuth } from '@/lib/dal'
 
 interface Props {
@@ -35,6 +36,10 @@ export default async function PlayPage({ params }: Props) {
   try {
     data = await getNativePlaybackData(id, session.userId)
   } catch {
+    const item = getItemById(id)
+    if (!item) notFound()
+    // Series containers have no file_path — redirect to the detail page where episodes are listed.
+    if (item.type === 'series') redirect(`/browse/${id}`)
     notFound()
   }
 

@@ -1,6 +1,6 @@
 # unified-frontend
 
-A single-pane-of-glass web app for the minime home server media stack (v0.9.2). Replaces the multi-tab workflow
+A single-pane-of-glass web app for the minime home server media stack (v0.9.3). Replaces the multi-tab workflow
 (Jellyfin + Seerr + qBittorrent) with one unified interface for browsing, requesting, watching, and
 monitoring downloads.
 
@@ -341,9 +341,11 @@ app/
 ### Page specs
 
 **`/` — Home dashboard**
-- Continue Watching row (Jellyfin `/Users/<id>/Items/Resume`)
-- Recently Added row (Jellyfin `/Users/<id>/Items/Latest`)
-- Recent Requests strip (Seerr `GET /request?take=5`)
+- Continue Watching row (native `getResumeItems` — only `movie`/`episode` types, never series containers)
+- Recently Added row (native `getRecentlyAdded` — returns both movies and series containers)
+  - Movie cards link to `/play/${id}` (direct playback)
+  - Series cards link to `/browse/${id}` (detail/episode list) — series containers have no `file_path` and cannot be played directly
+- Recent Requests strip (native `getAllRequests`)
 - Download queue summary (qBt `GET /transfer/info` + active torrents count)
 - Auto-refreshes download summary every 10 seconds via React Query `refetchInterval`
 
@@ -356,11 +358,14 @@ app/
 - `/browse/discover/[mediaType]/[tmdbId]` — full detail page for TMDB items not yet in library
 
 **`/browse/[id]` — Media detail**
-- Jellyfin item detail: poster, backdrop, synopsis, metadata
-- Watch button → embedded Jellyfin video player (if `CanDirectPlay` or transcoding available)
-- Request button (if item is NOT in Jellyfin) → calls Seerr `POST /request`
-- Request status badge (if already requested) from Seerr `GET /media` cross-referenced by TMDB ID
-- Related content row
+- Native media server item: poster, backdrop, synopsis, metadata, Sonarr/Radarr monitoring badge
+- **Watch Now button** — resolves the correct playback target based on item type:
+  - Movie / episode with `file_path` set → `/play/${item.id}` (direct)
+  - Series container (`file_path = NULL`) → `getSeriesResumeEpisode(userId, id)` finds the most recently watched in-progress episode; falls back to `episodes[0]` (first episode by season/episode number); button hidden if series has no scanned episodes
+- Request button (if item has a TMDB ID and is not an episode) → native request system
+- Request status badge for already-requested items
+- Episode list accordion for series (seasons → episodes linking to `/play/${ep.id}`)
+- Similar items row
 
 **`/requests` — Seerr request list**
 - Paginated list: `GET /request` with filter tabs (All, Pending, Approved, Available)
@@ -600,6 +605,22 @@ Seerr checks the `X-API-Key` request header against `settings.main.apiKey`. If t
 the request runs as the admin user (ID 1) by default, or as a specific user if `X-API-User: <id>`
 is also provided. Keep the key in `SEERR_API_KEY` env var; never hardcode it.
 
+### Series containers have file_path = NULL
+
+When the scanner processes an episode file it creates a parent series row in `media_items` via `INSERT OR IGNORE` with `file_path = NULL`. This row exists only as a foreign-key target for `series_id`; it has no playable file. Any code path that calls `getNativePlaybackData` with a series container ID will throw on the `!item.file_path` guard. Never generate a `/play/${id}` link from a row where `type = 'series'`. The safety net in `play/[id]/page.tsx` redirects to `/browse/${id}` on this condition, but the upstream links should never produce the ID in the first place.
+
+### Video element errors do not bubble as React events
+
+The `<video>` DOM element fires `error` on the element directly — it does not propagate as a React synthetic event and is not caught by `try/catch` around `video.play()`. Any video loading failure (404 from stream route, unsupported codec, network drop) that is not handled via the React `onError` prop on the element leaves `isLoading = true` permanently if `handleWaiting` fired before the error. Always keep `onError={handleVideoError}` wired on the `<video>` element in `VideoPlayer.tsx`.
+
+### MKV and seek-before-loadedmetadata
+
+Setting `video.currentTime` before `loadedmetadata` fires causes silent stalls on MKV files (and sometimes late-faststart MP4). The browser needs to fetch and parse the container index (Cues element for MKV) before it can resolve a timestamp to a byte offset for a range request. Set `currentTime` in the `loadedmetadata` handler only. The `resumeApplied` ref in `VideoPlayer` guards against double-application across quality switches.
+
+### screen.orientation.lock requires active fullscreen (Android)
+
+`screen.orientation.lock('landscape')` on Android Chrome throws `SecurityError` if the document is not currently in fullscreen. Always `await container.requestFullscreen()` first, then call `screen.orientation.lock`. The `toggleFullscreen` function is `async` for this reason. On iOS Safari both `requestFullscreen` (on a div) and `screen.orientation.lock` are unsupported and handled via try/catch fallbacks.
+
 ---
 
 ## 8. Development Workflow
@@ -838,6 +859,71 @@ On mount, `detectAspectRatio(nativeWidth, nativeHeight)` maps the native AR to t
 ### Screen-aware quality selection
 
 On mount, if `window.screen.height × devicePixelRatio < nativeHeight × 0.75`, the player auto-selects the highest quality tier that fits the screen. This avoids streaming 4K to a 1080p screen. The 75% threshold prevents unnecessary downgrade when the difference is small.
+
+---
+
+## 10a. Video Player — Chrome, Orientation, and Error Handling (v0.9.3)
+
+### App chrome suppression
+
+`AppLayout` (`src/components/layout/AppLayout.tsx`) checks `usePathname()` on every navigation and skips rendering `Sidebar`, `Header`, and `MobileNav` for player routes:
+
+```tsx
+const isWatchPage = pathname?.startsWith('/watch/') || pathname?.startsWith('/play/')
+```
+
+Both `/watch/[id]` and `/play/[id]` bypass the full app shell. If a new player route is added it must be listed here, otherwise `MobileNav` (fixed bottom-0 z-50) renders on top of the player controls (z-20) and all bottom controls become unreachable on mobile.
+
+### Fullscreen and screen orientation
+
+`toggleFullscreen` in `VideoPlayer.tsx` is `async` to support the Android orientation lock ordering constraint:
+
+1. `await container.requestFullscreen()` — resolves only after the element is fully in fullscreen. Android Chrome requires this before calling `screen.orientation.lock`.
+2. `await screen.orientation.lock('landscape')` — called after fullscreen is confirmed. Wrapped in try/catch; throws `NotSupportedError` on iOS Safari and desktop, which must not interrupt playback.
+3. iOS fallback: if `requestFullscreen` throws (div not supported), calls `video.webkitEnterFullscreen()` if present, then attempts the orientation lock (will throw and be caught on iOS).
+
+On exit, `screen.orientation.unlock()` is called before `exitFullscreen` so the device returns to natural orientation. `handleBack` also calls `screen.orientation.unlock()` before `router.back()`.
+
+Fullscreen state is tracked via both `fullscreenchange` and `webkitfullscreenchange` events, checking both `document.fullscreenElement` and `document.webkitFullscreenElement`. Without the webkit variant `isFullscreen` is always false on iOS and the Maximize/Minimize button never toggles correctly.
+
+### Resume seek and loadedmetadata
+
+The resume position (`resumePositionTicks`) is applied in `handleLoadedMetadata` — not in the init effect. Setting `video.currentTime` before the browser fires `loadedmetadata` causes seek stalls on MKV and other container formats where the seek index (Cues element for MKV, moov atom for late-faststart MP4) requires additional range requests before the timestamp can be resolved. The `resumeApplied` ref guards against double-application on quality switches.
+
+```
+Init effect: video.src = url  →  browser fetches initial bytes
+loadedmetadata fires: browser knows duration + seek table
+handleLoadedMetadata: video.currentTime = resumeSeconds  →  browser seeks cleanly
+```
+
+For HLS the same `loadedmetadata` handler fires after `MANIFEST_PARSED` triggers native playback.
+
+### Video element error handling
+
+The `<video>` element fires `error` on the DOM element — it does not bubble as a React event and is not caught by try/catch around `video.play()`. Without `onError` wired on the element, any playback failure leaves the player in an infinite spinner: `handleWaiting` sets `isLoading = true`, the error fires with no handler, and `isLoading` never clears.
+
+`handleVideoError` reads `video.error.code` and maps it to an actionable message:
+
+| Code | Meaning | Message |
+|---|---|---|
+| 2 | MEDIA_ERR_NETWORK | Network error — check connection |
+| 3 | MEDIA_ERR_DECODE | Unsupported codec |
+| 4 | MEDIA_ERR_SRC_NOT_SUPPORTED | Format not playable — try lower quality |
+| other | Unknown | File may be missing on server |
+
+The handler calls `setIsLoading(false)` and `setError(message)`, which replaces the spinner with the error overlay and gives the user a retry path.
+
+### Series containers and /play routing
+
+The scanner (`src/lib/media-server/scanner.ts`) creates series container rows in `media_items` with `file_path = NULL`. These rows exist so episodes can reference a parent via `series_id`, but they have no playable file. Any link to `/play/${series_id}` will throw in `getNativePlaybackData` on the `!item.file_path` guard.
+
+Safety net in `play/[id]/page.tsx`: if `getNativePlaybackData` throws and the item type is `series`, the page calls `redirect('/browse/${id}')` instead of `notFound()`.
+
+Upstream prevention:
+- `browse/[id]/page.tsx` Watch Now resolves to episode target via `getSeriesResumeEpisode` / `episodes[0]`, never links series container IDs to `/play/`
+- `page.tsx` Recently Added uses `item.type === 'series' ? /browse/${id} : /play/${id}`
+
+**`getSeriesResumeEpisode(userId, seriesId)`** — `src/lib/media-server/library.ts`. Joins `media_items` and `media_watch_state` to find the most recently updated in-progress episode for a series (played=0, position_ticks>0, ordered by updated_at DESC). Returns `undefined` if no episode has been started, in which case `episodes[0]` is used as fallback.
 
 ---
 

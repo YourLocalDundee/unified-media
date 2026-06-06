@@ -153,6 +153,24 @@ export function getResumeItems(userId: string, limit = 12): MediaItem[] {
     .all(userId, limit) as MediaItem[]
 }
 
+export function getSeriesResumeEpisode(userId: string, seriesId: string): MediaItem | undefined {
+  const db = getDb()
+  return db
+    .prepare(
+      `SELECT media_items.*
+       FROM media_items
+       JOIN media_watch_state ON media_items.id = media_watch_state.media_id
+       WHERE media_watch_state.user_id = ?
+         AND media_items.series_id = ?
+         AND media_items.type = 'episode'
+         AND media_watch_state.played = 0
+         AND media_watch_state.position_ticks > 0
+       ORDER BY media_watch_state.updated_at DESC
+       LIMIT 1`,
+    )
+    .get(userId, seriesId) as MediaItem | undefined
+}
+
 export function getSimilarItems(id: string, limit = 10): MediaItem[] {
   const db = getDb()
   const item = db

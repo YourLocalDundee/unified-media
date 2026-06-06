@@ -12,7 +12,7 @@ import { useAuth } from '@/context/AuthContext'
 export function AppLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
   // Watch pages need full-screen access — skip all layout chrome for them.
-  const isWatchPage = pathname?.startsWith('/watch/')
+  const isWatchPage = pathname?.startsWith('/watch/') || pathname?.startsWith('/play/')
   const { user } = useAuth()
 
   if (isWatchPage) {

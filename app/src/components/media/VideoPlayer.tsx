@@ -80,6 +80,7 @@ export default function VideoPlayer(props: PlaybackData) {
   const hlsRef = useRef<{ destroy: () => void } | null>(null)
   const didReportStart = useRef(false)
   const countdownTimer = useRef<ReturnType<typeof setInterval> | null>(null)
+  const resumeApplied = useRef(false)
 
   // Player state
   const [isLoading, setIsLoading] = useState(true)
@@ -301,7 +302,6 @@ export default function VideoPlayer(props: PlaybackData) {
           hls.attachMedia(video)
           hls.on(Hls.Events.MANIFEST_PARSED, () => {
             if (destroyed) return
-            if (resumeSeconds > 30) video.currentTime = resumeSeconds
             setIsLoading(false)
             video.play().catch(() => setIsPlaying(false))
           })
@@ -336,7 +336,6 @@ export default function VideoPlayer(props: PlaybackData) {
           })
         } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
           video.src = activeStreamUrl
-          if (resumeSeconds > 30) video.currentTime = resumeSeconds
           setIsLoading(false)
           video.play().catch(() => setIsPlaying(false))
         } else {
@@ -345,7 +344,6 @@ export default function VideoPlayer(props: PlaybackData) {
         }
       } else {
         video.src = activeStreamUrl
-        if (resumeSeconds > 30) video.currentTime = resumeSeconds
         setIsLoading(false)
         video.play().catch(() => setIsPlaying(false))
       }
@@ -380,9 +378,18 @@ export default function VideoPlayer(props: PlaybackData) {
   // ---------------------------------------------------------------------------
 
   useEffect(() => {
-    const handler = () => setIsFullscreen(!!document.fullscreenElement)
+    const handler = () => setIsFullscreen(
+      !!(
+        document.fullscreenElement ||
+        (document as Document & { webkitFullscreenElement?: Element }).webkitFullscreenElement
+      )
+    )
     document.addEventListener('fullscreenchange', handler)
-    return () => document.removeEventListener('fullscreenchange', handler)
+    document.addEventListener('webkitfullscreenchange', handler)
+    return () => {
+      document.removeEventListener('fullscreenchange', handler)
+      document.removeEventListener('webkitfullscreenchange', handler)
+    }
   }, [])
 
   // ---------------------------------------------------------------------------
@@ -496,6 +503,36 @@ export default function VideoPlayer(props: PlaybackData) {
   // ---------------------------------------------------------------------------
   // Video event handlers
   // ---------------------------------------------------------------------------
+
+  // Apply the resume position once, after the browser knows the file is seekable.
+  // Setting currentTime before loadedmetadata fires causes stalls on MKV and other
+  // container formats that require the browser to fetch the seek index first.
+  const handleLoadedMetadata = () => {
+    const video = videoRef.current
+    if (!video) return
+    const resumeSeconds = resumePositionTicks / 10_000_000
+    if (resumeSeconds > 30 && !resumeApplied.current) {
+      resumeApplied.current = true
+      video.currentTime = resumeSeconds
+    }
+  }
+
+  // Surface video element errors as player error state instead of leaving an infinite spinner.
+  // The <video> element fires 'error' without bubbling through React events, so without this
+  // handler handleWaiting sets isLoading=true and nothing ever clears it.
+  const handleVideoError = () => {
+    setIsLoading(false)
+    const code = videoRef.current?.error?.code
+    if (code === 4) {
+      setError('This format cannot be played directly. Try selecting a lower quality.')
+    } else if (code === 3) {
+      setError('Video decoding failed. The file may use an unsupported codec.')
+    } else if (code === 2) {
+      setError('Network error loading video. Check your connection and try again.')
+    } else {
+      setError('Failed to load video. The file may be missing or inaccessible on the server.')
+    }
+  }
 
   const handlePlay = () => {
     setIsPlaying(true)
@@ -614,18 +651,52 @@ export default function VideoPlayer(props: PlaybackData) {
     setIsMuted(vol === 0)
   }
 
-  const toggleFullscreen = () => {
+  const toggleFullscreen = async () => {
     const container = containerRef.current
+    const video = videoRef.current
     if (!container) return
-    if (!document.fullscreenElement) {
-      container.requestFullscreen().catch(() => {})
+
+    // Check fullscreen using both the standard API and the webkit-prefixed variant (iOS Safari).
+    const isFs = !!(
+      document.fullscreenElement ||
+      (document as Document & { webkitFullscreenElement?: Element }).webkitFullscreenElement
+    )
+
+    if (!isFs) {
+      // Enter fullscreen. On Android Chrome requestFullscreen on the container works.
+      // On iOS Safari requestFullscreen on a div is not supported; fall back to
+      // webkitEnterFullscreen on the <video> element.
+      try {
+        await container.requestFullscreen()
+      } catch {
+        if (video && typeof (video as HTMLVideoElement & { webkitEnterFullscreen?: () => void }).webkitEnterFullscreen === 'function') {
+          ;(video as HTMLVideoElement & { webkitEnterFullscreen: () => void }).webkitEnterFullscreen()
+        }
+      }
+      // Android Chrome: screen.orientation.lock only works while the element is already
+      // in fullscreen. Awaiting requestFullscreen above guarantees that precondition.
+      // Wrap in try/catch — iOS Safari and desktop throw NotSupportedError here, which
+      // must not interrupt playback.
+      try {
+        await screen.orientation.lock('landscape')
+      } catch {
+        // Not supported on this device/browser — orientation follows the device naturally.
+      }
     } else {
-      document.exitFullscreen().catch(() => {})
+      // Unlock orientation before exiting so the device can return to natural orientation.
+      try { screen.orientation.unlock() } catch { /* not supported */ }
+      if (document.fullscreenElement) {
+        document.exitFullscreen().catch(() => {})
+      } else {
+        const doc = document as Document & { webkitExitFullscreen?: () => void }
+        doc.webkitExitFullscreen?.()
+      }
     }
   }
 
   const handleBack = () => {
     reportStop()
+    try { screen.orientation.unlock() } catch { /* not supported */ }
     router.back()
   }
 
@@ -710,6 +781,8 @@ export default function VideoPlayer(props: PlaybackData) {
               }
         }
         playsInline
+        onLoadedMetadata={handleLoadedMetadata}
+        onError={handleVideoError}
         onTimeUpdate={handleTimeUpdate}
         onDurationChange={handleDurationChange}
         onPlay={handlePlay}

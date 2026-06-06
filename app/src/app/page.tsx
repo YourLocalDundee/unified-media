@@ -248,7 +248,7 @@ async function LatestAddedSection() {
                 year={item.year ?? undefined}
                 imageUrl={imageUrl}
                 type={item.type === 'movie' ? 'Movie' : 'Series'}
-                href={`/play/${item.id}`}
+                href={item.type === 'series' ? `/browse/${item.id}` : `/play/${item.id}`}
               />
             </div>
           )

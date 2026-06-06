@@ -2,7 +2,7 @@ import type { Metadata } from 'next'
 import Image from 'next/image'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
-import { getItemById, getEpisodesForSeries, getWatchState, getSimilarItems } from '@/lib/media-server/library'
+import { getItemById, getEpisodesForSeries, getWatchState, getSimilarItems, getSeriesResumeEpisode } from '@/lib/media-server/library'
 import type { MediaItem } from '@/lib/media-server/types'
 import { formatDuration } from '@/lib/utils'
 import { Button } from '@/components/ui/Button'
@@ -94,6 +94,18 @@ export default async function BrowseDetailPage({ params }: Props) {
   }
   const seasons = [...seasonMap.entries()].sort((a, b) => a[0] - b[0])
 
+  // Resolve the Watch Now target. Series containers have no file_path and can't be played
+  // directly — navigate to the in-progress episode (resume) or the first episode instead.
+  // episodes is already sorted season_number ASC, episode_number ASC by the DB query.
+  let watchNowHref: string | null = null
+  if (item.type === 'series') {
+    const resumeEp = getSeriesResumeEpisode(session.userId, id)
+    const targetEp = resumeEp ?? episodes[0]
+    watchNowHref = targetEp ? `/play/${targetEp.id}` : null
+  } else if (item.file_path) {
+    watchNowHref = `/play/${item.id}`
+  }
+
   return (
     <div className="relative min-h-screen">
       {/* Backdrop */}
@@ -170,9 +182,11 @@ export default async function BrowseDetailPage({ params }: Props) {
 
             {/* Actions */}
             <div className="flex items-center gap-3 flex-wrap">
-              <Link href={`/play/${item.id}`}>
-                <Button>&#9654; Watch Now</Button>
-              </Link>
+              {watchNowHref && (
+                <Link href={watchNowHref}>
+                  <Button>&#9654; Watch Now</Button>
+                </Link>
+              )}
               {resumePositionTicks > 0 && (
                 <span className="text-zinc-400 text-sm">
                   Continue from {formatDuration(resumePositionTicks)}
