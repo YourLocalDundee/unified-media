@@ -325,7 +325,19 @@ export default function VideoPlayer(props: PlaybackData) {
                 setError('Failed to load stream. The media server may be transcoding — try again in a moment.')
               }
             } else if (data.type === 'networkError') {
-              setError(`Network error: ${data.details ?? 'connection failed'}`)
+              if (data.details === 'fragLoadError') {
+                // 503 from the segment endpoint means the linear transcode has not
+                // reached this segment yet (v1 seek limitation). The user should seek
+                // backwards to a position that has already been transcoded.
+                const code = data.response?.code
+                setError(
+                  code === 503
+                    ? 'Seek past the current transcode position. Seek backwards to a played section to resume.'
+                    : `Network error loading segment: ${data.details}`,
+                )
+              } else {
+                setError(`Network error: ${data.details ?? 'connection failed'}`)
+              }
             } else if (data.type === 'mediaError') {
               // Non-fatal media errors can be recovered
               hls.recoverMediaError()

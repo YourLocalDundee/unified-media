@@ -52,19 +52,6 @@ export function buildDirectUrl(mediaId: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Quality tiers for HLS transcoding
-// ---------------------------------------------------------------------------
-
-const QUALITY_TIERS = [
-  { label: '4K',    height: 2160, width: 3840, bitrate: 40_000_000 },
-  { label: '1080p', height: 1080, width: 1920, bitrate: 8_000_000  },
-  { label: '720p',  height: 720,  width: 1280, bitrate: 4_000_000  },
-  { label: '480p',  height: 480,  width: 854,  bitrate: 2_000_000  },
-  { label: '360p',  height: 360,  width: 640,  bitrate: 1_000_000  },
-  { label: '240p',  height: 240,  width: 426,  bitrate: 600_000    },
-]
-
-// ---------------------------------------------------------------------------
 // getNativePlaybackData — full PlaybackData from the native media_items DB
 // ---------------------------------------------------------------------------
 
@@ -132,39 +119,44 @@ export async function getNativePlaybackData(
   const resumePositionTicks = watchState?.position_ticks ?? 0
 
   // Stream URLs
-  const streamUrl = `/api/media/stream/${id}`
+  const streamUrl      = `/api/media/stream/${id}`
   const hlsTranscodeUrl = `/api/media/hls/${id}/master.m3u8`
 
-  // Direct play option
+  // Direct play option — always first.
   const directOption: QualityOption = {
-    label: 'Direct Play',
-    maxHeight: 0,
-    maxWidth: 0,
-    bitrate: 0,
-    isDirect: true,
+    label:     'Direct Play',
+    maxHeight: nativeHeight || 0,
+    maxWidth:  nativeWidth  || 0,
+    bitrate:   0,
+    isDirect:  true,
     streamUrl,
-    isHls: false,
+    isHls:     false,
   }
 
-  // Transcoded quality tiers (only below native height).
-  // nativeHeight === 0 means probe failed; skip the height guard so all tiers remain available.
-  const qualityOptions: QualityOption[] = QUALITY_TIERS
-    .filter((t) => nativeHeight === 0 || t.height < nativeHeight)
-    .map((t) => {
-      const url = new URL(hlsTranscodeUrl, 'http://placeholder')
-      url.searchParams.set('maxWidth', String(t.width))
-      url.searchParams.set('maxHeight', String(t.height))
-      url.searchParams.set('bitrate', String(t.bitrate))
-      return {
-        label: t.label,
-        maxHeight: t.height,
-        maxWidth: t.width,
-        bitrate: t.bitrate,
-        isDirect: false,
-        streamUrl: url.pathname + '?' + url.searchParams.toString(),
-        isHls: true,
-      }
-    })
+  // Single native-resolution HLS option.
+  // Resolution is capped at the actual probed dimensions — no upscaling.
+  // The transcode endpoint probes the file again and picks the correct tier
+  // (remux / audio-only / full VAAPI) independently of these UI labels.
+  // If probe failed (nativeHeight=0), the label falls back to 'Native HLS'
+  // and the server determines quality from its own probe at request time.
+  function nativeLabel(h: number): string {
+    if (h >= 2160) return '4K'
+    if (h >= 1080) return '1080p'
+    if (h >= 720)  return '720p'
+    if (h >= 480)  return '480p'
+    if (h >  0)    return `${h}p`
+    return 'Native'
+  }
+
+  const hlsOption: QualityOption = {
+    label:     `${nativeLabel(nativeHeight)} HLS`,
+    maxHeight: nativeHeight || 1080,
+    maxWidth:  nativeWidth  || 1920,
+    bitrate:   0,
+    isDirect:  false,
+    streamUrl: hlsTranscodeUrl,
+    isHls:     true,
+  }
 
   return {
     playSessionId: crypto.randomUUID(),
@@ -186,7 +178,7 @@ export async function getNativePlaybackData(
     nativeWidth,
     nativeHeight,
     hlsTranscodeUrl,
-    availableQualities: [directOption, ...qualityOptions],
+    availableQualities: [directOption, hlsOption],
     progressApiUrl: '/api/media/progress',
     subtitleApiBase: '/api/media/subtitles',
     nextEpisodeApiBase: '/api/media/series',
