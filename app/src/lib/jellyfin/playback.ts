@@ -11,6 +11,7 @@ import { jellyfinFetch } from '@/lib/jellyfin/client'
 import type { PlaybackInfo, MediaSource, MediaStream } from '@/lib/jellyfin/types'
 import type { QualityOption } from '@/components/player/types'
 import type { PlaybackData } from '@/lib/media-server/types'
+import { isImageSubtitleCodec } from '@/lib/media-server/codecs'
 
 export type { PlaybackData }
 
@@ -187,14 +188,19 @@ export async function getPlaybackData(id: string): Promise<PlaybackData> {
     .filter((s) => s.Type === 'Subtitle')
     .map((s) => ({
       index: s.Index,
+      codec: s.Codec ?? 'unknown',
       language: s.Language ?? 'Unknown',
       title: s.DisplayTitle ?? s.Language ?? `Track ${s.Index}`,
       isDefault: s.IsDefault ?? false,
+      forced: s.IsForced ?? false,
+      extractable: !isImageSubtitleCodec(s.Codec ?? null),
     }))
   const audioStreams = streams
     .filter((s) => s.Type === 'Audio')
-    .map((s) => ({
+    .map((s, relIndex) => ({
       index: s.Index,
+      relIndex,
+      codec: s.Codec ?? 'unknown',
       language: s.Language ?? 'Unknown',
       title: s.DisplayTitle ?? s.Language ?? `Track ${s.Index}`,
       channels: s.Channels ?? 2,

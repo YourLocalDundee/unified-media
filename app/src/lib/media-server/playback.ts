@@ -1,6 +1,7 @@
 import crypto from 'crypto'
 import { getItemById, getWatchState } from './library'
 import { probeFile } from './probe'
+import { isAudioDirectPlayable, isImageSubtitleCodec, selectAudioTrack } from './codecs'
 import type { MediaItem, PlaybackData } from './types'
 import type { QualityOption } from '@/components/player/types'
 
@@ -71,14 +72,20 @@ export async function getNativePlaybackData(
   let subtitleStreams: PlaybackData['subtitleStreams'] = []
   let defaultAudioIndex = 0
   let defaultSubtitleIndex = -1
+  // Whether the browser can decode the intended audio track from the raw container.
+  // Defaults to true so a probe failure does not gratuitously force HLS — the HLS route
+  // still probes again and picks the right tier if direct play actually fails.
+  let audioDirectPlayable = true
 
   try {
     const probe = await probeFile(item.file_path)
     nativeWidth = probe.width
     nativeHeight = probe.height
 
-    audioStreams = probe.audioStreams.map(s => ({
+    audioStreams = probe.audioStreams.map((s, relIndex) => ({
       index: s.index,
+      relIndex,
+      codec: s.codec,
       language: s.language,
       title: s.title,
       channels: s.channels,
@@ -87,13 +94,22 @@ export async function getNativePlaybackData(
 
     subtitleStreams = probe.subtitleStreams.map(s => ({
       index: s.index,
+      codec: s.codec,
       language: s.language,
       title: s.title,
       isDefault: s.isDefault,
+      forced: s.isForced,
+      // Image-based codecs (PGS/VOBSUB/DVB) cannot be converted to WebVTT — flag them so
+      // the player can disable selection rather than offer a track that renders nothing.
+      extractable: !isImageSubtitleCodec(s.codec),
     }))
 
-    const defaultAudio = probe.audioStreams.find(s => s.isDefault) ?? probe.audioStreams[0]
-    defaultAudioIndex = defaultAudio?.index ?? 0
+    // The intended track is the one the browser will play on direct play (default, else
+    // first) — the same track the transcoder maps. Check that track's codec, not just the
+    // first audio stream, so a default commentary/secondary track is handled correctly.
+    const { stream: intendedAudio } = selectAudioTrack(probe.audioStreams)
+    defaultAudioIndex = intendedAudio?.index ?? 0
+    audioDirectPlayable = isAudioDirectPlayable(intendedAudio?.codec ?? null)
 
     const defaultSub = probe.subtitleStreams.find(s => s.isDefault && !s.isForced)
     defaultSubtitleIndex = defaultSub?.index ?? -1
@@ -118,9 +134,12 @@ export async function getNativePlaybackData(
   const watchState = userId ? getWatchState(userId, id) : undefined
   const resumePositionTicks = watchState?.position_ticks ?? 0
 
-  // Stream URLs
+  // Stream URLs. HLS is namespaced by the audio-relative index (`aN`) so each audio-track
+  // selection gets its own transcode and cache without colliding. The default URL targets
+  // the intended track; the player builds `aN` URLs for other tracks when switching audio.
+  const defaultAudioRel = audioStreams.find(s => s.index === defaultAudioIndex)?.relIndex ?? 0
   const streamUrl      = `/api/media/stream/${id}`
-  const hlsTranscodeUrl = `/api/media/hls/${id}/master.m3u8`
+  const hlsTranscodeUrl = `/api/media/hls/${id}/a${defaultAudioRel}/master.m3u8`
 
   // Direct play option — always first.
   const directOption: QualityOption = {
@@ -158,10 +177,22 @@ export async function getNativePlaybackData(
     isHls:     true,
   }
 
+  // Codec-aware default. When the intended audio track is not browser-decodable from the raw
+  // container, naive Direct Play renders video with silent audio (browsers do not fire an
+  // error on audio-only decode failure). Default to the HLS path so the transcode layer's
+  // audio_transcode tier (Tier B) remuxes the video and re-encodes only the audio to AAC.
+  // Direct Play stays in the list as a secondary option but is never the default in this case.
+  // Files with compatible audio (e.g. h264 + AAC) keep true Direct Play as the default with no
+  // transcode.
+  const availableQualities = audioDirectPlayable
+    ? [directOption, hlsOption]
+    : [hlsOption, directOption]
+  const defaultOption = availableQualities[0]
+
   return {
     playSessionId: crypto.randomUUID(),
-    streamUrl,
-    isHls: false,
+    streamUrl: defaultOption.streamUrl,
+    isHls: defaultOption.isHls,
     mediaSourceId: id,
     itemId: id,
     subtitleStreams,
@@ -178,7 +209,7 @@ export async function getNativePlaybackData(
     nativeWidth,
     nativeHeight,
     hlsTranscodeUrl,
-    availableQualities: [directOption, hlsOption],
+    availableQualities,
     progressApiUrl: '/api/media/progress',
     subtitleApiBase: '/api/media/subtitles',
     nextEpisodeApiBase: '/api/media/series',

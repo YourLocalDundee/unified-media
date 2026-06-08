@@ -11,6 +11,21 @@
  * group 990 (render). If VAAPI device open fails ffmpeg exits non-zero; the error is logged
  * loudly and surfaced to the player — there is no silent CPU fallback.
  *
+ * Audio-track selection
+ * ---------------------
+ * Each transcode is namespaced by the audio-relative index (`-map 0:a:<idx>`), cached under
+ * <mediaId>/a<idx>/. The player switches audio by requesting a different `aN` HLS URL and
+ * re-seeking to the captured playback position (the "restart-and-seek" / option B approach).
+ * No timestamp offset is introduced — the new stream shares the same 0-based timeline as the
+ * file, so the player's existing position path (currentTime, resume, progress reporting,
+ * position_ticks) stays the single source of truth for position.
+ *
+ * FUTURE (option A): start the per-audio transcode at the current position with input-seek
+ * (`-ss T`, already supported by buildArgs' seekSec) for an instant switch instead of waiting
+ * for the linear transcode to reach T. Deferred because it requires a stream-start time offset,
+ * which would fork position tracking away from the single 0-based timeline the player relies on
+ * for watch-progress/continue-watching correctness.
+ *
  * v1 seek behaviour
  * -----------------
  * Segments are generated linearly from the start of the file. Seeking past the current
@@ -19,6 +34,9 @@
  * returns 503, hls.js retries up to its fragLoadingMaxRetry limit, then fires a fatal
  * FRAG_LOAD_ERROR which the player surfaces as an actionable error message. Seek backwards
  * to a position with generated segments to resume. Seek-ahead restart is a v2 feature.
+ * This also bounds option-B audio switching: a switch resumes at the captured position by
+ * letting the linear transcode reach it; switching then immediately seeking far ahead hits
+ * the same limitation.
  *
  * Cache
  * -----
@@ -73,12 +91,20 @@ const startingJobs = new Set<string>()   // guard against double-spawn on concur
 // Path helpers
 // ---------------------------------------------------------------------------
 
-function getCacheDir(mediaId: string): string {
-  return path.join(TRANSCODE_CACHE, mediaId)
+// Cache is namespaced per audio-relative index so switching audio track produces an
+// independent transcode (different `-map 0:a:N`) without overwriting another track's
+// segments: TRANSCODE_CACHE/<mediaId>/a<audioIdx>/seg*.ts
+function getCacheDir(mediaId: string, audioIdx: number): string {
+  return path.join(TRANSCODE_CACHE, mediaId, `a${audioIdx}`)
 }
 
-export function getSegmentPath(mediaId: string, segName: string): string {
-  return path.join(getCacheDir(mediaId), segName)
+export function getSegmentPath(mediaId: string, audioIdx: number, segName: string): string {
+  return path.join(getCacheDir(mediaId, audioIdx), segName)
+}
+
+// Job-registry key: one ffmpeg process per (media, audio-track) pair.
+function jobKey(mediaId: string, audioIdx: number): string {
+  return `${mediaId}:a${audioIdx}`
 }
 
 // ---------------------------------------------------------------------------
@@ -105,6 +131,7 @@ function buildArgs(
   cacheDir:  string,
   tier:      TranscodeTier,
   startNum:  number,
+  audioIdx:  number,
   seekSec?:  number,
 ): string[] {
   const segFile  = path.join(cacheDir, 'seg%05d.ts')
@@ -125,8 +152,10 @@ function buildArgs(
 
   args.push('-i', inputPath)
 
-  // Map exactly one video and one audio stream
-  args.push('-map', '0:v:0', '-map', '0:a:0')
+  // Map exactly one video and one audio stream. The audio stream is the intended track
+  // (default, else first) selected by selectAudioTrack, so the transcoded AAC matches the
+  // track the compatibility check evaluated — never a commentary or secondary-language track.
+  args.push('-map', '0:v:0', '-map', `0:a:${audioIdx}`)
 
   // Video codec ---------------------------------------------------------------
   if (tier === 'full_vaapi') {
@@ -167,22 +196,41 @@ function buildArgs(
 // LRU cache eviction
 // ---------------------------------------------------------------------------
 
+// Recursively sums the byte size of every file under a directory, and tracks the most
+// recent atime seen — segments live one level deeper now (<mediaId>/a<idx>/seg*.ts).
+async function dirSizeAndAtime(dir: string): Promise<{ sizeBytes: number; atime: number }> {
+  let sizeBytes = 0
+  let atime = 0
+  const names = await fs.readdir(dir).catch(() => [] as string[])
+  for (const name of names) {
+    const p = path.join(dir, name)
+    const st = await fs.stat(p).catch(() => null)
+    if (!st) continue
+    if (st.isDirectory()) {
+      const sub = await dirSizeAndAtime(p)
+      sizeBytes += sub.sizeBytes
+      atime = Math.max(atime, sub.atime)
+    } else {
+      sizeBytes += st.size
+      atime = Math.max(atime, st.atimeMs)
+    }
+  }
+  return { sizeBytes, atime }
+}
+
 async function evictLruIfNeeded(): Promise<void> {
   try {
     const names = await fs.readdir(TRANSCODE_CACHE).catch(() => [] as string[])
     const entries: { dir: string; atime: number; sizeBytes: number }[] = []
 
     for (const name of names) {
+      // Skip dot-dirs (the subtitle cache lives at TRANSCODE_CACHE/.subs).
+      if (name.startsWith('.')) continue
       const dir  = path.join(TRANSCODE_CACHE, name)
       const dstat = await fs.stat(dir).catch(() => null)
       if (!dstat?.isDirectory()) continue
-      let sizeBytes = 0
-      const files = await fs.readdir(dir).catch(() => [] as string[])
-      for (const f of files) {
-        const st = await fs.stat(path.join(dir, f)).catch(() => null)
-        if (st) sizeBytes += st.size
-      }
-      entries.push({ dir, atime: dstat.atimeMs, sizeBytes })
+      const { sizeBytes, atime } = await dirSizeAndAtime(dir)
+      entries.push({ dir, atime: Math.max(atime, dstat.atimeMs), sizeBytes })
     }
 
     const totalMB = entries.reduce((s, e) => s + e.sizeBytes, 0) / (1024 * 1024)
@@ -195,7 +243,8 @@ async function evictLruIfNeeded(): Promise<void> {
     for (const { dir, sizeBytes } of entries) {
       if (remaining <= MAX_CACHE_MB) break
       const mediaId = path.basename(dir)
-      if (activeJobs.has(mediaId)) continue  // never evict an active transcode
+      // Never evict a media item that has any active transcode (any audio track).
+      if ([...activeJobs.keys()].some(k => k.startsWith(`${mediaId}:`))) continue
       await fs.rm(dir, { recursive: true, force: true })
       remaining -= sizeBytes / (1024 * 1024)
       console.log(
@@ -216,22 +265,24 @@ async function spawnFfmpeg(
   filePath: string,
   tier:     TranscodeTier,
   startNum: number,
+  audioIdx: number,
   seekSec?: number,
 ): Promise<void> {
-  const cacheDir = getCacheDir(mediaId)
+  const cacheDir = getCacheDir(mediaId, audioIdx)
   await fs.mkdir(cacheDir, { recursive: true })
+  const key = jobKey(mediaId, audioIdx)
 
-  const args = buildArgs(filePath, cacheDir, tier, startNum, seekSec)
-  console.log(`[transcode] start tier=${tier} id=${mediaId}`, FFMPEG_BIN, args.slice(0, 12).join(' '), '...')
+  const args = buildArgs(filePath, cacheDir, tier, startNum, audioIdx, seekSec)
+  console.log(`[transcode] start tier=${tier} id=${mediaId} a${audioIdx}`, FFMPEG_BIN, args.slice(0, 14).join(' '), '...')
 
   const proc = spawn(FFMPEG_BIN, args, { stdio: ['ignore', 'ignore', 'pipe'] })
-  activeJobs.set(mediaId, proc)
+  activeJobs.set(key, proc)
 
   let stderr = ''
   proc.stderr?.on('data', (chunk: Buffer) => { stderr += chunk.toString() })
 
   proc.on('close', (code) => {
-    activeJobs.delete(mediaId)
+    activeJobs.delete(key)
     if (code === 0) {
       console.log(`[transcode] done tier=${tier} id=${mediaId}`)
     } else {
@@ -246,8 +297,8 @@ async function spawnFfmpeg(
   })
 
   proc.on('error', (err) => {
-    activeJobs.delete(mediaId)
-    console.error(`[transcode] spawn error for ${mediaId}:`, err)
+    activeJobs.delete(key)
+    console.error(`[transcode] spawn error for ${mediaId} a${audioIdx}:`, err)
   })
 }
 
@@ -282,21 +333,23 @@ export async function ensureHls(
   filePath:   string,
   videoCodec: string | null,
   audioCodec: string | null,
+  audioIndex: number = 0,
 ): Promise<string> {
-  const cacheDir = getCacheDir(mediaId)
+  const cacheDir = getCacheDir(mediaId, audioIndex)
   const manifest = path.join(cacheDir, 'master.m3u8')
+  const key = jobKey(mediaId, audioIndex)
 
   if (await fileExists(manifest)) return manifest
 
   await evictLruIfNeeded()
 
-  if (!activeJobs.has(mediaId) && !startingJobs.has(mediaId)) {
-    startingJobs.add(mediaId)
+  if (!activeJobs.has(key) && !startingJobs.has(key)) {
+    startingJobs.add(key)
     try {
       const tier = chooseTier(videoCodec, audioCodec)
-      await spawnFfmpeg(mediaId, filePath, tier, 0)
+      await spawnFfmpeg(mediaId, filePath, tier, 0, audioIndex)
     } finally {
-      startingJobs.delete(mediaId)
+      startingJobs.delete(key)
     }
   }
 
@@ -307,17 +360,17 @@ export async function ensureHls(
 
     // If the process already exited and the manifest still isn't there, give up
     // immediately rather than burning the full 60 s.
-    if (!activeJobs.has(mediaId) && !startingJobs.has(mediaId)) {
+    if (!activeJobs.has(key) && !startingJobs.has(key)) {
       if (await fileExists(manifest)) return manifest
       const tier = chooseTier(videoCodec, audioCodec)
       const detail = tier === 'full_vaapi'
         ? ` Verify ${VAAPI_DEVICE} is bind-mounted (devices:) and the container process is in group 990 (render). Check container logs for ffmpeg stderr.`
         : ''
-      throw new Error(`Transcode for ${mediaId} exited before producing a manifest.${detail}`)
+      throw new Error(`Transcode for ${mediaId} a${audioIndex} exited before producing a manifest.${detail}`)
     }
   }
 
-  throw new Error(`Transcode for ${mediaId} timed out after ${MANIFEST_WAIT_MS / 1000}s.`)
+  throw new Error(`Transcode for ${mediaId} a${audioIndex} timed out after ${MANIFEST_WAIT_MS / 1000}s.`)
 }
 
 /**
@@ -336,4 +389,57 @@ export async function waitForSegment(segPath: string): Promise<boolean> {
     if (await fileExists(segPath)) return true
   }
   return false
+}
+
+// ---------------------------------------------------------------------------
+// Embedded subtitle extraction → WebVTT
+// ---------------------------------------------------------------------------
+
+// Extracted WebVTT files are cached under a dot-dir so LRU eviction skips them
+// (they are tiny and cheap to regenerate, but caching avoids re-running ffmpeg on
+// every track (re)selection).
+const SUBS_CACHE = path.join(TRANSCODE_CACHE, '.subs')
+
+function execFile(bin: string, args: string[]): Promise<{ code: number; stderr: string }> {
+  return new Promise((resolve) => {
+    const proc = spawn(bin, args, { stdio: ['ignore', 'ignore', 'pipe'] })
+    let stderr = ''
+    proc.stderr?.on('data', (c: Buffer) => { stderr += c.toString() })
+    proc.on('close', (code) => resolve({ code: code ?? -1, stderr }))
+    proc.on('error', () => resolve({ code: -1, stderr }))
+  })
+}
+
+/**
+ * Extracts a single embedded *text* subtitle stream (by absolute ffprobe stream index)
+ * and converts it to WebVTT, returning the path to the cached .vtt file. The caller is
+ * responsible for rejecting image-based codecs (isImageSubtitleCodec) before calling this.
+ *
+ * Uses `-map 0:<absoluteIndex>` (the ffprobe stream index, not the subtitle-relative one)
+ * so the exact track the player listed is the one extracted.
+ */
+export async function extractSubtitleToVtt(
+  mediaId: string,
+  filePath: string,
+  absoluteIndex: number,
+): Promise<string> {
+  const dir = path.join(SUBS_CACHE, mediaId)
+  const out = path.join(dir, `${absoluteIndex}.vtt`)
+  if (await fileExists(out)) return out
+
+  await fs.mkdir(dir, { recursive: true })
+  const { code, stderr } = await execFile(FFMPEG_BIN, [
+    '-y',
+    '-i', filePath,
+    '-map', `0:${absoluteIndex}`,
+    '-c:s', 'webvtt',
+    '-f', 'webvtt',
+    out,
+  ])
+
+  if (code !== 0 || !(await fileExists(out))) {
+    await fs.rm(out, { force: true }).catch(() => {})
+    throw new Error(`Subtitle extraction failed for ${mediaId} stream ${absoluteIndex} (code=${code}).\n${stderr.slice(-600)}`)
+  }
+  return out
 }

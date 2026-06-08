@@ -234,7 +234,7 @@ async function LatestAddedSection() {
 
   return (
     <section>
-      <SectionHeading title="Recently Added" viewAllHref="/browse" />
+      <SectionHeading title="Recently Added" viewAllHref="/library" />
       <div className="flex gap-4 overflow-x-auto pb-2 scrollbar-thin scrollbar-thumb-border">
         {items.map((item) => {
           const imageUrl = item.poster_path
@@ -248,7 +248,7 @@ async function LatestAddedSection() {
                 year={item.year ?? undefined}
                 imageUrl={imageUrl}
                 type={item.type === 'movie' ? 'Movie' : 'Series'}
-                href={item.type === 'series' ? `/browse/${item.id}` : `/play/${item.id}`}
+                href={item.type === 'series' ? `/library/${item.id}` : `/play/${item.id}`}
               />
             </div>
           )

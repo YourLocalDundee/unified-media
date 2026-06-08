@@ -5,7 +5,7 @@
 
 import Link from 'next/link'
 import { Suspense } from 'react'
-import { usePathname, useSearchParams } from 'next/navigation'
+import { usePathname } from 'next/navigation'
 import { Home, Film, Library, ClipboardList, Download, ChevronLeft, ChevronRight } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAppStore } from '@/store'
@@ -13,30 +13,19 @@ import { useAppStore } from '@/store'
 const navItems = [
   { href: '/', icon: Home, label: 'Dashboard' },
   { href: '/browse', icon: Film, label: 'Browse' },
-  { href: '/browse?type=all', icon: Library, label: 'Library' },
+  { href: '/library', icon: Library, label: 'Library' },
   { href: '/requests', icon: ClipboardList, label: 'Requests' },
   { href: '/downloads', icon: Download, label: 'Downloads' },
 ]
 
-// Isolated into its own component so useSearchParams is inside a Suspense boundary
-// (Next.js requires this to avoid a prerender error on static pages).
+// Isolated into its own component so it can be wrapped in a Suspense boundary
+// (Next.js requires client hooks like usePathname to be in a Suspense subtree on static pages).
 function SidebarNav({ sidebarOpen }: { sidebarOpen: boolean }) {
   const pathname = usePathname()
-  const searchParams = useSearchParams()
 
   function isActive(href: string): boolean {
-    const [hrefPath, hrefQuery] = href.split('?')
-    if (hrefQuery) {
-      const paramKey = hrefQuery.split('=')[0]
-      const paramVal = hrefQuery.split('=')[1]
-      return pathname === hrefPath && searchParams.get(paramKey) === paramVal
-    }
     if (href === '/') return pathname === '/'
-    // /browse is active only when NOT in library mode (type=all)
-    if (href === '/browse') {
-      return pathname.startsWith('/browse') && searchParams.get('type') !== 'all'
-    }
-    return pathname === href || pathname.startsWith(href)
+    return pathname === href || pathname.startsWith(href + '/')
   }
 
   return (

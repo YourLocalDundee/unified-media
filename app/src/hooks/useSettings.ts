@@ -110,9 +110,14 @@ export function usePlaybackPrefs() {
   // Initialize with defaults; the effect below will overwrite with persisted values
   // on the first client render, avoiding an SSR/client hydration mismatch.
   const [prefs, setPrefs] = useState<PlaybackPrefs>(PLAYBACK_DEFAULTS)
+  // `ready` flips true once persisted prefs have hydrated from localStorage. Consumers that
+  // apply a one-time default (e.g. the player's language selection) wait for this so they act
+  // on the user's stored value rather than the pre-hydration defaults.
+  const [ready, setReady] = useState(false)
 
   useEffect(() => {
     setPrefs(readLS('unified-playback-prefs', PLAYBACK_DEFAULTS))
+    setReady(true)
   }, [])
 
   const update = useCallback((patch: Partial<PlaybackPrefs>) => {
@@ -123,7 +128,7 @@ export function usePlaybackPrefs() {
     })
   }, [])
 
-  return { prefs, update }
+  return { prefs, update, ready }
 }
 
 export function useDisplayPrefs() {

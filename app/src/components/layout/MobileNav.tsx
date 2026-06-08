@@ -10,7 +10,7 @@ import { cn } from '@/lib/utils'
 const navItems = [
   { href: '/', icon: Home, label: 'Dashboard' },
   { href: '/browse', icon: Film, label: 'Browse' },
-  { href: '/browse?type=all', icon: Library, label: 'Library' },
+  { href: '/library', icon: Library, label: 'Library' },
   { href: '/requests', icon: ClipboardList, label: 'Requests' },
   { href: '/downloads', icon: Download, label: 'Downloads' },
 ]
@@ -21,8 +21,9 @@ export function MobileNav() {
   return (
     <nav className="fixed bottom-0 left-0 right-0 z-50 flex h-16 items-center justify-around border-t border-border bg-card md:hidden">
       {navItems.map(({ href, icon: Icon, label }) => {
-        // Prefix match for all routes except '/' to avoid highlighting Dashboard on every page.
-        const isActive = pathname === href || (href !== '/' && pathname.startsWith(href))
+        const isActive = href === '/'
+          ? pathname === '/'
+          : pathname === href || pathname.startsWith(href + '/')
         return (
           <Link
             key={href}

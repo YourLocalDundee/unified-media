@@ -1,6 +1,12 @@
 /**
- * GET /api/media/hls/[id]/master.m3u8   — HLS manifest
- * GET /api/media/hls/[id]/seg00001.ts   — HLS segment
+ * GET /api/media/hls/[id]/a[N]/master.m3u8   — HLS manifest for audio track N
+ * GET /api/media/hls/[id]/a[N]/seg00001.ts   — HLS segment for audio track N
+ *
+ * The `aN` segment is the audio-relative index (`-map 0:a:N`). It lets the player
+ * switch audio track by requesting a different `aN` URL; each track gets its own
+ * transcode + cache. A missing `aN` segment defaults to audio track 0 for
+ * backwards compatibility. Segments in the manifest are relative, so they resolve
+ * under the same `aN/` path automatically.
  *
  * Dispatches to the transcode layer in lib/media-server/transcode.ts.
  * Codec-tier decision is made there; this route is responsible only for
@@ -17,6 +23,7 @@ import fs from 'fs/promises'
 import { requireAuth } from '@/lib/dal'
 import { getItemById } from '@/lib/media-server/library'
 import { probeFile } from '@/lib/media-server/probe'
+import { selectAudioTrack } from '@/lib/media-server/codecs'
 import { ensureHls, getSegmentPath, waitForSegment } from '@/lib/media-server/transcode'
 
 export const dynamic = 'force-dynamic'
@@ -42,7 +49,15 @@ export async function GET(
   await requireAuth()
 
   const { id, slug } = await params
-  const resource = slug.join('/')   // 'master.m3u8' | 'seg00001.ts' | …
+
+  // Optional leading `aN` segment selects the audio-relative track; default 0.
+  let audioRel = 0
+  let parts = slug
+  if (slug.length > 1 && /^a\d+$/.test(slug[0])) {
+    audioRel = parseInt(slug[0].slice(1), 10)
+    parts = slug.slice(1)
+  }
+  const resource = parts.join('/')   // 'master.m3u8' | 'seg00001.ts' | …
 
   const item = getItemById(id)
   if (!item?.file_path) {
@@ -56,10 +71,20 @@ export async function GET(
   if (resource === 'master.m3u8') {
     let videoCodec: string | null = null
     let audioCodec: string | null = null
+    let audioIndex = audioRel
     try {
       const probe = await probeFile(item.file_path)
       videoCodec = probe.videoCodec
-      audioCodec = probe.audioCodec
+      // The requested audio track drives both the tier choice and the `-map 0:a:N` target.
+      // If the requested index is out of range, fall back to the intended (default-or-first)
+      // track so a stale/garbage URL still produces a usable stream.
+      if (audioRel >= 0 && audioRel < probe.audioStreams.length) {
+        audioCodec = probe.audioStreams[audioRel].codec
+      } else {
+        const { stream: intendedAudio, relativeIndex } = selectAudioTrack(probe.audioStreams)
+        audioCodec = intendedAudio?.codec ?? null
+        audioIndex = relativeIndex
+      }
     } catch (err) {
       console.error(`[hls] probe failed for ${id}:`, err)
       // Proceed with null codecs — chooseTier will default to full_vaapi
@@ -67,7 +92,7 @@ export async function GET(
 
     let manifestPath: string
     try {
-      manifestPath = await ensureHls(id, item.file_path, videoCodec, audioCodec)
+      manifestPath = await ensureHls(id, item.file_path, videoCodec, audioCodec, audioIndex)
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
       console.error(`[hls] ensureHls failed for ${id}:`, msg)
@@ -84,7 +109,7 @@ export async function GET(
   // Segment request — serve from cache, polling if the transcode is in progress
   // -------------------------------------------------------------------------
 
-  const segPath = getSegmentPath(id, resource)
+  const segPath = getSegmentPath(id, audioRel, resource)
   const found   = await waitForSegment(segPath)
 
   if (!found) {
