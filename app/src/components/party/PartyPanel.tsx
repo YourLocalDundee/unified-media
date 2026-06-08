@@ -7,7 +7,7 @@
  */
 
 import { useState } from 'react'
-import { Copy, Check, LogOut, X, Crown, Loader2 } from 'lucide-react'
+import { Copy, Check, LogOut, X, Crown, Loader2, AlertCircle } from 'lucide-react'
 import type { MemberSummary, LastActor } from '@/lib/party/types'
 
 interface Props {
@@ -48,16 +48,54 @@ export function PartyPanel({
   onEnd,
 }: Props) {
   const [copied, setCopied] = useState(false)
+  const [copyFailed, setCopyFailed] = useState(false)
   const isHost = hostUserId != null && selfUserId === hostUserId
 
-  const copyLink = async () => {
+  const flashCopied = () => {
+    setCopyFailed(false)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 1500)
+  }
+
+  const fallbackCopy = (): boolean => {
     try {
-      await navigator.clipboard.writeText(joinUrl)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 1500)
+      const ta = document.createElement('textarea')
+      ta.value = joinUrl
+      // Keep it off-screen but still selectable/focusable.
+      ta.setAttribute('readonly', '')
+      ta.style.position = 'fixed'
+      ta.style.top = '-9999px'
+      ta.style.opacity = '0'
+      document.body.appendChild(ta)
+      ta.focus()
+      ta.select()
+      const ok = document.execCommand('copy')
+      document.body.removeChild(ta)
+      return ok
     } catch {
-      /* clipboard unavailable */
+      return false
     }
+  }
+
+  const copyLink = async () => {
+    // navigator.clipboard is undefined on non-secure contexts / older mobile webviews.
+    if (navigator.clipboard?.writeText) {
+      try {
+        await navigator.clipboard.writeText(joinUrl)
+        flashCopied()
+        return
+      } catch {
+        /* fall through to execCommand fallback */
+      }
+    }
+    if (fallbackCopy()) {
+      flashCopied()
+      return
+    }
+    // Surface a visible failure so the user can copy manually.
+    setCopied(false)
+    setCopyFailed(true)
+    setTimeout(() => setCopyFailed(false), 4000)
   }
 
   const connLabel =
@@ -82,10 +120,30 @@ export function PartyPanel({
           onClick={copyLink}
           className="flex items-center gap-1 rounded-md bg-zinc-800 px-2 py-1.5 text-xs text-zinc-200 transition-colors hover:bg-zinc-700"
         >
-          {copied ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
-          {copied ? 'Copied' : 'Copy link'}
+          {copyFailed ? (
+            <AlertCircle className="h-3.5 w-3.5 text-red-400" />
+          ) : copied ? (
+            <Check className="h-3.5 w-3.5 text-emerald-400" />
+          ) : (
+            <Copy className="h-3.5 w-3.5" />
+          )}
+          {copyFailed ? 'Copy failed' : copied ? 'Copied' : 'Copy link'}
         </button>
       </div>
+
+      {/* Manual-copy fallback when clipboard is unavailable */}
+      {copyFailed && (
+        <div className="flex flex-col gap-1">
+          <p className="text-[10px] text-red-300">Couldn’t copy automatically — select and copy:</p>
+          <input
+            type="text"
+            readOnly
+            value={joinUrl}
+            onFocus={(e) => e.currentTarget.select()}
+            className="w-full select-all rounded-md bg-zinc-800 px-2 py-1 font-mono text-[11px] text-zinc-200 outline-none focus:ring-1 focus:ring-sky-600"
+          />
+        </div>
+      )}
 
       {/* Connection state */}
       <div className="flex items-center gap-1.5 text-[11px]">

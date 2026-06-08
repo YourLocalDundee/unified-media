@@ -3,20 +3,23 @@
 
 import { NextResponse } from 'next/server'
 import { requireAuth } from '@/lib/dal'
+import { verifyOrigin } from '@/lib/csrf'
 import { getPartyStore } from '@/lib/party/state-store'
-import { markMemberLeft, countActiveMembers, endPartyRow } from '@/lib/party/db'
+import { leaveAndMaybeEnd } from '@/lib/party/db'
 
 export const dynamic = 'force-dynamic'
 
-export async function POST(_req: Request, { params }: { params: Promise<{ partyId: string }> }) {
+export async function POST(req: Request, { params }: { params: Promise<{ partyId: string }> }) {
+  if (!verifyOrigin(req)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   const session = await requireAuth()
   const { partyId } = await params
 
-  markMemberLeft(partyId, session.userId)
-
-  // Last member out ends the party (status ended + tear down live state).
-  if (countActiveMembers(partyId) === 0) {
-    endPartyRow(partyId)
+  // Atomic mark-left + last-member-out decision in a single durable call so a
+  // concurrent leave can't race the count. Host leaving does NOT special-case
+  // end; only zero active members ends it.
+  const { ended } = leaveAndMaybeEnd(partyId, session.userId)
+  if (ended) {
+    // Tear down live state, which fans party_ended to any remaining sockets.
     await getPartyStore().endParty(partyId)
   }
 

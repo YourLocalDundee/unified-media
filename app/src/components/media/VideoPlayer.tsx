@@ -675,11 +675,17 @@ export default function VideoPlayer(props: PlaybackData) {
           break
         case ',':
           e.preventDefault()
-          if (video && video.paused) video.currentTime = Math.max(0, video.currentTime - 1 / 24)
+          if (video && pty.active) {
+            partySeekTo(video.currentTime - 1 / 24)
+          } else if (video && video.paused) {
+            video.currentTime = Math.max(0, video.currentTime - 1 / 24)
+          }
           break
         case '.':
           e.preventDefault()
-          if (video) {
+          if (video && pty.active) {
+            partySeekTo(video.currentTime + 1 / 24)
+          } else if (video) {
             video.pause()
             video.currentTime = Math.min(video.duration || 0, video.currentTime + 1 / 24)
           }

@@ -1,5 +1,12 @@
 # Party Play — Implementation Audit (v0.9.5)
 
+> **STATUS: ALL FINDINGS REMEDIATED.** Every Critical/High/Medium/Low item below was fixed in a
+> follow-up pass (10 agents, one file group each); `tsc --noEmit` and the production build are clean.
+> The one deferred item is L5 (explicit Caddy idle timeout), which is addressed only if the mandated
+> off-tailnet cellular idle test shows BunkerWeb reaping the socket. The findings are retained below as
+> the record of what was audited and fixed. New tuning/limit constants live in
+> `src/lib/party/constants.ts`.
+
 Audit of the native watch-together / party-play feature documented in CLAUDE.md section 16
 and specified in `PARTY_PLAY_SPEC.txt`.
 

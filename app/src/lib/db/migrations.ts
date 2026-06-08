@@ -474,31 +474,51 @@ export function runMigrations(db: Database.Database): void {
   `)
 
   // Party Play — durable membership and existence (live position lives in memory).
+  //
+  // FK enforcement (M11): foreign_keys=ON is set per-connection (src/lib/db/index.ts),
+  // so the FOREIGN KEY clauses below are REAL constraints, not documentation. A FRESH
+  // database gets them enforced — deleting a user/media_items row is blocked (or, for
+  // members, cascades) instead of orphaning party rows.
+  //
+  // EXISTING deployments keep their current FK-less tables: CREATE TABLE IF NOT EXISTS
+  // does NOT alter a table that already exists, so already-deployed DBs retain
+  // logical-only relationships. Recreation (the BEGIN...COMMIT copy pattern used for
+  // the media_requests CHECK widening) is DELIBERATELY avoided here — a live party may
+  // be in progress, and dropping/recreating watch_parties mid-session would destroy
+  // an active viewing session and its checkpoint. Fresh-DB-only enforcement is the
+  // safest correct choice; the risk of a live recreation outweighs the benefit of
+  // retrofitting FKs onto existing rows that the synchronous single writer already
+  // keeps consistent.
   db.exec(`
     CREATE TABLE IF NOT EXISTS watch_parties (
       id                  TEXT PRIMARY KEY,           -- opaque 32-char id (makeId(32))
       join_code           TEXT UNIQUE NOT NULL,       -- short shareable 6-char code
-      host_user_id        TEXT NOT NULL,              -- FK to users.id; creator, host-only powers
-      media_id            TEXT NOT NULL,              -- FK to media_items.id, the item being watched
+      host_user_id        TEXT NOT NULL,              -- creator, host-only powers
+      media_id            TEXT NOT NULL,              -- the item being watched
       status              TEXT NOT NULL DEFAULT 'active'
         CHECK(status IN ('active','ended')),
       created_at          INTEGER NOT NULL,
       updated_at          INTEGER NOT NULL,
       ended_at            INTEGER,
       last_position_ticks INTEGER NOT NULL DEFAULT 0, -- checkpoint for restart recovery only
-      last_paused         INTEGER NOT NULL DEFAULT 1  -- checkpoint for restart recovery only
+      last_paused         INTEGER NOT NULL DEFAULT 1, -- checkpoint for restart recovery only
+      FOREIGN KEY (host_user_id) REFERENCES users(id),
+      FOREIGN KEY (media_id)     REFERENCES media_items(id)
     );
-    CREATE INDEX IF NOT EXISTS idx_watch_parties_code   ON watch_parties(join_code);
+    -- join_code is UNIQUE, which already creates an implicit index backing both the
+    -- collision probe and the by-code lookup, so no separate idx_watch_parties_code (L1).
     CREATE INDEX IF NOT EXISTS idx_watch_parties_status ON watch_parties(status);
 
     CREATE TABLE IF NOT EXISTS watch_party_members (
       id            INTEGER PRIMARY KEY AUTOINCREMENT,
-      party_id      TEXT NOT NULL,                    -- FK to watch_parties.id
-      user_id       TEXT NOT NULL,                    -- FK to users.id
+      party_id      TEXT NOT NULL,
+      user_id       TEXT NOT NULL,
       joined_at     INTEGER NOT NULL,
       left_at       INTEGER,
       is_host       INTEGER NOT NULL DEFAULT 0,
-      UNIQUE(party_id, user_id)                       -- makes join idempotent (reactivate, not duplicate)
+      UNIQUE(party_id, user_id),                      -- makes join idempotent (reactivate, not duplicate)
+      FOREIGN KEY (party_id) REFERENCES watch_parties(id) ON DELETE CASCADE,
+      FOREIGN KEY (user_id)  REFERENCES users(id)
     );
     CREATE INDEX IF NOT EXISTS idx_watch_party_members_party ON watch_party_members(party_id);
   `)

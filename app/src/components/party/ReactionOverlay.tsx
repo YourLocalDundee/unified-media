@@ -21,6 +21,18 @@ export function ReactionOverlay({ reactions, onExpire }: Props) {
   const timers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
 
   useEffect(() => {
+    const present = new Set(reactions.map((r) => r.id))
+
+    // Reconcile: clear and drop timers for ids that have left the array so the
+    // Map doesn't grow unbounded and stray timers can't fire for gone ids.
+    for (const [id, t] of timers.current) {
+      if (!present.has(id)) {
+        clearTimeout(t)
+        timers.current.delete(id)
+      }
+    }
+
+    // Arm timers only for newly-present ids.
     for (const r of reactions) {
       if (!timers.current.has(r.id)) {
         const t = setTimeout(() => {

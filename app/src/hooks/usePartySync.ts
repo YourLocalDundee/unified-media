@@ -88,7 +88,11 @@ export function usePartySync(
   const [chatMessages, setChatMessages] = useState<ChatMessageDTO[]>([])
   const [reactions, setReactions] = useState<PartyReaction[]>([])
   const [connectionState, setConnectionState] =
-    useState<UsePartySyncResult['connectionState']>('connecting')
+    useState<UsePartySyncResult['connectionState']>(
+      // L10: a disabled (non-party) instance has no socket to connect — start idle,
+      // not stuck on 'connecting' forever.
+      enabled && partyId ? 'connecting' : 'ended',
+    )
   const [ended, setEnded] = useState(false)
 
   // --- Refs (live values, not re-render triggers) ---
@@ -101,11 +105,29 @@ export function usePartySync(
   const heartbeatTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const pingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const transitionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // H6: the reseek macrotask, tracked so it can be cleared on reschedule/unmount.
+  const reseekTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const readyDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const lastReadyReportedRef = useRef<boolean | null>(null)
   const closedByUsRef = useRef(false)
   // Late-join two-phase: pending second seek on next canplay, then report ready.
   const pendingPostJoinReseekRef = useRef(false)
+  // H7: the last authoritative snapshot we applied, retained so the two-phase
+  // late-join canplay handler can re-extrapolate it to `now` and seek again.
+  const lastSnapshotRef = useRef<{
+    positionTicks: number
+    paused: boolean
+    playbackRate: number
+    serverTime: number
+  } | null>(null)
+  // M6/M7: the room's intended (authoritative) playback rate — the last
+  // msg.playbackRate adopted in applyState. The heartbeat reports THIS, not the
+  // transiently nudged video.playbackRate, and the heartbeat tick lifts a stale
+  // nudge back to this rate once we are inside the deadband.
+  const authoritativeRateRef = useRef(1)
+  // M5: timer that confirms a freshly-opened socket has stayed open long enough
+  // to be considered stable, at which point the reconnect counter is reset.
+  const stableTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const send = useCallback((msg: ClientMessage) => {
     const ws = wsRef.current
@@ -131,6 +153,38 @@ export function usePartySync(
     }
   }, [])
 
+  // M8 — robust remote play. The microtask reset in withRemoteApply covers element
+  // events fired synchronously by the mutation, but a remote-applied play resolves
+  // its play() promise on a LATER macrotask, and the 'playing' event can fire then —
+  // after the microtask has already lowered the flag — and be mistaken for a user
+  // action. Keep the flag raised until the play() promise settles as well (defense
+  // in depth; the player never derives intents from element events regardless).
+  const playRemote = useCallback((v: HTMLVideoElement) => {
+    applyingRemoteStateRef.current = true
+    const lower = () => {
+      applyingRemoteStateRef.current = false
+    }
+    v.play().then(lower).catch(lower)
+  }, [])
+
+  // Extrapolate the retained authoritative snapshot to `now + offset` content time.
+  // Used by the two-phase late-join second seek (H7) and the heartbeat-tick nudge
+  // restoration (M7). Returns null if there is no snapshot yet.
+  const extrapolateLiveTargetSec = useCallback((): number | null => {
+    const snap = lastSnapshotRef.current
+    if (!snap) return null
+    const liveTicks = extrapolatePosition(
+      {
+        positionTicks: snap.positionTicks,
+        paused: snap.paused,
+        playbackRate: snap.playbackRate,
+        lastTickWallClock: snap.serverTime,
+      },
+      Date.now() + offsetRef.current,
+    )
+    return ticksToSeconds(liveTicks)
+  }, [])
+
   // -------------------------------------------------------------------------
   // Apply an authoritative STATE snapshot to the player.
   // -------------------------------------------------------------------------
@@ -150,6 +204,17 @@ export function usePartySync(
       setLastActor(msg.lastActor)
       setPaused(msg.paused)
       setWaitingFor([])
+
+      // M6/M7 + H7: adopt the room's authoritative rate and retain the snapshot so
+      // the heartbeat reports the room rate (not a transient nudge), the tick can
+      // restore the rate, and the two-phase canplay handler can re-seek.
+      authoritativeRateRef.current = msg.playbackRate
+      lastSnapshotRef.current = {
+        positionTicks: msg.positionTicks,
+        paused: msg.paused,
+        playbackRate: msg.playbackRate,
+        serverTime: msg.serverTime,
+      }
 
       const withinSettle = localNow - lastJoinAtRef.current < POST_JOIN_SETTLE_MS
 
@@ -199,7 +264,9 @@ export function usePartySync(
           if (msg.paused && !v.paused) {
             v.pause()
           } else if (!msg.paused && v.paused) {
-            v.play().catch(() => {})
+            // M8: keep applyingRemoteStateRef raised until play() settles (its
+            // 'playing' event may fire on a later macrotask).
+            playRemote(v)
           }
         })
       }
@@ -214,8 +281,24 @@ export function usePartySync(
         transitionTimerRef.current = setTimeout(doTransition, delay)
       }
     },
-    [videoRef, withRemoteApply],
+    [videoRef, withRemoteApply, playRemote],
   )
+
+  // -------------------------------------------------------------------------
+  // Connection-stability gate (M5).
+  // -------------------------------------------------------------------------
+
+  // M5: do NOT reset the reconnect counter synchronously in onopen — a socket that
+  // opens then immediately closes would then reconnect on a tight 0ms loop. Reset
+  // only once the connection has proven stable: the first state/pong, or after the
+  // socket has stayed open for a few seconds (see the stableTimerRef in connect()).
+  const markConnectionStable = useCallback(() => {
+    if (stableTimerRef.current) {
+      clearTimeout(stableTimerRef.current)
+      stableTimerRef.current = null
+    }
+    reconnectAttemptRef.current = 0
+  }, [])
 
   // -------------------------------------------------------------------------
   // Message dispatch.
@@ -232,20 +315,30 @@ export function usePartySync(
 
       switch (msg.type) {
         case 'state':
+          // M5: a real state snapshot proves the connection is stable.
+          markConnectionStable()
           applyState(msg)
           break
         case 'reseek': {
           const offset = offsetRef.current
           const localEffectiveAt = msg.effectiveAt - offset
           const fire = () => {
+            reseekTimerRef.current = null
             withRemoteApply(() => {
               const v = videoRef.current
               if (v) v.currentTime = ticksToSeconds(msg.positionTicks)
             })
           }
+          // H6: track and clear so a pending reseek can never fire into a torn-down
+          // or replaced <video>, and so it cannot leak past unmount/reconnect.
+          if (reseekTimerRef.current) clearTimeout(reseekTimerRef.current)
           const delay = localEffectiveAt - Date.now()
-          if (delay <= 0) fire()
-          else setTimeout(fire, delay)
+          if (delay <= 0) {
+            reseekTimerRef.current = null
+            fire()
+          } else {
+            reseekTimerRef.current = setTimeout(fire, delay)
+          }
           break
         }
         case 'waiting':
@@ -269,7 +362,9 @@ export function usePartySync(
           setReactions((prev) => [
             ...prev,
             {
-              id: `${msg.ts}-${Math.random().toString(36).slice(2, 8)}`,
+              // M16: guaranteed-unique id so same-millisecond reactions cannot
+              // collide (which caused stuck/dropped reactions and React key warnings).
+              id: crypto.randomUUID(),
               from: msg.from,
               emoji: msg.emoji,
               ts: msg.ts,
@@ -279,7 +374,21 @@ export function usePartySync(
         case 'pong': {
           const now = Date.now()
           const roundTrip = now - msg.clientTime
+          // L9: discard malformed/implausible samples (a wild echoed clientTime
+          // yields a negative or huge round-trip) before feeding the EMA, so a bad
+          // sample cannot poison the clock-offset estimate.
+          if (
+            !Number.isFinite(roundTrip) ||
+            roundTrip < 0 ||
+            roundTrip > 5000 ||
+            !Number.isFinite(msg.serverTime)
+          ) {
+            break
+          }
           const sample = msg.serverTime - (msg.clientTime + roundTrip / 2)
+          // M5: a successful pong proves the connection is live — confirm stability
+          // so the reconnect counter can reset (see the stability gate in onopen).
+          markConnectionStable()
           offsetRef.current =
             (1 - CLOCK_OFFSET_EMA_ALPHA) * offsetRef.current + CLOCK_OFFSET_EMA_ALPHA * sample
           break
@@ -297,7 +406,7 @@ export function usePartySync(
           break
       }
     },
-    [applyState, withRemoteApply, videoRef],
+    [applyState, withRemoteApply, videoRef, markConnectionStable],
   )
 
   // -------------------------------------------------------------------------
@@ -327,13 +436,22 @@ export function usePartySync(
     if (!video) return
 
     const onCanPlay = () => {
-      // Two-phase late join: on the first canplay after (re)join, re-read the now-
-      // current authoritative position and seek there, then report ready.
+      // H7 — two-phase late join. On the first canplay after (re)join we have an
+      // authoritative snapshot retained from the join state. The first seek (to the
+      // snapshot position) already began buffering; the startup/transcode time that
+      // elapsed since then has left us behind, so re-extrapolate that snapshot to NOW
+      // and seek there BEFORE reporting ready, so the gate releases on the correct
+      // position rather than the stale one. (Spec: "Late-joiner two-phase sync".)
       if (pendingPostJoinReseekRef.current) {
         pendingPostJoinReseekRef.current = false
-        // The next STATE/keepalive will reconcile precisely; here we simply settle
-        // and report ready so the gate can release. (We avoid a second hard seek
-        // with no fresh snapshot to target.)
+        const liveTargetSec = extrapolateLiveTargetSec()
+        if (liveTargetSec !== null) {
+          withRemoteApply(() => {
+            const v = videoRef.current
+            if (v) v.currentTime = liveTargetSec
+          })
+        }
+        // Only now, after the second seek, do we report ready.
         reportReady(true)
       } else {
         reportReady(true)
@@ -353,14 +471,20 @@ export function usePartySync(
       video.removeEventListener('waiting', onWaiting)
       video.removeEventListener('stalled', onStalled)
     }
-  }, [enabled, partyId, videoRef, reportReady])
+  }, [enabled, partyId, videoRef, reportReady, withRemoteApply, extrapolateLiveTargetSec])
 
   // -------------------------------------------------------------------------
   // Socket lifecycle: connect, reconnect with backoff, heartbeat, ping.
   // -------------------------------------------------------------------------
 
   useEffect(() => {
-    if (!enabled || !partyId) return
+    if (!enabled || !partyId) {
+      // L10 — a disabled (non-party) instance has no socket; resolve the state to a
+      // settled value instead of leaving it stuck reporting 'connecting'/'connected'.
+      setConnected(false)
+      setConnectionState('ended')
+      return
+    }
 
     closedByUsRef.current = false
     setEnded(false)
@@ -370,20 +494,48 @@ export function usePartySync(
       if (heartbeatTimerRef.current) clearInterval(heartbeatTimerRef.current)
       if (pingTimerRef.current) clearInterval(pingTimerRef.current)
       if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current)
+      // M5 — a socket that closed before proving stable must not later reset the
+      // reconnect counter, so clear the pending stability timer too.
+      if (stableTimerRef.current) clearTimeout(stableTimerRef.current)
       heartbeatTimerRef.current = null
       pingTimerRef.current = null
       reconnectTimerRef.current = null
+      stableTimerRef.current = null
     }
 
     const startTimers = () => {
       if (heartbeatTimerRef.current) clearInterval(heartbeatTimerRef.current)
       heartbeatTimerRef.current = setInterval(() => {
         const v = videoRef.current
+
+        // M7 — promptly lift a stale rate-nudge. The nudge is applied in applyState
+        // when STATE arrives, but STATE may be up to KEEPALIVE_STATE_BROADCAST_MS
+        // (10s) away; without this the client overshoots and sawtooths. Each tick,
+        // compare our local position against the extrapolated authoritative position
+        // and, if we are back inside the deadband while the rate is still nudged off
+        // the room rate, restore the room (authoritative) rate immediately.
+        if (v) {
+          const liveTargetSec = extrapolateLiveTargetSec()
+          const authRate = authoritativeRateRef.current
+          if (
+            liveTargetSec !== null &&
+            v.playbackRate !== authRate &&
+            Math.abs(v.currentTime - liveTargetSec) < SEEK_DEADBAND_S
+          ) {
+            withRemoteApply(() => {
+              const vv = videoRef.current
+              if (vv) vv.playbackRate = authRate
+            })
+          }
+        }
+
         send({
           type: 'heartbeat',
           partyId,
           positionTicks: Math.round((v?.currentTime ?? 0) * 10_000_000),
-          playbackRate: v?.playbackRate ?? 1,
+          // M6 — report the ROOM's intended rate, not the transiently nudged
+          // video.playbackRate, so the server's drift math is not fed our own nudge.
+          playbackRate: authoritativeRateRef.current,
           clientTime: Date.now(),
         })
       }, HEARTBEAT_INTERVAL_MS)
@@ -411,7 +563,15 @@ export function usePartySync(
 
       ws.onopen = () => {
         if (disposed) return
-        reconnectAttemptRef.current = 0
+        // M5 — do NOT reset reconnectAttemptRef here. A socket that opens then
+        // immediately closes would otherwise reconnect on a tight 0ms loop. Reset
+        // only after the connection proves stable: the first state/pong (via
+        // markConnectionStable) OR after staying open for a few seconds (this timer).
+        if (stableTimerRef.current) clearTimeout(stableTimerRef.current)
+        stableTimerRef.current = setTimeout(() => {
+          stableTimerRef.current = null
+          reconnectAttemptRef.current = 0
+        }, 3000)
         lastJoinAtRef.current = Date.now()
         lastReadyReportedRef.current = null
         pendingPostJoinReseekRef.current = true
@@ -461,6 +621,12 @@ export function usePartySync(
       closedByUsRef.current = true
       clearTimers()
       if (transitionTimerRef.current) clearTimeout(transitionTimerRef.current)
+      // H6 — clear the tracked reseek timer alongside the transition timer so a
+      // pending reseek cannot fire into a torn-down or replaced <video>, and cannot leak.
+      if (reseekTimerRef.current) {
+        clearTimeout(reseekTimerRef.current)
+        reseekTimerRef.current = null
+      }
       if (readyDebounceRef.current) clearTimeout(readyDebounceRef.current)
       const ws = wsRef.current
       if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {

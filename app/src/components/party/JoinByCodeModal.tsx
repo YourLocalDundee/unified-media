@@ -5,7 +5,7 @@
  * resolved party back to the caller (which activates the sync hook).
  */
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { X, Loader2 } from 'lucide-react'
 import { joinParty } from '@/lib/party/client'
 
@@ -19,7 +19,17 @@ export function JoinByCodeModal({ onJoined, onClose }: Props) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  // Close on Escape regardless of focus.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
+
   const submit = async () => {
+    if (loading) return
     const trimmed = code.trim()
     if (!trimmed) return
     setLoading(true)
@@ -35,8 +45,16 @@ export function JoinByCodeModal({ onJoined, onClose }: Props) {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
-      <div className="w-full max-w-sm rounded-xl border border-zinc-700 bg-zinc-900 p-5">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+      onClick={onClose}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        onClick={(e) => e.stopPropagation()}
+        className="w-full max-w-sm rounded-xl border border-zinc-700 bg-zinc-900 p-5"
+      >
         <div className="mb-4 flex items-center justify-between">
           <h3 className="text-base font-semibold text-white">Join a watch party</h3>
           <button
@@ -52,7 +70,7 @@ export function JoinByCodeModal({ onJoined, onClose }: Props) {
           value={code}
           onChange={(e) => setCode(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === 'Enter') submit()
+            if (e.key === 'Enter' && !loading) submit()
           }}
           placeholder="Enter join code"
           autoFocus

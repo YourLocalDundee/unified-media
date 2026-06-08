@@ -20,7 +20,12 @@ export function parseSessionCookie(cookieHeader: string | undefined): string | n
     if (eq === -1) continue
     const name = part.slice(0, eq).trim()
     if (name === SESSION_COOKIE) {
-      const value = part.slice(eq + 1).trim()
+      let value = part.slice(eq + 1).trim()
+      // Some proxies wrap cookie values in double quotes (RFC 6265 quoted-string).
+      // Strip a single matched surrounding pair so the raw session ID is recovered.
+      if (value.length >= 2 && value.startsWith('"') && value.endsWith('"')) {
+        value = value.slice(1, -1)
+      }
       return value.length > 0 ? value : null
     }
   }
@@ -47,7 +52,8 @@ export function lookupPartySession(sessionId: string): PartySessionIdentity | nu
       `SELECT s.id, s.user_id, s.created_at, s.expires_at, u.username, u.role, u.display_name
        FROM sessions s
        JOIN users u ON s.user_id = u.id
-       WHERE s.id = ? AND s.expires_at > ? AND u.is_active = 1`
+       WHERE s.id = ? AND s.expires_at > ? AND u.is_active = 1
+         AND (u.force_pw_change IS NULL OR u.force_pw_change = 0)`
     )
     .get(sessionId, Date.now()) as SessionLookupRow | undefined
 

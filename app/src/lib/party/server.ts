@@ -41,6 +41,20 @@ import {
   SEEK_DEADBAND_S,
   POST_JOIN_SETTLE_MS,
   isAllowedReaction,
+  MAX_POSITION_TICKS,
+  MAX_CHAT_LENGTH,
+  WS_RATE_WINDOW_MS,
+  WS_CHAT_MAX_PER_WINDOW,
+  WS_REACTION_MAX_PER_WINDOW,
+  WS_CONTROL_MAX_PER_WINDOW,
+  WS_MSG_MAX_PER_WINDOW,
+  WS_MAX_MESSAGE_BYTES,
+  MAX_SOCKETS_PER_USER,
+  MAX_MEMBERS_PER_PARTY,
+  MAX_TOTAL_PARTIES,
+  SESSION_RECHECK_INTERVAL_MS,
+  TICKS_PER_MS,
+  allowedWsOrigins,
 } from './constants'
 import {
   extrapolatePosition,
@@ -65,16 +79,31 @@ import type {
   ChatMessage,
 } from './types'
 
-const CHAT_TEXT_MAX = 2000
 const PERIODIC_TICK_MS = 2500
+
+/** Per-socket rolling-window rate counters (reset every WS_RATE_WINDOW_MS). */
+interface RateWindow {
+  windowStart: number
+  total: number
+  chat: number
+  reaction: number
+  control: number
+  /** Throttle the error reply itself so a flooder isn't answered per-message. */
+  lastThrottleErrorAt: number
+}
 
 interface SocketEntry {
   id: string
   ws: WebSocket
   identity: PartySessionIdentity
+  /** The unified-session id captured at upgrade, for periodic re-validation (H2). */
+  sessionId: string
   partyId: string | null
   isAlive: boolean
   missedPongs: number
+  rate: RateWindow
+  /** Server wall clock of the last successful session re-validation. */
+  lastSessionCheck: number
 }
 
 interface ServerRuntime {
@@ -248,32 +277,52 @@ async function handleControl(rt: ServerRuntime, identity: PartySessionIdentity, 
   const partyId = msg.partyId
   const now = Date.now()
 
-  // DEBOUNCE: drop a competing same-action that would not meaningfully change state.
-  const prev = rt.lastCommand.get(partyId)
-  if (prev && prev.action === msg.action && now - prev.at < COMMAND_DEBOUNCE_MS) {
-    const deadbandTicks = secondsToTicks(SEEK_DEADBAND_S)
-    const samePos = Math.abs(prev.positionTicks - msg.positionTicks) <= deadbandTicks
-    if (msg.action === 'pause' && prev.paused && samePos) return
-    if (msg.action === 'seek' && samePos) return
-    if (msg.action === 'play' && !prev.paused && samePos) return
-  }
-
   let effectiveAt = now
   let waitingFor: { userId: string; displayName: string }[] | null = null
   let broadcast = false
+  // M2: a same-action command collapsed by the debounce inside the critical section.
+  let debounced = false
 
   const state = await store.updateParty(partyId, (s) => {
+    // M2: DEBOUNCE inside the serialized per-party critical section so two truly
+    // simultaneous same-action commands are actually collapsed (not both applied).
+    // The lastCommand record is also read AND written here, never outside the lock.
+    const prev = rt.lastCommand.get(partyId)
+    if (prev && prev.action === msg.action && now - prev.at < COMMAND_DEBOUNCE_MS) {
+      const deadbandTicks = secondsToTicks(SEEK_DEADBAND_S)
+      const samePos = Math.abs(prev.positionTicks - msg.positionTicks) <= deadbandTicks
+      if (
+        (msg.action === 'pause' && prev.paused && samePos) ||
+        (msg.action === 'seek' && samePos) ||
+        (msg.action === 'play' && !prev.paused && samePos)
+      ) {
+        debounced = true
+        return
+      }
+    }
+
     if (msg.action === 'play') {
       const notReady = notReadyConnected(s)
       if (notReady.length > 0) {
         // Hold the play at the readiness gate. Do NOT advance commandSeq.
-        s.pendingPlay = {
-          positionTicks: msg.positionTicks,
-          requestedByUserId: identity.userId,
-          requestedByDisplayName: identity.displayName,
-          requestedAt: now,
+        // M1: if a pendingPlay already exists, preserve the original requestedAt
+        // (the gate deadline) — only update the held position. Repeated play
+        // presses must not push the READINESS_GATE_MAX_WAIT_MS timeout forward.
+        if (s.pendingPlay) {
+          s.pendingPlay.positionTicks = msg.positionTicks
+          s.pendingPlay.requestedByUserId = identity.userId
+          s.pendingPlay.requestedByDisplayName = identity.displayName
+        } else {
+          s.pendingPlay = {
+            positionTicks: msg.positionTicks,
+            requestedByUserId: identity.userId,
+            requestedByDisplayName: identity.displayName,
+            requestedAt: now,
+          }
         }
         waitingFor = notReady.map((m) => ({ userId: m.userId, displayName: m.displayName }))
+        // M1: record the held play so repeats are debounced.
+        rt.lastCommand.set(partyId, { action: 'play', at: now, positionTicks: msg.positionTicks, paused: s.paused })
         return
       }
       effectiveAt = applyPlay(s, msg.positionTicks, identity, now)
@@ -287,7 +336,7 @@ async function handleControl(rt: ServerRuntime, identity: PartySessionIdentity, 
       s.pendingPlay = null
       effectiveAt = now + CONTROL_LEAD_MS
       broadcast = true
-    } else {
+    } else if (msg.action === 'seek') {
       // seek: keep paused as-is
       s.positionTicks = msg.positionTicks
       s.lastTickWallClock = now
@@ -296,19 +345,19 @@ async function handleControl(rt: ServerRuntime, identity: PartySessionIdentity, 
       effectiveAt = now + CONTROL_LEAD_MS
       broadcast = true
     }
+
+    // Record the applied command for the next debounce, inside the same lock.
+    if (broadcast) {
+      rt.lastCommand.set(partyId, { action: msg.action, at: now, positionTicks: msg.positionTicks, paused: s.paused })
+    }
   })
+
+  if (debounced) return
 
   if (waitingFor) {
     broadcastToParty(rt, partyId, { type: 'waiting', partyId, waitingFor })
     return
   }
-
-  rt.lastCommand.set(partyId, {
-    action: msg.action,
-    at: now,
-    positionTicks: msg.positionTicks,
-    paused: state.paused,
-  })
 
   if (broadcast) {
     broadcastState(rt, state, effectiveAt)
@@ -334,19 +383,34 @@ async function reconcileDrift(rt: ServerRuntime, partyId: string): Promise<void>
   }
   if (connected.length === 0) return
 
+  // Extrapolate each member's last reported position forward to `now` so we
+  // compare like-with-like against the `now`-extrapolated reference. A member's
+  // report is up to HEARTBEAT_INTERVAL_MS stale; treat them as advancing at the
+  // room rate since their last heartbeat (M3 — eliminates phantom ~5s drift).
+  const projectReport = (m: PartyMemberLive): number => {
+    const deltaMs = Math.max(0, now - m.lastHeartbeat)
+    return m.reportedPositionTicks + deltaMs * TICKS_PER_MS * state.playbackRate
+  }
+
   let reference = extrapolatePosition(state, now)
 
   // With more than two connected members, reconcile the authoritative timeline
   // toward the median of reported positions so the room center sets the clock.
   if (connected.length > 2) {
-    const median = medianReportedPositionTicks(connected.map((m) => m.reportedPositionTicks))
+    const median = medianReportedPositionTicks(connected.map(projectReport))
     const gapTicks = Math.abs(reference - median)
     // Reconcile conservatively: only when the gap is meaningful (>= deadband).
     if (gapTicks >= secondsToTicks(SEEK_DEADBAND_S)) {
+      // Forward-only high-water clamp (C2): never move the authoritative
+      // position backward via reconciliation. The median can pull the room
+      // toward consensus, but only forward.
+      const target = Math.max(median, reference)
       const updated = await store.updateParty(partyId, (s) => {
         if (s.paused) return
-        s.positionTicks = median
-        s.lastTickWallClock = now
+        if (target > s.positionTicks) {
+          s.positionTicks = target
+          s.lastTickWallClock = now
+        }
       })
       reference = extrapolatePosition(updated, now)
     } else {
@@ -358,7 +422,7 @@ async function reconcileDrift(rt: ServerRuntime, partyId: string): Promise<void>
   // hard reseeks during POST_JOIN_SETTLE_MS after that member joined/reconnected.
   for (const m of connected) {
     if (now - m.joinedAt < POST_JOIN_SETTLE_MS) continue
-    const driftS = Math.abs(ticksToSeconds(reference - m.reportedPositionTicks))
+    const driftS = Math.abs(ticksToSeconds(reference - projectReport(m)))
     if (driftS >= DRIFT_HARD_RESEEK_S || driftS >= MEDIAN_OUTLIER_RESEEK_S) {
       sendToMember(rt, state, m.userId, {
         type: 'reseek',
@@ -371,20 +435,194 @@ async function reconcileDrift(rt: ServerRuntime, partyId: string): Promise<void>
 }
 
 // ---------------------------------------------------------------------------
+// Inbound validation (C1) + rate limiting (H3)
+// ---------------------------------------------------------------------------
+
+/** A finite position in [0, MAX_POSITION_TICKS]. */
+function isValidPosition(v: unknown): v is number {
+  return typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= MAX_POSITION_TICKS
+}
+
+/** Clamp a playback rate to a sane range; reject non-finite. */
+function sanePlaybackRate(v: unknown): number | null {
+  if (typeof v !== 'number' || !Number.isFinite(v)) return null
+  return Math.min(4, Math.max(0.25, v))
+}
+
+/**
+ * Validate every inbound message field before any handler uses it. Returns true
+ * when the message is structurally sound for its type; on rejection it sends a
+ * clean `error` and the caller ignores the message. `partyId` is required to be
+ * a non-empty string on every non-join message (join validates separately).
+ */
+function validateMessage(entry: SocketEntry, msg: ClientMessage): boolean {
+  switch (msg.type) {
+    case 'join':
+      if (typeof msg.partyId !== 'string' || msg.partyId.length === 0) {
+        sendError(entry.ws, 'bad_field', 'Invalid partyId')
+        return false
+      }
+      return true
+
+    case 'control': {
+      const m = msg as { partyId?: unknown; action?: unknown; positionTicks?: unknown; clientTime?: unknown }
+      if (typeof m.partyId !== 'string' || m.partyId.length === 0) {
+        sendError(entry.ws, 'bad_field', 'Invalid partyId')
+        return false
+      }
+      if (m.action !== 'play' && m.action !== 'pause' && m.action !== 'seek') {
+        sendError(entry.ws, 'bad_field', 'Invalid control action')
+        return false
+      }
+      if (!isValidPosition(m.positionTicks)) {
+        sendError(entry.ws, 'bad_field', 'Invalid positionTicks')
+        return false
+      }
+      if (m.clientTime !== undefined && (typeof m.clientTime !== 'number' || !Number.isFinite(m.clientTime))) {
+        sendError(entry.ws, 'bad_field', 'Invalid clientTime')
+        return false
+      }
+      return true
+    }
+
+    case 'heartbeat': {
+      const m = msg as { partyId?: unknown; positionTicks?: unknown; playbackRate?: unknown; clientTime?: unknown }
+      if (typeof m.partyId !== 'string' || m.partyId.length === 0) {
+        sendError(entry.ws, 'bad_field', 'Invalid partyId')
+        return false
+      }
+      if (!isValidPosition(m.positionTicks)) {
+        sendError(entry.ws, 'bad_field', 'Invalid positionTicks')
+        return false
+      }
+      if (sanePlaybackRate(m.playbackRate) === null) {
+        sendError(entry.ws, 'bad_field', 'Invalid playbackRate')
+        return false
+      }
+      if (m.clientTime !== undefined && (typeof m.clientTime !== 'number' || !Number.isFinite(m.clientTime))) {
+        sendError(entry.ws, 'bad_field', 'Invalid clientTime')
+        return false
+      }
+      return true
+    }
+
+    case 'ready': {
+      const m = msg as { partyId?: unknown; ready?: unknown }
+      if (typeof m.partyId !== 'string' || m.partyId.length === 0) {
+        sendError(entry.ws, 'bad_field', 'Invalid partyId')
+        return false
+      }
+      if (typeof m.ready !== 'boolean') {
+        sendError(entry.ws, 'bad_field', 'Invalid ready')
+        return false
+      }
+      return true
+    }
+
+    case 'ping': {
+      const m = msg as { partyId?: unknown; clientTime?: unknown }
+      if (typeof m.partyId !== 'string' || m.partyId.length === 0) {
+        sendError(entry.ws, 'bad_field', 'Invalid partyId')
+        return false
+      }
+      if (typeof m.clientTime !== 'number' || !Number.isFinite(m.clientTime)) {
+        sendError(entry.ws, 'bad_field', 'Invalid clientTime')
+        return false
+      }
+      return true
+    }
+
+    case 'chat': {
+      const m = msg as { partyId?: unknown; text?: unknown }
+      if (typeof m.partyId !== 'string' || m.partyId.length === 0) {
+        sendError(entry.ws, 'bad_field', 'Invalid partyId')
+        return false
+      }
+      if (typeof m.text !== 'string') {
+        sendError(entry.ws, 'bad_field', 'Invalid chat text')
+        return false
+      }
+      return true
+    }
+
+    case 'reaction': {
+      const m = msg as { partyId?: unknown; emoji?: unknown }
+      if (typeof m.partyId !== 'string' || m.partyId.length === 0) {
+        sendError(entry.ws, 'bad_field', 'Invalid partyId')
+        return false
+      }
+      if (typeof m.emoji !== 'string') {
+        sendError(entry.ws, 'bad_field', 'Invalid emoji')
+        return false
+      }
+      return true
+    }
+
+    case 'leave': {
+      const m = msg as { partyId?: unknown }
+      if (typeof m.partyId !== 'string' || m.partyId.length === 0) {
+        sendError(entry.ws, 'bad_field', 'Invalid partyId')
+        return false
+      }
+      return true
+    }
+
+    default:
+      return true
+  }
+}
+
+/**
+ * Per-socket rolling-window rate limiter (H3). Returns true when the message of
+ * the given type is allowed; on exceed it drops the message and (throttled)
+ * sends a `rate_limited` error. Resets the window every WS_RATE_WINDOW_MS.
+ */
+function allowRate(entry: SocketEntry, type: ClientMessage['type'], now: number): boolean {
+  const r = entry.rate
+  if (now - r.windowStart >= WS_RATE_WINDOW_MS) {
+    r.windowStart = now
+    r.total = 0
+    r.chat = 0
+    r.reaction = 0
+    r.control = 0
+  }
+
+  const deny = (): boolean => {
+    if (now - r.lastThrottleErrorAt >= 1000) {
+      r.lastThrottleErrorAt = now
+      sendError(entry.ws, 'rate_limited', 'Too many messages')
+    }
+    return false
+  }
+
+  if (r.total >= WS_MSG_MAX_PER_WINDOW) return deny()
+  if (type === 'chat' && r.chat >= WS_CHAT_MAX_PER_WINDOW) return deny()
+  if (type === 'reaction' && r.reaction >= WS_REACTION_MAX_PER_WINDOW) return deny()
+  if (type === 'control' && r.control >= WS_CONTROL_MAX_PER_WINDOW) return deny()
+
+  r.total += 1
+  if (type === 'chat') r.chat += 1
+  else if (type === 'reaction') r.reaction += 1
+  else if (type === 'control') r.control += 1
+  return true
+}
+
+// ---------------------------------------------------------------------------
 // Per-message dispatch
 // ---------------------------------------------------------------------------
 
-/** Confirm the sender is a current member of the party named on the message. */
-async function isMember(partyId: string, userId: string): Promise<boolean> {
+/**
+ * Confirm the sender holds LIVE membership for the party on THIS socket (H5).
+ * Established sockets (control/heartbeat/ready/chat/reaction/leave) must appear
+ * in the live members map with their current socketId equal to this entry's id.
+ * The durable `isActiveMember` fallback is used ONLY for the `join` claim step.
+ */
+async function isLiveMemberOnSocket(partyId: string, userId: string, socketId: string): Promise<boolean> {
   const store = getPartyStore()
   const state = await store.getParty(partyId)
-  if (state && state.members.has(userId)) return true
-  // Fall back to durable membership (covers a just-rehydrated party with no live members yet).
-  try {
-    return isActiveMember(partyId, userId)
-  } catch {
-    return false
-  }
+  if (!state) return false
+  const member = state.members.get(userId)
+  return !!member && member.socketId === socketId
 }
 
 async function handleMessage(rt: ServerRuntime, entry: SocketEntry, raw: string): Promise<void> {
@@ -400,6 +638,12 @@ async function handleMessage(rt: ServerRuntime, entry: SocketEntry, raw: string)
     return
   }
 
+  // C1: validate every inbound field before any handler uses it.
+  if (!validateMessage(entry, msg)) return
+
+  // H3: per-socket rolling-window rate limiting (drops on exceed).
+  if (!allowRate(entry, msg.type, Date.now())) return
+
   const identity = entry.identity
   const store = getPartyStore()
 
@@ -409,9 +653,11 @@ async function handleMessage(rt: ServerRuntime, entry: SocketEntry, raw: string)
     return
   }
 
-  // PER-MESSAGE AUTH: every other message must be from a current member.
+  // PER-MESSAGE AUTH (H5): every other (established) message must come from a
+  // socket that holds LIVE membership for this party on THIS socket. The durable
+  // DB fallback applies only at the `join` claim step above.
   const partyId = (msg as { partyId: string }).partyId
-  if (!partyId || !(await isMember(partyId, identity.userId))) {
+  if (!partyId || !(await isLiveMemberOnSocket(partyId, identity.userId, entry.id))) {
     sendError(entry.ws, 'not_member', 'Not a member of this party')
     return
   }
@@ -438,7 +684,7 @@ async function handleMessage(rt: ServerRuntime, entry: SocketEntry, raw: string)
       break
 
     case 'chat': {
-      const text = (msg.text ?? '').trim().slice(0, CHAT_TEXT_MAX)
+      const text = msg.text.trim().slice(0, MAX_CHAT_LENGTH)
       if (text.length === 0) return
       const now = Date.now()
       const chat: ChatMessage = {
@@ -507,6 +753,16 @@ async function handleJoin(rt: ServerRuntime, entry: SocketEntry, partyId: string
   // Ensure the live party exists; if not, load from the db checkpoint row.
   let state = await store.getParty(partyId)
   if (!state) {
+    // H4: cap total live parties before loading a new one into memory.
+    try {
+      const liveCount = (await store.listParties()).length
+      if (liveCount >= MAX_TOTAL_PARTIES) {
+        sendError(entry.ws, 'capacity', 'Server party capacity reached')
+        return
+      }
+    } catch {
+      /* listing failed — fall through; createParty below may still fail safely */
+    }
     const { getActivePartyById } = await import('./db')
     const row = getActivePartyById(partyId)
     if (!row) {
@@ -546,6 +802,11 @@ async function handleJoin(rt: ServerRuntime, entry: SocketEntry, partyId: string
       }
     })
   } else {
+    // H4: cap members per party before admitting a brand-new member.
+    if (state.members.size >= MAX_MEMBERS_PER_PARTY) {
+      sendError(entry.ws, 'party_full', 'Party is full')
+      return
+    }
     const reportedPositionTicks = extrapolatePosition(state, now)
     const newMember: PartyMemberLive = {
       userId: identity.userId,
@@ -750,7 +1011,11 @@ async function periodicTick(rt: ServerRuntime): Promise<void> {
 // ---------------------------------------------------------------------------
 
 function pingSweep(rt: ServerRuntime): void {
+  const now = Date.now()
   for (const entry of rt.sockets.values()) {
+    // H8: account the miss in the SAME sweep that detects a non-pong. A pong since
+    // the last sweep clears isAlive→true (and resets the counter in the pong
+    // handler); if it is still false here, this socket missed a pong this round.
     if (!entry.isAlive) {
       entry.missedPongs += 1
       if (entry.missedPongs >= WS_PONG_MISS_LIMIT) {
@@ -764,11 +1029,40 @@ function pingSweep(rt: ServerRuntime): void {
     } else {
       entry.missedPongs = 0
     }
+
+    // H2: fold periodic session re-validation into the ping sweep. Close any
+    // socket whose unified-session no longer resolves (expired/suspended/revoked).
+    if (now - entry.lastSessionCheck >= SESSION_RECHECK_INTERVAL_MS) {
+      entry.lastSessionCheck = now
+      let stillValid: boolean
+      try {
+        stillValid = lookupPartySession(entry.sessionId) !== null
+      } catch {
+        stillValid = false
+      }
+      if (!stillValid) {
+        try {
+          entry.ws.close(1008, 'session_expired')
+        } catch {
+          /* ignore */
+        }
+        try {
+          entry.ws.terminate()
+        } catch {
+          /* ignore */
+        }
+        continue
+      }
+    }
+
+    // Arm the next round: mark not-alive and ping only OPEN sockets.
     entry.isAlive = false
-    try {
-      entry.ws.ping()
-    } catch {
-      /* ignore */
+    if (entry.ws.readyState === WebSocket.OPEN) {
+      try {
+        entry.ws.ping()
+      } catch {
+        /* ignore */
+      }
     }
   }
 }
@@ -843,7 +1137,8 @@ export function initPartyServer(): void {
     res.end('Upgrade Required')
   })
 
-  const wss = new WebSocketServer({ noServer: true })
+  // C1: cap inbound frame size so oversized payloads are rejected at the protocol layer.
+  const wss = new WebSocketServer({ noServer: true, maxPayload: WS_MAX_MESSAGE_BYTES })
 
   const rt: ServerRuntime = {
     http: httpServer,
@@ -873,6 +1168,14 @@ export function initPartyServer(): void {
       return
     }
 
+    // H1: reject cross-site WebSocket hijacking. A present Origin must match the
+    // app origin allowlist; a MISSING Origin (non-browser client) is allowed.
+    const origin = req.headers.origin
+    if (origin && !allowedWsOrigins().includes(origin)) {
+      socket.destroy()
+      return
+    }
+
     const sessionId = parseSessionCookie(req.headers.cookie)
     if (!sessionId) {
       socket.destroy()
@@ -889,20 +1192,42 @@ export function initPartyServer(): void {
       return
     }
 
+    // H4: cap concurrent sockets per user. Reject past the cap before upgrading.
+    let liveForUser = 0
+    for (const e of rt.sockets.values()) {
+      if (e.identity.userId === identity.userId) liveForUser += 1
+    }
+    if (liveForUser >= MAX_SOCKETS_PER_USER) {
+      socket.destroy()
+      return
+    }
+
+    const sid = sessionId
     wss.handleUpgrade(req, socket, head, (ws) => {
-      wss.emit('connection', ws, req, identity)
+      wss.emit('connection', ws, req, identity, sid)
     })
   })
 
   // ----- connection: register the socket, wire message/pong/close handlers.
-  wss.on('connection', (ws: WebSocket, _req: http.IncomingMessage, identity: PartySessionIdentity) => {
+  wss.on('connection', (ws: WebSocket, _req: http.IncomingMessage, identity: PartySessionIdentity, sessionId: string) => {
+    const nowConn = Date.now()
     const entry: SocketEntry = {
       id: randomUUID(),
       ws,
       identity,
+      sessionId,
       partyId: null,
       isAlive: true,
       missedPongs: 0,
+      rate: {
+        windowStart: nowConn,
+        total: 0,
+        chat: 0,
+        reaction: 0,
+        control: 0,
+        lastThrottleErrorAt: 0,
+      },
+      lastSessionCheck: nowConn,
     }
     rt.sockets.set(entry.id, entry)
 
@@ -930,8 +1255,13 @@ export function initPartyServer(): void {
   })
 
   // ----- party_ended bridge: fan party_ended to sockets and clean the registry.
+  // M4: register exactly one 'ended' listener even if this module is re-evaluated
+  // (HMR / double import). removeAllListeners first, and read the runtime via the
+  // accessor inside the handler rather than closing over a possibly-stale `rt`.
+  partyEvents.removeAllListeners('ended')
   partyEvents.on('ended', (partyId: string) => {
-    onPartyEnded(rt, partyId)
+    const current = getRuntime()
+    if (current) onPartyEnded(current, partyId)
   })
 
   httpServer.on('error', (err) => {

@@ -66,10 +66,12 @@ export function getActivePartyByCode(joinCode: string): WatchPartyRow | undefine
 export function generateUniqueJoinCode(): string {
   const db = getDb()
   const exists = db.prepare('SELECT 1 FROM watch_parties WHERE join_code = ?')
-  for (;;) {
+  const MAX_ATTEMPTS = 20
+  for (let i = 0; i < MAX_ATTEMPTS; i++) {
     const code = makeJoinCode()
     if (!exists.get(code)) return code
   }
+  throw new Error(`Failed to generate a unique join code after ${MAX_ATTEMPTS} attempts`)
 }
 
 /**
@@ -133,6 +135,33 @@ export function endPartyRow(partyId: string): void {
   getDb()
     .prepare(`UPDATE watch_parties SET status = 'ended', ended_at = ?, updated_at = ? WHERE id = ? AND status = 'active'`)
     .run(now, now, partyId)
+}
+
+/**
+ * Mark a member left and, if no active members remain, end the party — atomically.
+ * The leave + remaining-count read + conditional end all run on the same connection
+ * inside one transaction, so the last-member-out decision can't race a concurrent join.
+ * Returns whether the party was ended as a result.
+ */
+export function leaveAndMaybeEnd(partyId: string, userId: string): { ended: boolean } {
+  const db = getDb()
+  const tx = db.transaction(() => {
+    const now = Date.now()
+    db.prepare(
+      'UPDATE watch_party_members SET left_at = ? WHERE party_id = ? AND user_id = ? AND left_at IS NULL'
+    ).run(now, partyId, userId)
+    const { n } = db
+      .prepare('SELECT COUNT(*) AS n FROM watch_party_members WHERE party_id = ? AND left_at IS NULL')
+      .get(partyId) as { n: number }
+    if (n === 0) {
+      db.prepare(
+        `UPDATE watch_parties SET status = 'ended', ended_at = ?, updated_at = ? WHERE id = ? AND status = 'active'`
+      ).run(now, now, partyId)
+      return { ended: true }
+    }
+    return { ended: false }
+  })
+  return tx()
 }
 
 /**

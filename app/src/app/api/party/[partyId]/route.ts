@@ -3,6 +3,7 @@
 
 import { NextResponse } from 'next/server'
 import { requireAuth } from '@/lib/dal'
+import { verifyOrigin } from '@/lib/csrf'
 import { getPartyStore } from '@/lib/party/state-store'
 import { getActivePartyById, getMembers, isActiveMember, endPartyRow } from '@/lib/party/db'
 import { getDb } from '@/lib/db/index'
@@ -18,8 +19,10 @@ export async function GET(_req: Request, { params }: { params: Promise<{ partyId
     return NextResponse.json({ error: 'Party not found or already ended' }, { status: 404 })
   }
   // Never act on membership inferred elsewhere — check it against the DB here.
+  // Return 404 (not 403) so a non-member cannot distinguish "exists but you're
+  // not in it" from "does not exist" — party existence stays opaque to outsiders.
   if (!isActiveMember(partyId, session.userId)) {
-    return NextResponse.json({ error: 'Not a member of this party' }, { status: 403 })
+    return NextResponse.json({ error: 'Party not found or already ended' }, { status: 404 })
   }
 
   return NextResponse.json({
@@ -32,7 +35,8 @@ export async function GET(_req: Request, { params }: { params: Promise<{ partyId
   })
 }
 
-export async function DELETE(_req: Request, { params }: { params: Promise<{ partyId: string }> }) {
+export async function DELETE(req: Request, { params }: { params: Promise<{ partyId: string }> }) {
+  if (!verifyOrigin(req)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   const session = await requireAuth()
   const { partyId } = await params
 

@@ -1453,21 +1453,33 @@ BunkerWeb still reaps it**, add a WebSocket-aware per-domain exception for `/api
 overrides (raise the reverse-proxy read timeout for that path or exempt it from idle close); confirm the
 exact BunkerWeb variable against the running config first. Tailnet clients do not hit this.
 
-### Known issues (audit v0.9.5)
+### Audit and remediation (v0.9.5)
 
-A full 10-domain code audit of this feature is recorded in `PARTY_PLAY_AUDIT.md` at the repo root. The
-build is clean, all constants match the spec, and every v1 non-goal is respected, but the audit found
-open items that should be fixed before the feature is relied on — the endpoint is deployed and public,
-and BunkerWeb's WAF is partly disabled for this domain, so the app is the primary defense. Highlights:
+A full 10-domain code audit of this feature is recorded in `PARTY_PLAY_AUDIT.md` at the repo root, and
+**all of its Critical/High/Medium/Low findings have since been fixed** (one round, 10 agents, one file
+group each). What was hardened:
 
-- **Critical.** Inbound WS message fields (`positionTicks`, `action`, `text`, …) are not validated, so
-  one member can corrupt every player and poison the SQLite checkpoint. The median drift reconciliation
-  in `reconcileDrift` can drag the authoritative timeline backward (violates the high-water-mark guard).
-- **High.** No `Origin` check on the WS upgrade (cross-site WebSocket hijacking); sockets are never
-  re-authorized after upgrade (expired/suspended sessions keep control); no per-message rate limiting or
-  per-user resource caps; the membership check falls back to the durable DB row so a never-joined/left
-  socket can still drive state; the client `reseek` timer is uncleared; the two-phase late-join second
-  seek is unimplemented; the ws pong-miss counter is off by one.
+- **Input validation.** Every inbound WS field (`positionTicks`, `action`, `text`, `playbackRate`,
+  `clientTime`, `partyId`) is validated; positions are clamped to `[0, MAX_POSITION_TICKS]`, `action` is
+  allowlisted, oversized frames are rejected (`maxPayload`).
+- **Sync correctness.** `reconcileDrift` is now forward-only (the high-water-mark guard holds), drift is
+  measured against forward-projected member reports (no phantom drift), the readiness-gate deadline is
+  preserved across repeated play presses, and the debounce runs inside the per-party lock.
+- **Edge security.** WS upgrade checks `Origin` (`allowedWsOrigins()`), live sockets are re-authorized
+  every `SESSION_RECHECK_INTERVAL_MS` (rejecting expired/suspended/`force_pw_change` sessions),
+  per-socket per-type rate limiting and per-user/per-party/global resource caps are enforced, and an
+  established socket must be a live member on that exact socket (durable fallback only at the `join`
+  claim step). REST routes call `verifyOrigin`; join failures are rate-limited; GET returns 404 (not
+  403) to non-members.
+- **Client robustness.** The `reseek` timer is tracked/cleared, the two-phase late-join second seek is
+  implemented, the reconnect counter only resets once a connection proves stable, the heartbeat reports
+  the room rate (not the transient nudge), the rate-nudge restores promptly, reaction ids use
+  `crypto.randomUUID()`, and the pong RTT is sanity-clamped.
+- **Durable + UI.** Atomic last-member-out leave (`leaveAndMaybeEnd`), real FK constraints on fresh DBs,
+  copy-link fallback with visible error, chat auto-scroll only when near the bottom, and reaction-timer
+  reconciliation.
 
-See `PARTY_PLAY_AUDIT.md` for the full severity table, file:line locations, fixes, and a remediation
-roadmap.
+The new tuning constants (caps, rate-limit windows, `MAX_POSITION_TICKS`, origin allowlist) live in
+`src/lib/party/constants.ts`. One item is intentionally deferred: an explicit Caddy idle timeout for
+`/api/party/ws` (audit L5) — the heartbeat/ping is the primary keepalive, and the BunkerWeb idle-reap
+exception is added only if the mandated off-tailnet cellular idle test shows reaping.

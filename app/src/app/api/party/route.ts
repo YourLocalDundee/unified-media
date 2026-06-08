@@ -4,6 +4,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth, makeId, logEvent } from '@/lib/dal'
 import { checkRateLimit } from '@/lib/rate-limit'
+import { verifyOrigin } from '@/lib/csrf'
 import { getDb } from '@/lib/db/index'
 import { getPartyStore } from '@/lib/party/state-store'
 import { CREATE_RATE_LIMIT, RATE_LIMIT_WINDOW_MS } from '@/lib/party/constants'
@@ -12,6 +13,7 @@ import { createPartyRow, generateUniqueJoinCode } from '@/lib/party/db'
 export const dynamic = 'force-dynamic'
 
 export async function POST(req: NextRequest) {
+  if (!verifyOrigin(req)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   const session = await requireAuth()
 
   const rl = checkRateLimit(`party-create:${session.userId}`, CREATE_RATE_LIMIT, RATE_LIMIT_WINDOW_MS)
@@ -19,8 +21,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Too many parties created. Try again later.' }, { status: 429 })
   }
 
-  const body = await req.json() as { mediaId?: string }
-  const mediaId = body.mediaId
+  const body = await req.json().catch(() => null) as { mediaId?: string } | null
+  const mediaId = body?.mediaId
   if (!mediaId) {
     return NextResponse.json({ error: 'mediaId is required' }, { status: 400 })
   }
@@ -45,6 +47,7 @@ export async function POST(req: NextRequest) {
 
   await logEvent('party_created', { partyId, mediaId, joinCode }, { userId: session.userId, username: session.username })
 
-  const joinUrl = `${process.env.NEXT_PUBLIC_APP_URL}/play/${mediaId}?party=${joinCode}`
+  const base = process.env.NEXT_PUBLIC_APP_URL || new URL(req.url).origin
+  const joinUrl = `${base}/play/${mediaId}?party=${joinCode}`
   return NextResponse.json({ partyId, joinCode, joinUrl }, { status: 201 })
 }

@@ -158,7 +158,7 @@ export class InMemoryPartyStateStore implements PartyStateStore {
   async getChatBacklog(partyId: string): Promise<ChatMessage[]> {
     const state = this.parties.get(partyId)
     if (!state) return []
-    return state.chatBacklog.slice(-CHAT_RING_BUFFER_SIZE)
+    return state.chatBacklog.slice(-CHAT_RING_BUFFER_SIZE).map((m) => ({ ...m }))
   }
 
   async listParties(): Promise<string[]> {
@@ -174,8 +174,11 @@ export class InMemoryPartyStateStore implements PartyStateStore {
       }
       this.emit(state) // final state for any listeners before teardown
     }
+    // Deleting the party is sufficient to make later mutators throw. Do NOT delete
+    // the lock entry here: an in-flight/queued updateParty must still await the
+    // pending critical section. updateParty's finally tail-cleanup reclaims the
+    // lock entry naturally once it is the chain tail.
     this.parties.delete(partyId)
-    this.locks.delete(partyId)
     this.emitter.removeAllListeners(CHANGE_EVENT(partyId))
     // Bridge the end signal to the WS server (and any other in-process listener)
     // so it can fan a party_ended message to all sockets and clean up its registry.

@@ -64,3 +64,42 @@ export type ReactionEmoji = (typeof ALLOWED_REACTIONS)[number]
 export function isAllowedReaction(emoji: string): emoji is ReactionEmoji {
   return (ALLOWED_REACTIONS as readonly string[]).includes(emoji)
 }
+
+// --- input validation (audit C1) ---
+// Absolute ceiling on any client-supplied position. 24h in ticks; any reported or
+// commanded position must be a finite number in [0, MAX_POSITION_TICKS].
+export const MAX_POSITION_TICKS = 86_400 * TICKS_PER_SECOND
+export const MAX_CHAT_LENGTH = 2000
+
+// --- WS abuse controls (audit H3) — per-socket token buckets over a rolling window ---
+export const WS_RATE_WINDOW_MS = 10_000
+export const WS_CHAT_MAX_PER_WINDOW = 15
+export const WS_REACTION_MAX_PER_WINDOW = 30
+export const WS_CONTROL_MAX_PER_WINDOW = 30
+export const WS_MSG_MAX_PER_WINDOW = 200 // overall per-socket ceiling across all message types
+export const WS_MAX_MESSAGE_BYTES = 16_384 // reject oversized frames (WebSocketServer maxPayload)
+
+// --- resource caps (audit H4) ---
+export const MAX_SOCKETS_PER_USER = 5
+export const MAX_MEMBERS_PER_PARTY = 50
+export const MAX_TOTAL_PARTIES = 200
+
+// --- socket session liveness (audit H2) ---
+// Re-validate the unified-session on each live socket at least this often; close on failure.
+export const SESSION_RECHECK_INTERVAL_MS = 60_000
+
+// --- WS upgrade origin allowlist (audit H1) ---
+// Cross-site WebSocket hijacking defense: the upgrade Origin must match one of these.
+// NEXT_PUBLIC_APP_URL covers production; the dev origins cover `next dev` on :3001.
+export function allowedWsOrigins(): string[] {
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL
+  const origins = ['http://localhost:3001', 'http://127.0.0.1:3001']
+  if (appUrl) {
+    try {
+      origins.push(new URL(appUrl).origin)
+    } catch {
+      /* malformed env — ignore */
+    }
+  }
+  return origins
+}

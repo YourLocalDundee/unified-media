@@ -8,8 +8,11 @@
  */
 
 import { useEffect, useRef, useState } from 'react'
-import { Send } from 'lucide-react'
+import { Send, ArrowDown } from 'lucide-react'
 import type { ChatMessageDTO } from '@/lib/party/types'
+
+// Don't yank a user who scrolled up; only auto-scroll when already near the bottom.
+const NEAR_BOTTOM_THRESHOLD_PX = 60
 
 interface Props {
   messages: ChatMessageDTO[]
@@ -27,24 +30,44 @@ function relativeTime(ts: number): string {
 
 export function ChatPanel({ messages, selfUserId, onSend }: Props) {
   const [text, setText] = useState('')
+  const [atBottom, setAtBottom] = useState(true)
   const scrollRef = useRef<HTMLDivElement>(null)
+
+  const scrollToBottom = () => {
+    const el = scrollRef.current
+    if (el) el.scrollTop = el.scrollHeight
+  }
 
   useEffect(() => {
     const el = scrollRef.current
-    if (el) el.scrollTop = el.scrollHeight
+    if (!el) return
+    // Only follow new messages if the user is already at/near the bottom.
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_BOTTOM_THRESHOLD_PX
+    if (nearBottom) el.scrollTop = el.scrollHeight
   }, [messages])
+
+  const onScroll = () => {
+    const el = scrollRef.current
+    if (!el) return
+    setAtBottom(el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_BOTTOM_THRESHOLD_PX)
+  }
 
   const submit = () => {
     const trimmed = text.trim()
     if (!trimmed) return
-    onSend(trimmed)
+    // Defensive cap mirroring the input maxLength; the server is the real gate.
+    onSend(trimmed.slice(0, 500))
     setText('')
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col border-t border-zinc-800">
+    <div className="relative flex min-h-0 flex-1 flex-col border-t border-zinc-800">
       <p className="px-3 pt-2 text-[10px] uppercase tracking-wide text-zinc-500">Chat</p>
-      <div ref={scrollRef} className="min-h-0 flex-1 space-y-1.5 overflow-y-auto px-3 py-2">
+      <div
+        ref={scrollRef}
+        onScroll={onScroll}
+        className="min-h-0 flex-1 space-y-1.5 overflow-y-auto px-3 py-2"
+      >
         {messages.length === 0 && (
           <p className="text-[11px] text-zinc-600">No messages yet. Say hi.</p>
         )}
@@ -69,6 +92,19 @@ export function ChatPanel({ messages, selfUserId, onSend }: Props) {
           )
         })}
       </div>
+      {!atBottom && messages.length > 0 && (
+        <button
+          type="button"
+          onClick={() => {
+            scrollToBottom()
+            setAtBottom(true)
+          }}
+          className="absolute bottom-14 left-1/2 flex -translate-x-1/2 items-center gap-1 rounded-full bg-sky-700 px-2.5 py-1 text-[11px] text-white shadow-lg transition-colors hover:bg-sky-600"
+        >
+          <ArrowDown className="h-3 w-3" />
+          Latest
+        </button>
+      )}
       <div className="flex items-center gap-1.5 border-t border-zinc-800 p-2">
         <input
           value={text}
