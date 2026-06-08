@@ -30,5 +30,12 @@ export async function register() {
     initIndexerDiscovery().catch(err => {
       console.warn('[indexer] Discovery error (non-fatal):', err)
     })
+
+    try {
+      const { initPartyServer } = await import('@/lib/party/server')
+      initPartyServer()
+    } catch (err) {
+      console.warn('[party] Party WebSocket server failed to start (non-fatal):', err)
+    }
   }
 }

@@ -89,8 +89,11 @@ export interface PlaybackData {
   isHls: boolean
   mediaSourceId: string
   itemId: string
-  subtitleStreams: { index: number; language: string; title: string; isDefault: boolean }[]
-  audioStreams: { index: number; language: string; title: string; channels: number; isDefault: boolean }[]
+  // `extractable` is false for image-based codecs (PGS/VOBSUB) that cannot become WebVTT.
+  subtitleStreams: { index: number; codec: string; language: string; title: string; isDefault: boolean; forced: boolean; extractable: boolean }[]
+  // `relIndex` is the audio-stream-relative index (position among audio streams), used
+  // both as ffmpeg's `-map 0:a:<relIndex>` target and as the `aN` segment in HLS URLs.
+  audioStreams: { index: number; relIndex: number; codec: string; language: string; title: string; channels: number; isDefault: boolean }[]
   defaultAudioIndex: number
   // -1 signals "no default subtitle" (player should not auto-enable subtitles)
   defaultSubtitleIndex: number
@@ -109,4 +112,7 @@ export interface PlaybackData {
   progressApiUrl?: string
   subtitleApiBase?: string      // base path for subtitle proxy, e.g. /api/media/subtitles
   nextEpisodeApiBase?: string   // base path for next-episode lookup, e.g. /api/media/series
+  // --- Party Play (optional; only set when reaching the player via a party link) ---
+  initialJoinCode?: string      // when present, auto-join this party on mount (?party= one-tap link)
+  selfUserId?: string           // the viewing user's id, for party member self-identification
 }

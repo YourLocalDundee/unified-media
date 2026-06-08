@@ -36,7 +36,7 @@ const nextConfig: NextConfig = {
               "style-src 'self' 'unsafe-inline'",
               "img-src 'self' data: https://image.tmdb.org blob:",
               "media-src 'self' blob:",
-              "connect-src 'self' http://ip-api.com",
+              "connect-src 'self' http://ip-api.com wss://unified.minijoe.dev ws://localhost:3002",
               "font-src 'self'",
               "object-src 'none'",
               "base-uri 'self'",

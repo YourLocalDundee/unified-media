@@ -14,6 +14,7 @@ import {
   ArrowLeft,
   Sliders,
   Captions,
+  Languages,
   Check,
 } from 'lucide-react'
 import type { PlaybackData } from '@/lib/media-server/types'
@@ -21,6 +22,15 @@ import { useAudioChain } from '@/components/player/useAudioChain'
 import { MediaToolsPanel } from '@/components/player/MediaToolsPanel'
 import { MediaQualitySelector } from '@/components/player/MediaQualitySelector'
 import type { AspectRatioMode, QualityOption } from '@/components/player/types'
+import { usePlaybackPrefs } from '@/hooks/useSettings'
+import { selectPreferredAudioRel, selectPreferredSubtitleIndex } from '@/lib/media-server/codecs'
+import { usePartySync } from '@/hooks/usePartySync'
+import { PartyPanel } from '@/components/party/PartyPanel'
+import { ChatPanel } from '@/components/party/ChatPanel'
+import { ReactionBar } from '@/components/party/ReactionBar'
+import { ReactionOverlay } from '@/components/party/ReactionOverlay'
+import { StartPartyButton } from '@/components/party/StartPartyButton'
+import { joinParty, getPartyInfo, leaveParty, endParty } from '@/lib/party/client'
 
 // ---------------------------------------------------------------------------
 // Time formatting (HH:MM:SS / MM:SS for player display)
@@ -61,6 +71,8 @@ export default function VideoPlayer(props: PlaybackData) {
     itemId,
     playSessionId,
     subtitleStreams,
+    audioStreams,
+    defaultAudioIndex,
     itemTitle,
     seriesTitle,
     seriesId,
@@ -81,6 +93,12 @@ export default function VideoPlayer(props: PlaybackData) {
   const didReportStart = useRef(false)
   const countdownTimer = useRef<ReturnType<typeof setInterval> | null>(null)
   const resumeApplied = useRef(false)
+  // Set before a stream switch (audio track change) to the position to resume at; consumed
+  // once in handleLoadedMetadata. Uses the same currentTime path as everything else — no
+  // parallel offset system — so watch-progress / position_ticks stay the single source of truth.
+  const pendingSeekRef = useRef<number | null>(null)
+  // Guards the one-time, preference-driven default audio/subtitle selection on mount.
+  const defaultsApplied = useRef(false)
 
   // Player state
   const [isLoading, setIsLoading] = useState(true)
@@ -118,8 +136,123 @@ export default function VideoPlayer(props: PlaybackData) {
   const [activeSubIndex, setActiveSubIndex] = useState<number>(-1)
   const [showSubMenu, setShowSubMenu] = useState(false)
 
+  // Audio track state. The active audio-relative index; the server default is whichever
+  // audio stream matches defaultAudioIndex (an absolute ffprobe index).
+  const serverDefaultAudioRel =
+    audioStreams.find((a) => a.index === defaultAudioIndex)?.relIndex ?? 0
+  const [activeAudioRel, setActiveAudioRel] = useState<number>(serverDefaultAudioRel)
+  const [showAudioMenu, setShowAudioMenu] = useState(false)
+
+  // User language preferences (localStorage). Read once on mount to set English defaults.
+  const { prefs, ready: prefsReady } = usePlaybackPrefs()
+
   // Stats overlay state
   const [showStats, setShowStats] = useState(false)
+
+  // ---------------------------------------------------------------------------
+  // Party Play state (all behind partyId truthiness — non-party playback is
+  // behaviorally unchanged).
+  // ---------------------------------------------------------------------------
+  const selfUserId = props.selfUserId ?? ''
+  const [partyId, setPartyId] = useState<string | null>(null)
+  const [partyJoinCode, setPartyJoinCode] = useState<string>('')
+  const [partyHostUserId, setPartyHostUserId] = useState<string | null>(null)
+  const [partyMediaId, setPartyMediaId] = useState<string>(itemId)
+  const [partyPanelOpen, setPartyPanelOpen] = useState(true)
+  const partyJoinAttempted = useRef(false)
+
+  const party = usePartySync(partyId, {
+    videoRef,
+    selfUserId,
+    enabled: !!partyId,
+  })
+
+  // Auto-join from a ?party={code} link on mount.
+  useEffect(() => {
+    if (!props.initialJoinCode || partyJoinAttempted.current) return
+    partyJoinAttempted.current = true
+    let cancelled = false
+    ;(async () => {
+      try {
+        const joined = await joinParty({ joinCode: props.initialJoinCode })
+        if (cancelled) return
+        setPartyId(joined.partyId)
+        setPartyJoinCode(joined.joinCode)
+        setPartyMediaId(joined.mediaId)
+        // Resolve host + member list for the panel.
+        const info = await getPartyInfo(joined.partyId)
+        if (cancelled) return
+        setPartyHostUserId(info.hostUserId)
+      } catch (e) {
+        console.warn('[VideoPlayer] party auto-join failed', e)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const partyActive = !!partyId
+
+  const partyJoinUrl =
+    typeof window !== 'undefined' && partyJoinCode
+      ? `${window.location.origin}/play/${partyMediaId}?party=${partyJoinCode}`
+      : ''
+
+  const handlePartyStarted = useCallback(
+    (info: { partyId: string; joinCode: string; hostUserId: string }) => {
+      setPartyId(info.partyId)
+      setPartyJoinCode(info.joinCode)
+      setPartyHostUserId(info.hostUserId)
+      setPartyMediaId(itemId)
+      setPartyPanelOpen(true)
+    },
+    [itemId],
+  )
+
+  const teardownParty = useCallback(() => {
+    setPartyId(null)
+    setPartyJoinCode('')
+    setPartyHostUserId(null)
+  }, [])
+
+  const handlePartyLeave = useCallback(async () => {
+    const id = partyId
+    teardownParty()
+    if (id) {
+      try {
+        await leaveParty(id)
+      } catch {
+        /* best-effort */
+      }
+    }
+  }, [partyId, teardownParty])
+
+  const handlePartyEnd = useCallback(async () => {
+    const id = partyId
+    teardownParty()
+    if (id) {
+      try {
+        await endParty(id)
+      } catch {
+        /* best-effort */
+      }
+    }
+  }, [partyId, teardownParty])
+
+  // If the host ends the party (server -> party_ended), tear the local party UI down.
+  useEffect(() => {
+    if (party.ended) teardownParty()
+  }, [party.ended, teardownParty])
+
+  // The keyboard effect is a single mount-once listener with stale closures over
+  // party state, so route its play/seek intents through a live ref instead.
+  const partyKbdRef = useRef<{
+    active: boolean
+    sendIntent: (action: 'play' | 'pause' | 'seek', positionTicks: number) => void
+  }>({ active: false, sendIntent: () => {} })
+  partyKbdRef.current = { active: partyActive, sendIntent: party.sendIntent }
 
   // ---------------------------------------------------------------------------
   // Aspect ratio auto-detection + screen-aware quality selection (mount once)
@@ -165,15 +298,6 @@ export default function VideoPlayer(props: PlaybackData) {
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
-
-  // ---------------------------------------------------------------------------
-  // Subtitle default selection
-  // ---------------------------------------------------------------------------
-
-  useEffect(() => {
-    const defaultIdx = subtitleStreams.findIndex((s) => s.isDefault)
-    setActiveSubIndex(defaultIdx >= 0 ? defaultIdx : -1)
-  }, [subtitleStreams])
 
   // Apply the active subtitle track to the video element's textTracks
   useEffect(() => {
@@ -247,6 +371,64 @@ export default function VideoPlayer(props: PlaybackData) {
     // Incrementing retryCount triggers the HLS init effect to re-run with the new stream URL.
     setRetryCount((c) => c + 1)
   }, [])
+
+  // Switch the active audio track. Browsers cannot switch embedded audio on Direct Play, so
+  // any non-default track routes through the HLS transcode pipeline with `-map 0:a:<rel>`.
+  // We capture the current position and resume there once the new stream loads (option B —
+  // restart-and-seek; see transcode.ts for the deferred seamless option A).
+  const handleAudioChange = useCallback(
+    (rel: number) => {
+      if (rel === activeAudioRel) {
+        setShowAudioMenu(false)
+        return
+      }
+      pendingSeekRef.current = videoRef.current?.currentTime ?? 0
+      setActiveAudioRel(rel)
+      if (rel === serverDefaultAudioRel) {
+        // The default track keeps the server's original decision (Direct Play when the
+        // audio is browser-compatible, HLS otherwise).
+        setActiveStreamUrl(streamUrl)
+        setActiveIsHls(isHls)
+      } else {
+        setActiveStreamUrl(`/api/media/hls/${itemId}/a${rel}/master.m3u8`)
+        setActiveIsHls(true)
+      }
+      setShowAudioMenu(false)
+      setRetryCount((c) => c + 1)
+    },
+    [activeAudioRel, serverDefaultAudioRel, streamUrl, isHls, itemId],
+  )
+
+  // ---------------------------------------------------------------------------
+  // Preference-driven default audio + subtitle selection (English by default)
+  // ---------------------------------------------------------------------------
+
+  // Applied once, after prefs hydrate from localStorage. Audio defaults to the preferred
+  // language (falling back to the server's default track); switching to a non-default track
+  // routes through HLS via handleAudioChange. Subtitles stay OFF unless a subtitle language
+  // is configured, in which case the full track is preferred over signs-and-songs / forced.
+  useEffect(() => {
+    if (!prefsReady || defaultsApplied.current) return
+    defaultsApplied.current = true
+
+    const preferredAudioRel = selectPreferredAudioRel(
+      audioStreams,
+      prefs.audioLang,
+      serverDefaultAudioRel,
+    )
+    if (preferredAudioRel !== serverDefaultAudioRel) {
+      handleAudioChange(preferredAudioRel)
+    }
+
+    setActiveSubIndex(selectPreferredSubtitleIndex(subtitleStreams, prefs.subtitleLang))
+  }, [
+    prefsReady,
+    prefs,
+    audioStreams,
+    subtitleStreams,
+    serverDefaultAudioRel,
+    handleAudioChange,
+  ])
 
   // ---------------------------------------------------------------------------
   // Controls visibility
@@ -414,12 +596,30 @@ export default function VideoPlayer(props: PlaybackData) {
       if (tag === 'INPUT' || tag === 'TEXTAREA') return
 
       const video = videoRef.current
+      // Party-aware helpers. In party mode play/pause/seek become intents and the
+      // video moves only when the server STATE arrives.
+      const pty = partyKbdRef.current
+      const partyTogglePlay = () => {
+        if (!video) return
+        if (pty.active) {
+          pty.sendIntent(video.paused ? 'play' : 'pause', Math.round(video.currentTime * 10_000_000))
+        } else {
+          video.paused ? video.play().catch(() => {}) : video.pause()
+        }
+      }
+      const partySeekTo = (newTime: number) => {
+        if (!video) return
+        const clamped = Math.max(0, Math.min(video.duration || 0, newTime))
+        if (pty.active) {
+          pty.sendIntent('seek', Math.round(clamped * 10_000_000))
+        } else {
+          video.currentTime = clamped
+        }
+      }
       switch (e.key) {
         case ' ':
           e.preventDefault()
-          if (video) {
-            video.paused ? video.play().catch(() => {}) : video.pause()
-          }
+          partyTogglePlay()
           break
         case 'f':
         case 'F':
@@ -434,33 +634,25 @@ export default function VideoPlayer(props: PlaybackData) {
         case 'k':
         case 'K':
           e.preventDefault()
-          if (video) {
-            video.paused ? video.play().catch(() => {}) : video.pause()
-          }
+          partyTogglePlay()
           break
         case 'j':
         case 'J':
           e.preventDefault()
-          if (video) video.currentTime = Math.max(0, video.currentTime - 10)
+          if (video) partySeekTo(video.currentTime - 10)
           break
         case 'l':
         case 'L':
           e.preventDefault()
-          if (video) video.currentTime = Math.min(video.duration || 0, video.currentTime + 10)
+          if (video) partySeekTo(video.currentTime + 10)
           break
         case 'ArrowLeft':
           e.preventDefault()
-          if (video) {
-            const seek = e.shiftKey ? 30 : 10
-            video.currentTime = Math.max(0, video.currentTime - seek)
-          }
+          if (video) partySeekTo(video.currentTime - (e.shiftKey ? 30 : 10))
           break
         case 'ArrowRight':
           e.preventDefault()
-          if (video) {
-            const seek = e.shiftKey ? 30 : 10
-            video.currentTime = Math.min(video.duration || 0, video.currentTime + seek)
-          }
+          if (video) partySeekTo(video.currentTime + (e.shiftKey ? 30 : 10))
           break
         case 'ArrowUp':
           e.preventDefault()
@@ -496,7 +688,7 @@ export default function VideoPlayer(props: PlaybackData) {
         case '5': case '6': case '7': case '8': case '9':
           e.preventDefault()
           if (video && video.duration) {
-            video.currentTime = (parseInt(e.key) / 10) * video.duration
+            partySeekTo((parseInt(e.key) / 10) * video.duration)
           }
           break
         case 'i':
@@ -522,6 +714,13 @@ export default function VideoPlayer(props: PlaybackData) {
   const handleLoadedMetadata = () => {
     const video = videoRef.current
     if (!video) return
+    // A pending seek (from an audio-track switch) takes precedence and resumes at the exact
+    // position captured before the switch — the same currentTime path as everything else.
+    if (pendingSeekRef.current != null) {
+      video.currentTime = pendingSeekRef.current
+      pendingSeekRef.current = null
+      return
+    }
     const resumeSeconds = resumePositionTicks / 10_000_000
     if (resumeSeconds > 30 && !resumeApplied.current) {
       resumeApplied.current = true
@@ -620,22 +819,42 @@ export default function VideoPlayer(props: PlaybackData) {
   // Control actions
   // ---------------------------------------------------------------------------
 
+  // USER-ACTION SURFACES. In party mode these become intents (the video moves only
+  // when the resulting authoritative STATE arrives, applied under the hook's
+  // applyingRemoteState path). Out of party mode they mutate the video directly,
+  // exactly as before.
   const togglePlay = () => {
     const video = videoRef.current
     if (!video) return
+    if (partyActive) {
+      party.sendIntent(video.paused ? 'play' : 'pause', Math.round(video.currentTime * 10_000_000))
+      return
+    }
     video.paused ? video.play().catch(() => {}) : video.pause()
   }
 
   const seek = (delta: number) => {
     const video = videoRef.current
     if (!video) return
-    video.currentTime = Math.max(0, Math.min(video.duration || 0, video.currentTime + delta))
+    const newTime = Math.max(0, Math.min(video.duration || 0, video.currentTime + delta))
+    if (partyActive) {
+      party.sendIntent('seek', Math.round(newTime * 10_000_000))
+      return
+    }
+    video.currentTime = newTime
   }
 
   const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
     const video = videoRef.current
     if (!video) return
     const newTime = Number(e.target.value)
+    if (partyActive) {
+      // Optimistically update the scrubber UI only — do NOT move the video. The
+      // server STATE drives the actual seek.
+      setCurrentTime(newTime)
+      party.sendIntent('seek', Math.round(newTime * 10_000_000))
+      return
+    }
     video.currentTime = newTime
     setCurrentTime(newTime)
   }
@@ -735,12 +954,17 @@ export default function VideoPlayer(props: PlaybackData) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // Embedded subtitle streams are extracted to WebVTT by the /embedded/ endpoint (a plain
+  // <video> won't render embedded MKV subs on Direct Play). One <track> per stream keeps the
+  // list index aligned with activeSubIndex and the video's textTracks. Image-based tracks
+  // (extractable=false) still get an element for index alignment but are disabled in the menu.
   const subtitleTracks = subtitleApiBase
     ? subtitleStreams.map((s) => ({
-        src: `${subtitleApiBase}/${itemId}/${s.index}`,
+        src: `${subtitleApiBase}/embedded/${itemId}/${s.index}`,
         label: s.title,
         srcLang: s.language,
         isDefault: s.isDefault,
+        extractable: s.extractable,
       }))
     : []
 
@@ -761,14 +985,32 @@ export default function VideoPlayer(props: PlaybackData) {
           controlsVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'
         }`}
       >
-        <button
-          onClick={handleBack}
-          className="flex items-center gap-2 text-white hover:text-zinc-300 transition-colors"
-          aria-label="Go back"
-        >
-          <ArrowLeft className="h-5 w-5" />
-          <span className="text-sm font-medium truncate max-w-xs sm:max-w-lg">{displayTitle}</span>
-        </button>
+        <div className="flex items-center justify-between gap-3">
+          <button
+            onClick={handleBack}
+            className="flex items-center gap-2 text-white hover:text-zinc-300 transition-colors"
+            aria-label="Go back"
+          >
+            <ArrowLeft className="h-5 w-5" />
+            <span className="text-sm font-medium truncate max-w-xs sm:max-w-lg">{displayTitle}</span>
+          </button>
+
+          {/* Start a watch party (only when not already in one and we know the viewer). */}
+          {!partyActive && selfUserId && (
+            <StartPartyButton itemId={itemId} selfUserId={selfUserId} onStarted={handlePartyStarted} />
+          )}
+
+          {/* Collapse/expand the party side area. */}
+          {partyActive && (
+            <button
+              type="button"
+              onClick={() => setPartyPanelOpen((v) => !v)}
+              className="rounded-md bg-zinc-800/80 px-3 py-1.5 text-sm text-white transition-colors hover:bg-zinc-700"
+            >
+              {partyPanelOpen ? 'Hide party' : 'Show party'}
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Video element */}
@@ -805,13 +1047,15 @@ export default function VideoPlayer(props: PlaybackData) {
         onClick={togglePlay}
       >
         {subtitleTracks.map((track) => (
+          // No `default` attr — visibility is driven entirely by activeSubIndex via the
+          // textTracks mode effect, so a file with multiple default-flagged tracks doesn't
+          // auto-show the wrong one.
           <track
             key={track.src}
             kind="subtitles"
             src={track.src}
             label={track.label}
             srcLang={track.srcLang}
-            default={track.isDefault}
           />
         ))}
       </video>
@@ -820,6 +1064,18 @@ export default function VideoPlayer(props: PlaybackData) {
       {isLoading && (
         <div className="absolute inset-0 flex items-center justify-center z-10 pointer-events-none">
           <div className="h-12 w-12 rounded-full border-4 border-white/20 border-t-white animate-spin" />
+        </div>
+      )}
+
+      {/* Party reaction overlay */}
+      {partyActive && (
+        <ReactionOverlay reactions={party.reactions} onExpire={party.expireReaction} />
+      )}
+
+      {/* Party readiness-gate "waiting for others to buffer" overlay */}
+      {partyActive && party.waitingFor.length > 0 && (
+        <div className="absolute left-1/2 top-20 z-30 -translate-x-1/2 rounded-lg bg-black/80 px-4 py-2 text-center text-sm text-amber-200">
+          Waiting for {party.waitingFor.map((w) => w.displayName).join(', ')} to buffer…
         </div>
       )}
 
@@ -907,6 +1163,13 @@ export default function VideoPlayer(props: PlaybackData) {
 
           <div className="flex-1" />
 
+          {/* Party reaction bar */}
+          {partyActive && (
+            <div className="hidden sm:block">
+              <ReactionBar onReact={party.sendReaction} />
+            </div>
+          )}
+
           {/* Subtitle track picker */}
           {subtitleStreams.length > 0 && (
             <div className="relative">
@@ -929,12 +1192,44 @@ export default function VideoPlayer(props: PlaybackData) {
                   {subtitleTracks.map((track, i) => (
                     <button
                       key={track.src}
+                      disabled={!track.extractable}
                       onClick={() => { setActiveSubIndex(i); setShowSubMenu(false) }}
-                      className="flex items-center gap-2 w-full px-3 py-1.5 text-sm text-left hover:bg-zinc-800 transition-colors"
+                      className={`flex items-center gap-2 w-full px-3 py-1.5 text-sm text-left transition-colors ${track.extractable ? 'hover:bg-zinc-800' : 'opacity-40 cursor-not-allowed'}`}
                     >
                       {activeSubIndex === i && <Check className="h-3.5 w-3.5 text-white shrink-0" />}
                       <span className={`${activeSubIndex === i ? 'text-white font-medium' : 'text-zinc-300'} ${activeSubIndex !== i ? 'ml-5' : ''}`}>
                         {track.label || track.srcLang || `Track ${i + 1}`}
+                        {!track.extractable && ' (image — unsupported)'}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Audio track picker — only when there is more than one track to choose from */}
+          {audioStreams.length > 1 && (
+            <div className="relative">
+              <button
+                onClick={() => setShowAudioMenu((v) => !v)}
+                className="p-1 text-zinc-400 hover:text-white transition-colors"
+                aria-label="Audio track"
+              >
+                <Languages className="h-5 w-5" />
+              </button>
+              {showAudioMenu && (
+                <div className="absolute bottom-9 right-0 bg-zinc-900 border border-zinc-700 rounded-lg py-1 min-w-[12rem] z-40 shadow-xl">
+                  {audioStreams.map((a) => (
+                    <button
+                      key={a.relIndex}
+                      onClick={() => handleAudioChange(a.relIndex)}
+                      className="flex items-center gap-2 w-full px-3 py-1.5 text-sm text-left hover:bg-zinc-800 transition-colors"
+                    >
+                      {activeAudioRel === a.relIndex && <Check className="h-3.5 w-3.5 text-white shrink-0" />}
+                      <span className={`${activeAudioRel === a.relIndex ? 'text-white font-medium' : 'text-zinc-300'} ${activeAudioRel !== a.relIndex ? 'ml-5' : ''}`}>
+                        {a.title || a.language || `Track ${a.relIndex + 1}`}
+                        {a.channels >= 6 ? ' · 5.1' : a.channels === 2 ? ' · 2.0' : ''}
                       </span>
                     </button>
                   ))}
@@ -996,6 +1291,30 @@ export default function VideoPlayer(props: PlaybackData) {
               {countdown}s
             </button>
           </div>
+        </div>
+      )}
+
+      {/* Party side area: PartyPanel + ChatPanel as siblings. */}
+      {partyActive && partyPanelOpen && (
+        <div className="absolute right-0 top-0 z-30 flex h-full w-80 max-w-[85vw] flex-col border-l border-zinc-800 bg-zinc-950/95 backdrop-blur">
+          <PartyPanel
+            joinCode={partyJoinCode}
+            joinUrl={partyJoinUrl}
+            mediaId={partyMediaId}
+            members={party.members}
+            selfUserId={selfUserId}
+            hostUserId={partyHostUserId}
+            lastActor={party.lastActor}
+            waitingFor={party.waitingFor}
+            connectionState={party.connectionState}
+            onLeave={handlePartyLeave}
+            onEnd={handlePartyEnd}
+          />
+          <ChatPanel
+            messages={party.chatMessages}
+            selfUserId={selfUserId}
+            onSend={party.sendChat}
+          />
         </div>
       )}
 

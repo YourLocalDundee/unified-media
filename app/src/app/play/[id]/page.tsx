@@ -13,6 +13,7 @@ import { requireAuth } from '@/lib/dal'
 
 interface Props {
   params: Promise<{ id: string }>
+  searchParams: Promise<{ party?: string }>
 }
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
@@ -28,9 +29,10 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   }
 }
 
-export default async function PlayPage({ params }: Props) {
+export default async function PlayPage({ params, searchParams }: Props) {
   const session = await requireAuth()
   const { id } = await params
+  const sp = await searchParams
 
   let data
   try {
@@ -45,7 +47,7 @@ export default async function PlayPage({ params }: Props) {
 
   return (
     <div className="fixed inset-0 bg-black">
-      <VideoPlayer {...data} />
+      <VideoPlayer {...data} initialJoinCode={sp.party} selfUserId={session.userId} />
     </div>
   )
 }

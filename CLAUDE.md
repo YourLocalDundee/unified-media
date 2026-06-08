@@ -1,6 +1,6 @@
 # unified-frontend
 
-A single-pane-of-glass web app for the minime home server media stack (v0.9.3). Replaces the multi-tab workflow
+A single-pane-of-glass web app for the minime home server media stack (v0.9.5). Replaces the multi-tab workflow
 (Jellyfin + Seerr + qBittorrent) with one unified interface for browsing, requesting, watching, and
 monitoring downloads.
 
@@ -305,9 +305,13 @@ app/
     layout.tsx                  # Root layout: nav sidebar, auth header injection
     page.tsx                    # / → Home dashboard
     browse/
-      page.tsx                  # /browse → Library browser
+      page.tsx                  # /browse → Discover + acquisition browser
       [id]/
-        page.tsx                # /browse/[id] → Media detail
+        page.tsx                # /browse/[id] → Acquisition detail (request controls)
+    library/
+      page.tsx                  # /library → Owned media grid
+      [id]/
+        page.tsx                # /library/[id] → Play-only detail (no acquisition controls)
     requests/
       page.tsx                  # /requests → Seerr request list
     downloads/
@@ -344,20 +348,20 @@ app/
 - Continue Watching row (native `getResumeItems` — only `movie`/`episode` types, never series containers)
 - Recently Added row (native `getRecentlyAdded` — returns both movies and series containers)
   - Movie cards link to `/play/${id}` (direct playback)
-  - Series cards link to `/browse/${id}` (detail/episode list) — series containers have no `file_path` and cannot be played directly
+  - Series cards link to `/library/${id}` (play-only detail) — series containers have no `file_path` and cannot be played directly
 - Recent Requests strip (native `getAllRequests`)
 - Download queue summary (qBt `GET /transfer/info` + active torrents count)
 - Auto-refreshes download summary every 10 seconds via React Query `refetchInterval`
 
-**`/browse` — Discover + Library browser (v0.8.0+)**
+**`/browse` — Discover + acquisition browser (v0.8.0+)**
 - Defaults to **discover mode**: TMDB trending/popular/genre content cross-referenced against local library
-- Type tabs: ✦ Browse (discover) · Library · Movies · TV Shows
+- Type tabs: ✦ Browse (discover) · Movies · TV Shows
 - Discover mode: TMDB trending categories + genre filter pills; shows Quick/Long-term request buttons per card
-- Library mode: paginated grid of locally owned content; filter by year/sort
 - `RequestOptions` component handles per-card request UI — two buttons for old content, one for new
 - `/browse/discover/[mediaType]/[tmdbId]` — full detail page for TMDB items not yet in library
 
-**`/browse/[id]` — Media detail**
+**`/browse/[id]` — Acquisition detail**
+- For content the user does not yet own (or wants to re-acquire); `RequestOptions` is intentionally present here
 - Native media server item: poster, backdrop, synopsis, metadata, Sonarr/Radarr monitoring badge
 - **Watch Now button** — resolves the correct playback target based on item type:
   - Movie / episode with `file_path` set → `/play/${item.id}` (direct)
@@ -366,6 +370,19 @@ app/
 - Request status badge for already-requested items
 - Episode list accordion for series (seasons → episodes linking to `/play/${ep.id}`)
 - Similar items row
+
+**`/library` — Owned media grid**
+- Paginated grid of all locally owned content from `media_items` (movies + series containers)
+- Type tabs: All · Movies · TV Shows; sort by title/year/added; items-per-page selector (25/50/100)
+- Series cards link to `/library/${id}`; movie cards link to `/play/${id}` directly
+- Distinct from Browse — no TMDB discovery, no request controls, no acquisition UI
+
+**`/library/[id]` — Play-only media detail**
+- Poster, backdrop, synopsis, year/runtime metadata — same visual layout as `/browse/[id]`
+- **No acquisition controls**: no `RequestOptions`, no retention selector, no grab method, no language picker
+- Movie with `file_path`: Watch Now → `/play/${item.id}`
+- Series container: Watch Now resolves resume episode via `getSeriesResumeEpisode` or falls back to `episodes[0]`; full season/episode accordion where each row links to `/play/${ep.id}`
+- Similar items section links to `/library/${s.id}` (series) or `/play/${s.id}` (movie) — never to `/browse`
 
 **`/requests` — Seerr request list**
 - Paginated list: `GET /request` with filter tabs (All, Pending, Approved, Available)
@@ -609,6 +626,17 @@ is also provided. Keep the key in `SEERR_API_KEY` env var; never hardcode it.
 
 When the scanner processes an episode file it creates a parent series row in `media_items` via `INSERT OR IGNORE` with `file_path = NULL`. This row exists only as a foreign-key target for `series_id`; it has no playable file. Any code path that calls `getNativePlaybackData` with a series container ID will throw on the `!item.file_path` guard. Never generate a `/play/${id}` link from a row where `type = 'series'`. The safety net in `play/[id]/page.tsx` redirects to `/browse/${id}` on this condition, but the upstream links should never produce the ID in the first place.
 
+### Library vs Browse routing — ownership determines destination
+
+All rows in `media_items` are owned content (scanned from disk). The routing rule is:
+
+- **Owned series** → `/library/${id}` — play-only detail, no acquisition controls
+- **Owned movie** → `/play/${id}` directly from list/card contexts; `/library/${id}` from full detail pages
+- **Discoverable content** (TMDB, not yet in library) → `/browse/discover/${mediaType}/${tmdbId}`
+- **Browse library tabs** (Movies/TV Shows within `/browse`) → `/browse/${id}` — intentionally shows acquisition controls even for owned items when reached from the Browse surface
+
+If an item appears in both contexts, the context determines the destination: Library links → Library detail, Browse links → Browse detail. Never link from home-page or library-context cards to `/browse/[id]` for owned content — that drops the user into the acquisition UI for something they already have.
+
 ### Video element errors do not bubble as React events
 
 The `<video>` DOM element fires `error` on the element directly — it does not propagate as a React synthetic event and is not caught by `try/catch` around `video.play()`. Any video loading failure (404 from stream route, unsupported codec, network drop) that is not handled via the React `onError` prop on the element leaves `isLoading = true` permanently if `handleWaiting` fired before the error. Always keep `onError={handleVideoError}` wired on the `<video>` element in `VideoPlayer.tsx`.
@@ -620,6 +648,10 @@ Setting `video.currentTime` before `loadedmetadata` fires causes silent stalls o
 ### screen.orientation.lock requires active fullscreen (Android)
 
 `screen.orientation.lock('landscape')` on Android Chrome throws `SecurityError` if the document is not currently in fullscreen. Always `await container.requestFullscreen()` first, then call `screen.orientation.lock`. The `toggleFullscreen` function is `async` for this reason. On iOS Safari both `requestFullscreen` (on a div) and `screen.orientation.lock` are unsupported and handled via try/catch fallbacks.
+
+### Sidebar/MobileNav active-highlight: use `pathname.startsWith(href + '/')`
+
+The isActive check for nav items must use `pathname === href || pathname.startsWith(href + '/')` — note the trailing slash. Using bare `pathname.startsWith(href)` causes `/browse` to falsely match any route that starts with those characters. The Sidebar no longer uses `useSearchParams` for active state; all nav hrefs are plain paths with no query strings.
 
 ---
 
@@ -927,6 +959,34 @@ Upstream prevention:
 
 ---
 
+## 10b. Video Player — Audio & Subtitle Tracks, Language Defaults (v0.9.4)
+
+Codec knowledge for these features is centralised in `src/lib/media-server/codecs.ts` (client-safe — type-only imports). `PlaybackData.audioStreams`/`subtitleStreams` carry `codec`, audio `relIndex`, and subtitle `forced`/`extractable`, threaded from `probe.ts` through `playback.ts`.
+
+### Embedded subtitle extraction → WebVTT
+
+A plain `<video>` element does **not** render embedded MKV subtitle streams on Direct Play. The old `/api/media/subtitles/[id]/[streamIndex]` route only serves *downloaded external* files (`subtitle_wants`) and treats its index as a position in that list — so embedded-subtitle `<track>`s pointed at it rendered nothing.
+
+Embedded tracks now point at **`/api/media/subtitles/embedded/[id]/[streamIndex]`** (`streamIndex` = absolute ffprobe stream index). It probes, rejects image-based codecs (`isImageSubtitleCodec` → PGS/VOBSUB/DVB) with **415** (they need burn-in, not conversion), then `extractSubtitleToVtt()` runs `ffmpeg -map 0:<idx> -c:s webvtt -f webvtt` and caches the `.vtt` under `TRANSCODE_CACHE/.subs/<mediaId>/<idx>.vtt`. Text codecs (ass, subrip, mov_text) convert cleanly; ASS styling/positioning is flattened. The player renders one `<track>` per stream (index-aligned with `activeSubIndex` and the video's `textTracks`); image tracks are shown disabled. No `default` attr — visibility is driven solely by `activeSubIndex` so multi-default files don't auto-show the wrong track.
+
+### Audio track selection & switching (option B — restart-and-seek)
+
+Browsers can't switch embedded audio tracks on Direct Play, so switching routes through HLS with the chosen track mapped (`-map 0:a:<relIndex>`). HLS URLs are namespaced by audio index: **`/api/media/hls/[id]/a[N]/master.m3u8`** (segments resolve relatively under `aN/`); the transcode cache and job registry are keyed per `(mediaId, audioIdx)` (`TRANSCODE_CACHE/<mediaId>/a<idx>/`).
+
+On switch, the player captures `video.currentTime` into `pendingSeekRef`, swaps the source, and `handleLoadedMetadata` consumes the ref to resume at that exact position. This is **option B**: it reuses the player's single position path (`currentTime` / resume / progress / `position_ticks`) — **no timestamp offset / parallel position system** — so watch-progress and continue-watching stay correct. Selecting the server's default track reverts to the original Direct-Play-or-HLS decision.
+
+**Per-path switch cost:** h264 source → cheap remux (`-c:v copy` + audio→aac); hevc/vp9/av1 source → Tier C full VAAPI (video must be re-encoded for HLS-TS). Full VAAPI is reserved for incompatible video only.
+
+**v1 seek limitation (still applies):** transcodes are linear-from-0; seeking past the transcoded point returns 503 (seek backwards to resume). A switch resumes at the captured position by letting the linear transcode reach it.
+
+**FUTURE (option A, deferred):** start the per-audio transcode at the current position via input-seek (`-ss T`, already supported by `buildArgs` `seekSec`) for an instant switch. Deferred deliberately — it requires a stream-start time offset that would fork position tracking away from the single 0-based timeline the watch-progress feature depends on. Documented at the top of `transcode.ts`.
+
+### Language defaults (English) — `usePlaybackPrefs`
+
+The user preference already existed (`/settings/playback` → `usePlaybackPrefs`, localStorage `unified-playback-prefs`): `audioLang` (default `'en'`), `subtitleLang` (default `''` = off). The player now reads it. `usePlaybackPrefs` exposes a `ready` flag so the one-time default applies on the *hydrated* value, not the pre-hydration default. `selectPreferredAudioRel` picks the matching audio track (else server default); `selectPreferredSubtitleIndex` picks the matching subtitle **preferring the full track over signs-and-songs / forced**, and returns -1 (off) when no subtitle language is set. ffprobe 3-letter codes are normalised to ISO 639-1 via `normalizeLang`/`languageMatches`.
+
+---
+
 ## 11. Profile and Account Settings (v0.5.2+)
 
 The profile page at `/settings/profile` is fully self-contained — no Authentik headers, no external identity provider.
@@ -1078,7 +1138,7 @@ Eight tabs — first 7 read/write from qBittorrent via `/app/preferences` → `/
 
 ## 13. Future Ideas Backlog
 
-**Watch party sync** — shared room WebSocket where multiple users watch in sync and the host controls seeking. Requires a lightweight WebSocket server (could be a Next.js API route with server-sent events as fallback) and a room code/invite model.
+**Watch party sync** — DONE (v0.9.5). Native party play with shared sync, presence, text chat, and emoji reactions over a dedicated WebSocket server. Control is shared by all members (no host-only mode). See section 16.
 
 **Jellyfin user linking** — associate a unified-frontend account with a specific Jellyfin user ID so watch history and resume position reflect that user's actual Jellyfin state rather than the admin API key user. Store `jellyfin_user_id` in the users table; use it for all `/Users/<id>/...` calls when present.
 
@@ -1198,3 +1258,197 @@ The `RequestOptions` component at `src/components/media/RequestOptions.tsx` hand
 | TV show | 2 |
 
 Counted as: requests with `request_type = 'quick'` AND `status IN ('approved', 'available')` for the user.
+
+---
+
+## 16. Party Play (Watch Together) and Chat (v0.9.5)
+
+Native watch-together built on top of the finished player. A party is a shared viewing session for one
+media item where every member's player is kept in sync. Anyone in the party can play, pause, or seek and
+everyone follows. v1 ships sync, presence, text chat, and ephemeral emoji reactions, all over one socket.
+The server is the single authority on party state; clients send intents and render whatever the server
+broadcasts back. **Party play coordinates the existing player only — it does not touch transcode, codec,
+audio-track, or subtitle behavior, and `position_ticks` remains the single source of truth for progress.**
+
+### Architecture — dedicated WebSocket server on port 3002
+
+The Next.js instrumentation hook **cannot** attach to the Next standalone HTTP server's `upgrade` event
+(verified against next 16.2.7: the `http.Server` is function-local in `start-server.js`, never handed to
+`register()`, and Next installs its own `upgrade` handler that destroys unrecognised upgrades). So party
+play runs a **dedicated `ws` server on its own internal port 3002**, started from `src/instrumentation.ts`
+behind a `globalThis`-pinned started guard, in the **same process** as the Next route handlers and the
+existing schedulers. That shared process is why the `globalThis`-pinned `PartyStateStore` singleton is
+visible to both the WS server and the `/api/party` REST routes. The Docker `CMD` stays `node server.js`.
+
+Public-edge routing. The browser connects same-origin to `wss://unified.minijoe.dev/api/party/ws`. The
+live Caddy block routes that path to 3002, everything else to 3001:
+
+```caddyfile
+http://unified.minijoe.dev {
+    import compressed
+    @partyws path /api/party/ws*
+    reverse_proxy @partyws unified-frontend:3002
+    reverse_proxy unified-frontend:3001
+}
+```
+
+Caddy upgrades WebSockets automatically (forwards `Upgrade`/`Connection`). **No compose change is needed**:
+the service has no host port mapping for 3001 either — Caddy reaches both ports by container DNS over the
+compose network (`unified-frontend:3001` / `:3002`). The WS server listens on `0.0.0.0:3002` inside the
+container. Dev has no Caddy, so the client connects directly to `ws://<hostname>:3002/api/party/ws` while
+the page is served from `:3001` (cookies are not port-scoped, so `unified-session` is still sent).
+
+`next.config.ts` CSP `connect-src` was widened to
+`'self' http://ip-api.com wss://unified.minijoe.dev ws://localhost:3002`.
+
+### Data model — durable (SQLite) vs ephemeral (memory)
+
+Durable facts only persist to SQLite; live high-frequency state lives in memory to keep the heartbeat storm
+off the single SQLite writer. Two new tables (migration in `src/lib/db/migrations.ts`, idempotent style):
+
+| Table | Key columns |
+|---|---|
+| `watch_parties` | `id` (32-char), `join_code` (UNIQUE 6-char), `host_user_id`, `media_id`, `status` ('active'\|'ended'), `last_position_ticks`, `last_paused` (checkpoints, recovery only) |
+| `watch_party_members` | `party_id`, `user_id`, `joined_at`, `left_at`, `is_host`, `UNIQUE(party_id, user_id)` (makes join idempotent — rejoin reactivates the row) |
+
+`media_id` must reference a **playable** `media_items` row (non-NULL `file_path`); series containers are
+rejected at create time. Checkpoints write at most every `CHECKPOINT_THROTTLE_MS` (12s) and on
+pause/seek/join — never per heartbeat. Live authoritative state (current position, paused, rate, per-member
+heartbeat/readiness, chat ring buffer) lives in the WS process behind `PartyStateStore`.
+
+### The PartyStateStore scale seam
+
+`src/lib/party/state-store.ts` defines the `PartyStateStore` interface and `getPartyStore()` (singleton
+pinned on `globalThis`). `src/lib/party/in-memory-store.ts` is the **v1 single-instance** implementation
+(a `Map` + per-party `EventEmitter`, chat ring buffer, a per-party promise-chain lock so `updateParty`
+mutations are serialized atomically). This interface is the **horizontal-scale boundary**: to run multiple
+instances later, swap the in-memory backing for Redis pub/sub or Postgres LISTEN/NOTIFY (subscribe becomes
+a subscription, updateParty publishes) without touching any other party code. Do not build that in v1.
+Reactions deliberately have no store method — they are fire-and-forget with no backlog.
+
+### Files
+
+| File | Role |
+|---|---|
+| `src/lib/party/constants.ts` | All timing/tolerance constants (single source of truth) + the 8-emoji reaction set |
+| `src/lib/party/types.ts` | Protocol contract — every client/server message, live + durable shapes (client-safe, type-only) |
+| `src/lib/party/state-store.ts` | `PartyStateStore` interface + `getPartyStore()` singleton accessor |
+| `src/lib/party/in-memory-store.ts` | `InMemoryPartyStateStore` (the scale seam's v1 backing) |
+| `src/lib/party/position.ts` | `extrapolatePosition`, `medianReportedPositionTicks`, tick↔seconds helpers |
+| `src/lib/party/session.ts` | WS-upgrade auth: `parseSessionCookie`, `lookupPartySession` (extracted session lookup, no rotation) |
+| `src/lib/party/db.ts` | Durable query layer (create/join/leave/end, members, `checkpointParty`, `loadActiveParties`) |
+| `src/lib/party/server.ts` | `initPartyServer()` — the WS server + full command pipeline + drift + grace + cleanup |
+| `src/lib/party/events.ts` | `globalThis`-pinned `partyEvents` emitter — bridges store `endParty()` → WS `party_ended` |
+| `src/lib/party/socket-url.ts` | `getPartySocketUrl()` — dev `:3002` vs prod same-origin `wss` |
+| `src/lib/party/client.ts` | Client REST wrappers (create/join/info/leave/end) |
+| `src/hooks/usePartySync.ts` | The client hook — reconnecting socket, clock offset, state apply, drift, chat/reactions |
+| `src/components/party/*` | `PartyPanel`, `ChatPanel`, `ReactionOverlay`, `ReactionBar`, `StartPartyButton`, `JoinByCodeModal` |
+| `src/app/api/party/**` | REST lifecycle: `POST /api/party`, `/join`, `GET`+`DELETE /[partyId]`, `POST /[partyId]/leave` |
+
+No new env vars. `NEXT_PUBLIC_APP_URL` is reused to build the join link.
+
+### REST lifecycle (rate-limited via `checkRateLimit`)
+
+- `POST /api/party` — `requireAuth`, body `{mediaId}`, validates playable item, generates id + unique 6-char
+  `joinCode`, inserts party + host member, seeds the live store. Returns `{partyId, joinCode, joinUrl}`
+  where `joinUrl = ${NEXT_PUBLIC_APP_URL}/play/${mediaId}?party=${joinCode}`. Limit 10/hour/user.
+- `POST /api/party/join` — body `{joinCode}` or `{partyId}`, upserts/reactivates membership, ensures live
+  state exists. Returns `{partyId, mediaId, joinCode}`. Limit 30/hour/user.
+- `GET /api/party/[partyId]` — `requireAuth` + membership; returns durable info + member list.
+- `POST /api/party/[partyId]/leave` — marks `left_at`; **last member out ends the party** (host leaving
+  does NOT — control is shared).
+- `DELETE /api/party/[partyId]` — host only; ends the party. The shared in-process store fans `party_ended`.
+
+### WebSocket protocol and the server-authority pipeline
+
+All messages are JSON. Every client message carries `{type, partyId}` and is membership-checked **per
+message** (a valid session that is not a member is rejected — the endpoint is public). Client→server:
+`join`, `control{action,positionTicks,clientTime}`, `heartbeat`, `ready`, `ping`, `chat`, `reaction`,
+`leave`. Server→client: `state` (full authoritative snapshot), `reseek`, `waiting`, `chat`,
+`chat_backlog`, `reaction`, `pong`, `party_ended`, `error`.
+
+The **pause-war fix**: every `control` runs through one serialized per-party path (`updateParty`). Each
+applied command stamps a monotonically increasing `commandSeq` (arbitrates which command wins) and an
+`effectiveAt` absolute server timestamp (schedules when the winning transition fires on every client).
+`effectiveAt` layers on `commandSeq`, it does not replace it. Lead times are asymmetric: `PLAY_LEAD_MS`
+(1000) so transcoding clients can pre-buffer, `CONTROL_LEAD_MS` (300) for pause/seek. The server never
+echoes a client's command back as a command — it applies it and broadcasts the resulting state to everyone
+including the originator. Clients translate `effectiveAt` to local time through a smoothed clock offset
+(`CLOCK_OFFSET_EMA_ALPHA` 0.4) computed from `ping`/`pong`. A periodic keepalive `state` every
+`KEEPALIVE_STATE_BROADCAST_MS` (10s) corrects drift even absent commands (its `effectiveAt` equals
+`serverTime` — "reconcile now").
+
+**Readiness gate** (cross-device fix). A play is held until all CONNECTED members report `ready=true`, or
+released after `READINESS_GATE_MAX_WAIT_MS` (20s) — whichever first; while held, a `waiting` broadcast lists
+who is still buffering. The gate timeout fires from the server's periodic tick checking `pendingPlay`.
+
+**Drift bands** (single source of truth, in `constants.ts`): below `SEEK_DEADBAND_S` (0.25s) do nothing;
+from 0.25s up to `DRIFT_HARD_RESEEK_S` (1.5s) the **client** absorbs it with a `video.playbackRate` nudge
+clamped to `[0.90, 1.10]`; at/above 1.5s the server sends that one client a targeted `reseek`. During
+`POST_JOIN_SETTLE_MS` (8s) after join/reconnect the hard reseek is suppressed (nudge only) so a slow
+transcode start is not punished. With >2 connected members the **median** of reported positions sets the
+room timeline (one laggard never stalls everyone); a member beyond `MEDIAN_OUTLIER_RESEEK_S` (1.5s) off the
+median gets a reseek. The monotonic high-water-mark guard means a lagging heartbeat never drags the room
+backward — authoritative position moves only through applied commands and median reconciliation.
+
+### Resilience
+
+Application heartbeat every `HEARTBEAT_INTERVAL_MS` (5s) + ws protocol ping every `WS_PING_INTERVAL_MS`
+(20s); a socket missing `WS_PONG_MISS_LIMIT` (2) pongs is dropped. The client wraps its socket in a
+reconnecting wrapper (backoff immediate/1s/2s/5s) and on reconnect re-`join`s and adopts the full snapshot
+wholesale. A dropped member sits in `'grace'` for `DISCONNECT_GRACE_MS` (30s) before eviction, so a
+backgrounded tab / phone lock / cellular blip does not eject anyone. A party with zero connected members
+ends after `EMPTY_PARTY_IDLE_END_MS` (60s). On boot, `loadActiveParties()` rehydrates `status='active'`
+parties from their checkpoints so a restart does not destroy in-progress parties.
+
+### Chat and reactions
+
+Both ride the same socket, authorized by the same per-message membership check. **Chat** is ephemeral but
+the server keeps a `CHAT_RING_BUFFER_SIZE` (50) in-memory backlog per party, sent as `chat_backlog` on join
+so a late joiner sees recent context. Sender name, `ts`, and `id` are all stamped **server-side**; the
+client supplies only `text`. Nothing is written to SQLite. **Reactions** (fixed eight: 😂 ❤️ 😮 😢 👍 🔥 🎉 👏)
+are fire-and-forget with no backlog — a reaction that arrives after you do is simply not shown.
+
+### Client integration — the three action origins (the critical correctness rule)
+
+`usePartySync(partyId, {videoRef, selfUserId, enabled})` layers onto the existing `VideoPlayer` as a hook;
+the player is not rewritten. Every play/pause/seek the player observes has one of three origins and they are
+handled differently:
+
+1. **Remote-applied** (the hook moving the player from a `state`/`reseek` message) — done inside an
+   `applyingRemoteStateRef`; the `<video>` element's own `onPlay`/`onPause`/`seeked` side-effects must not
+   send intents back. Prevents the echo loop.
+2. **Player-emitted** (the `<video>` firing pause or a backward micro-seek while buffering/transcoding) —
+   NOT user intent, must NOT become commands. Achieved structurally: intents are never derived from element
+   events; those only update local UI.
+3. **Genuine user action** (the local user clicking play, pressing a shortcut, releasing the scrubber) —
+   ONLY these become `control` intents.
+
+In party mode the hook intercepts the user-action surfaces (`togglePlay`, the keyboard handlers via a
+`partyKbdRef`, the scrubber commit `handleSeek`) so they call `party.sendIntent(action, positionTicks)`
+instead of mutating the video. The video moves only when the resulting server `state` arrives, routed
+through the `applyingRemoteState` path. The server thus **never receives** the spurious buffering events
+rather than having to filter them. The server-side debounce and high-water guard remain only as a backstop.
+All party UI and rerouting is gated behind `partyId` truthiness, so non-party playback is unchanged.
+
+Entry points: on `/play/[id]`, `?party={joinCode}` auto-joins on load (`POST /api/party/join` then connect
+the socket); a "Start watch party" button (`StartPartyButton`) creates a party for the current item; a
+"Join with code" modal handles manual entry.
+
+### Deploy and the mandated edge test
+
+Caddy route applied and reloaded (section above). To ship the code, rebuild via compose (never bare
+`docker build`):
+
+```bash
+docker compose build --no-cache unified-frontend
+docker compose up -d --force-recreate unified-frontend
+```
+
+After deploy, the spec **requires** an edge test: connect from an off-tailnet (cellular) client through the
+full BunkerWeb → CrowdSec → Caddy path and confirm the upgrade completes and the socket survives at least
+two minutes idle. The 5s heartbeat + 20s ws ping keep the socket under any typical 60s idle reap. **If
+BunkerWeb still reaps it**, add a WebSocket-aware per-domain exception for `/api/party/ws` in
+`/opt/docker/compose/edge/docker-compose.yml`, in the same style as the existing `unified.minijoe.dev_*`
+overrides (raise the reverse-proxy read timeout for that path or exempt it from idle close); confirm the
+exact BunkerWeb variable against the running config first. Tailnet clients do not hit this.

@@ -473,6 +473,36 @@ export function runMigrations(db: Database.Database): void {
       ON media_watch_state(user_id, media_id);
   `)
 
+  // Party Play — durable membership and existence (live position lives in memory).
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS watch_parties (
+      id                  TEXT PRIMARY KEY,           -- opaque 32-char id (makeId(32))
+      join_code           TEXT UNIQUE NOT NULL,       -- short shareable 6-char code
+      host_user_id        TEXT NOT NULL,              -- FK to users.id; creator, host-only powers
+      media_id            TEXT NOT NULL,              -- FK to media_items.id, the item being watched
+      status              TEXT NOT NULL DEFAULT 'active'
+        CHECK(status IN ('active','ended')),
+      created_at          INTEGER NOT NULL,
+      updated_at          INTEGER NOT NULL,
+      ended_at            INTEGER,
+      last_position_ticks INTEGER NOT NULL DEFAULT 0, -- checkpoint for restart recovery only
+      last_paused         INTEGER NOT NULL DEFAULT 1  -- checkpoint for restart recovery only
+    );
+    CREATE INDEX IF NOT EXISTS idx_watch_parties_code   ON watch_parties(join_code);
+    CREATE INDEX IF NOT EXISTS idx_watch_parties_status ON watch_parties(status);
+
+    CREATE TABLE IF NOT EXISTS watch_party_members (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      party_id      TEXT NOT NULL,                    -- FK to watch_parties.id
+      user_id       TEXT NOT NULL,                    -- FK to users.id
+      joined_at     INTEGER NOT NULL,
+      left_at       INTEGER,
+      is_host       INTEGER NOT NULL DEFAULT 0,
+      UNIQUE(party_id, user_id)                       -- makes join idempotent (reactivate, not duplicate)
+    );
+    CREATE INDEX IF NOT EXISTS idx_watch_party_members_party ON watch_party_members(party_id);
+  `)
+
   // --------------------------------------------------------------------------
   // Additive column migrations — ALL placed here so every table exists before
   // any ALTER TABLE runs. Each statement is wrapped in try/catch so re-runs on

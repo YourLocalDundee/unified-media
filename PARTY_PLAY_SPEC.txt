@@ -1,0 +1,844 @@
+UNIFIED MEDIA — PARTY PLAY (WATCH TOGETHER) AND CHAT — DEFINITIVE REFERENCE SPECIFICATION
+Target: unified-frontend, the Next.js media platform at /home/minijoe/dev/unified-frontend
+
+This is the complete v1 specification for native party play and chat inside the unified-frontend
+media server. It is written as one continuous reference in dependency order: read it start to finish
+and each idea builds on the one before it. The condensed build sequence is the only ordered list, and
+it lives at the very end. Stop and surface the plan before the WebSocket server work and again before
+wiring the player, because both are integration points with existing code.
+
+The player is complete and working: direct play, audio remux, hardware HEVC transcode via VAAPI,
+audio-incompatibility fallback, embedded subtitle extraction, per-track audio switching, and English
+language defaults all function. Party play sits on top of that finished player and must not modify
+playback behavior, only coordinate it across clients. It must not touch transcode, codec, audio-track,
+or subtitle behavior. position_ticks and continue-watching remain the single source of truth for
+position, exactly as the audio-switch work preserved (each value is in 100-nanosecond ticks, seconds *
+10_000_000, matching media_watch_state.position_ticks and the player's reportProgress path).
+
+
+WHAT PARTY PLAY IS, IN ONE PARAGRAPH
+
+A party is a shared viewing session for one media item where every member's player is kept in sync.
+Anyone in the party can play, pause, or seek, and everyone follows. Members can be on the local
+tailnet or coming in through the public edge, on phones, laptops, or TVs, each potentially on a
+different transcode rendition, but all locked to the same content timeline. The server is the single
+authority on party state. Clients send intents (play, pause, seek) and render whatever the server
+broadcasts back. v1 ships sync, presence, text chat, and lightweight emoji reactions. Chat and
+reactions are first-class in this document, not deferred; they ride the same socket as playback.
+
+
+CROSS-REPO LESSONS THIS SPEC ABSORBS (WHAT WAS ADOPTED, FROM WHERE, AND WHY)
+
+Four reference projects were studied for design reasoning only, not code. None targets our architecture
+(native party play inside a custom Next.js media server with hardware transcode), so their patterns were
+confirmed or improved against our design, not copied.
+
+- howardchung/watchparty (production React app, socket.io, shared browser sessions and YouTube). Adopted:
+  client-side playback-rate micro-nudge to absorb sub-second drift instead of a jarring hard seek; a
+  two-phase late-join seek (seek to the snapshot position to begin buffering, then re-sync to the
+  now-current position once the player signals it can play); median-of-clients as the room sync reference
+  so one laggard does not drag everyone; a monotonic high-water-mark guard so a late position report never
+  rolls authoritative position backward; chat on the same socket with a server-kept rolling buffer served
+  to late joiners. Its weaknesses we do not copy: no command ordering (races resolve arbitrarily), no
+  readiness gate, no disconnect grace window.
+
+- mhbxyz/OpenWatchParty (Rust session server plus a C# Jellyfin plugin). It has the cleanest protocol of
+  the four. Adopted: every timed transition carries an absolute server timestamp for the moment it should
+  take effect (our effectiveAt), and clients translate server-time to local-time through a smoothed clock
+  offset, so simultaneity is independent of per-client latency; asymmetric lead times, longer for play so
+  clients can pre-buffer and shorter for pause and seek; a readiness gate that holds play until all-ready
+  or a timeout; server-side suppression of the false-pause and backward-micro-seek telemetry that
+  buffering transcode clients emit, kept here only as a backstop (see the client-source fix below). Its
+  weaknesses we do not copy: host-only control, and host-disconnect closing the room.
+
+- kyle8998/Vynchronize (small YouTube-link sync app). Its README documents migrating from host-less rooms
+  to a host socket because users hated pressing a Sync button repeatedly and late joiners started from
+  zero, so they elected one client to push current video state to new joiners. This validates our design
+  rather than challenging it: they pushed authority into a client only because the server held no live
+  state. We hold the one true state on the server, so we deliver the same auto-sync-on-join outcome by
+  snapshotting authoritative state to the joiner directly, with no host election, no failover, and no
+  load-timeout poke. Borrowed only the tuning instinct (a seek deadband and a drift tolerance band),
+  reconciled into the explicit constants below.
+
+- OpenLake/WatchParty (small YouTube-link sync app with chat). Chat rides the one socket (confirms our
+  choice), but they keep no server backlog so late joiners see an empty chat, and they attach the sender
+  name client-side with no timestamp or id. Our fix is the server-kept ring buffer with sender name,
+  timestamp, and id all stamped server-side. Reactions are greenfield with no prior art, so our
+  fire-and-forget, no-backlog reaction model on the same socket stands.
+
+The one thing all four lacked and we keep as our arbitration advantage is a monotonic per-party command
+sequence number (commandSeq). effectiveAt scheduling layers on top of commandSeq, it does not replace it:
+commandSeq decides which command wins, effectiveAt decides when the winning transition fires.
+
+
+CORE DESIGN PRINCIPLES (READ BEFORE BUILDING)
+
+1. Server authority. The WebSocket server holds the one true party state (position, paused/playing,
+   playback rate, who is a member, who is ready). Clients never trust their own optimistic state for the
+   shared timeline. A client that pauses does not pause itself directly, it sends a pause intent, the
+   server applies it to the authoritative state, and the client pauses when the server broadcasts the new
+   state back. This is what prevents the pause war when anyone can control.
+
+2. Durable vs ephemeral split. Live, high-frequency state (current position, paused, playback rate,
+   per-member heartbeat and readiness, chat ring buffer) lives in memory in the WebSocket server process,
+   never in SQLite. Only durable facts persist to SQLite: that a party exists, its join code, what it is
+   watching, who the host is, and occasional position checkpoints for restart recovery. This keeps the
+   heartbeat storm off the single SQLite writer, which is the system's known scaling weak point.
+
+3. Horizontal-scale-ready by isolation, not by implementation. v1 runs in one container and the live
+   state is a single in-memory module pinned on globalThis. That module is hidden behind a small
+   interface (PartyStateStore) so that if the app ever runs as multiple instances, the in-memory
+   implementation is swapped for a Redis pub/sub or Postgres LISTEN/NOTIFY backing without touching any
+   other party code. Write the interface now, implement it in-memory now. Do not build the distributed
+   backing in v1. The interface is the horizontal-scale boundary.
+
+4. Authenticate every message, not just the connection. Because the app is reachable from the public
+   internet through BunkerWeb and Caddy, the WebSocket handshake must validate the unified-session cookie,
+   and every control, chat, and reaction message must confirm the sender is a member of the specific party
+   it is acting on. A socket being open is not authorization to control or post to a party.
+
+5. Resilience by design. Backgrounded tabs, brief network drops, and the public-edge path through
+   BunkerWeb and Caddy all make connections fragile. Application heartbeat plus WebSocket ping/pong keep
+   sockets alive, clients auto-reconnect and resync by adopting the full-state snapshot, and a server-side
+   grace window means a short drop does not eject a member. Build this in from the start, not as a later
+   patch.
+
+6. Do not touch playback internals. Party play observes and commands the existing player. It reads
+   video.currentTime and the play/pause state, and it calls the player's existing play, pause, and seek
+   paths and adjusts video.playbackRate for micro-correction. It must not change transcode, codec,
+   audio-track, or subtitle behavior. The rate-nudge described later is purely a client-side
+   video.playbackRate tweak, never a server retranscode, and position_ticks remains the single source of
+   truth for watch progress.
+
+7. Stop spurious events at the source. The single most important client correctness rule is to
+   distinguish where an action came from. There are three origins: a remote action being applied from a
+   server snapshot, a genuine user action (the local user actually clicked or scrubbed), and a
+   player-emitted event (the <video> element fired pause or a backward micro-seek because it is buffering
+   or starting a transcode). Only genuine user actions become intents sent to the server. Remote-applied
+   changes and player-emitted events never become intents. This keeps echo loops and transcode noise off
+   the wire entirely instead of relying on the server to filter them after the fact.
+
+
+FINAL TIMING AND TOLERANCE CONSTANTS (STATED EXPLICITLY, NOT AS RANGES)
+
+These reconcile the borrowed tuning instincts with the spec's original 1.5s tolerance. Use these exact
+values; they are the single source of truth for every "tolerance" referenced later in this document.
+
+  HEARTBEAT_INTERVAL_MS          5000    client -> server heartbeat carrying current position
+  WS_PING_INTERVAL_MS            20000   server -> client ws protocol ping
+  WS_PONG_MISS_LIMIT             2       terminate socket after this many consecutive missed pongs
+  KEEPALIVE_STATE_BROADCAST_MS   10000   server -> all periodic full-state resync even absent commands
+  PLAY_LEAD_MS                   1000    effectiveAt lead for a play transition (pre-buffer headroom)
+  CONTROL_LEAD_MS                300     effectiveAt lead for a pause or seek transition
+  COMMAND_DEBOUNCE_MS            300     drop a competing duplicate same-action that would not change state
+  CLOCK_OFFSET_EMA_ALPHA         0.4     newOffset = 0.6*old + 0.4*sample (smoothed server-time offset)
+  SEEK_DEADBAND_S                0.25    when adopting server state, ignore a position correction below this
+  RATE_NUDGE_LOW_S               0.25    drift at or above this and below the hard threshold -> rate-nudge
+  DRIFT_HARD_RESEEK_S            1.5     drift at or above this -> targeted hard reseek
+  RATE_NUDGE_CLAMP               0.10    video.playbackRate stays within [0.90, 1.10] during a nudge
+  POST_JOIN_SETTLE_MS            8000    after join/reconnect, only rate-nudge (no hard reseek) for this long
+  READINESS_GATE_MAX_WAIT_MS     20000   release a held play when all ready OR after this, whichever first
+  MEDIAN_OUTLIER_RESEEK_S        1.5     a client this far off the median room timeline gets a reseek
+  DISCONNECT_GRACE_MS            30000   a dropped member sits in 'grace' this long before eviction
+  EMPTY_PARTY_IDLE_END_MS        60000   a party with zero connected members ends after this idle window
+  CHECKPOINT_THROTTLE_MS         12000   throttle for position/paused checkpoints to SQLite
+  CHAT_RING_BUFFER_SIZE          50      most-recent chat messages held in memory per party for joiners
+  CREATE_RATE_LIMIT              10/hour/user via the existing checkRateLimit
+  JOIN_RATE_LIMIT                30/hour/user via the existing checkRateLimit
+
+The three drift bands, stated once: below SEEK_DEADBAND_S (0.25s) do nothing; from 0.25s up to
+DRIFT_HARD_RESEEK_S (1.5s) apply a client-side video.playbackRate nudge clamped to [0.90, 1.10]; at or
+above 1.5s apply a targeted hard reseek to the expected position. During POST_JOIN_SETTLE_MS (8s) after a
+join or reconnect, suppress the hard reseek and use only the nudge, so a slow transcode start is not
+punished with a jarring jump.
+
+
+DATA MODEL — DURABLE STATE IN SQLITE
+
+Add both tables in a new migration block in src/lib/db/migrations.ts, in the same idempotent style as the
+existing tables (CREATE TABLE IF NOT EXISTS plus CREATE INDEX IF NOT EXISTS, inside the main db.exec
+block so the tables exist before any ALTER runs). They reference media_items.id (TEXT UUID) and users.id
+(TEXT). Both ids are resolved with the existing makeId pattern from src/lib/dal.ts (makeId(32), the
+62-char crypto.getRandomValues alphabet). The join code reuses the invite-code generator approach from
+src/app/api/admin/invites/route.ts (UPPER 36-char alphabet, crypto.getRandomValues) but at length 6 for a
+friendly shareable code, regenerated on collision until unique against watch_parties.
+
+watch_parties
+  id                  TEXT PRIMARY KEY            -- opaque 32-char id, makeId(32) pattern, same as sessions
+  join_code           TEXT UNIQUE NOT NULL        -- short shareable 6-char code, invite_codes generator
+  host_user_id        TEXT NOT NULL               -- FK to users.id; creator; host-only powers (end party)
+  media_id            TEXT NOT NULL               -- FK to media_items.id, the item being watched
+  status              TEXT NOT NULL DEFAULT 'active'
+                        CHECK(status IN ('active','ended'))
+  created_at          INTEGER NOT NULL
+  updated_at          INTEGER NOT NULL
+  ended_at            INTEGER
+  last_position_ticks INTEGER NOT NULL DEFAULT 0  -- periodic checkpoint of authoritative position, recovery only
+  last_paused         INTEGER NOT NULL DEFAULT 1  -- checkpoint of paused state, recovery only
+  CREATE INDEX IF NOT EXISTS idx_watch_parties_code   ON watch_parties(join_code)
+  CREATE INDEX IF NOT EXISTS idx_watch_parties_status ON watch_parties(status)
+
+watch_party_members
+  id            INTEGER PRIMARY KEY AUTOINCREMENT
+  party_id      TEXT NOT NULL                     -- FK to watch_parties.id
+  user_id       TEXT NOT NULL                     -- FK to users.id
+  joined_at     INTEGER NOT NULL
+  left_at       INTEGER
+  is_host       INTEGER NOT NULL DEFAULT 0
+  UNIQUE(party_id, user_id)
+  CREATE INDEX IF NOT EXISTS idx_watch_party_members_party ON watch_party_members(party_id)
+
+Foreign-key relationships. watch_parties.media_id references media_items.id (a playable item with a
+non-NULL file_path; series-container ids with file_path NULL are rejected at create time, the same rule
+the player uses). watch_parties.host_user_id and watch_party_members.user_id reference users.id.
+watch_party_members.party_id references watch_parties.id. SQLite foreign-key enforcement follows the
+codebase's existing convention; the UNIQUE(party_id, user_id) constraint is what makes join idempotent
+(re-joining reactivates the same row rather than duplicating it).
+
+Durability scope. These two tables record membership and existence, not live state. Do not write position
+or heartbeat here on every tick. last_position_ticks and last_paused are checkpointed at most every
+CHECKPOINT_THROTTLE_MS (12s) and on significant events (pause, seek, member join), purely so a server
+restart can restore a party near where it was. The authoritative live position is in memory.
+
+
+DATA MODEL — EPHEMERAL LIVE STATE IN MEMORY
+
+Held in the WebSocket server process, behind the PartyStateStore interface, pinned on globalThis so it
+survives module re-evaluation and is shared by the WS server and the /api/party REST handlers (which run
+in the same process; see the server-attach section). For each active party the in-memory record holds:
+
+  partyId
+  mediaId
+  positionTicks         -- authoritative current content position (100ns ticks)
+  paused                -- boolean
+  playbackRate          -- number, default 1.0 (the room's intended rate, not a client's nudge)
+  lastTickWallClock     -- server timestamp when positionTicks was last set, used to extrapolate
+  commandSeq            -- monotonically increasing integer, stamped on every applied command
+  pendingPlay           -- non-null when a play is held by the readiness gate (the intent to fire when ready)
+  lastActor             -- { userId, displayName, action } of the most recent applied command, for attribution
+  members: Map<userId, {
+    socketId
+    displayName
+    ready                -- has this client buffered enough to play
+    lastHeartbeat        -- server timestamp of last heartbeat
+    reportedPositionTicks-- last position this client reported, used for median and drift detection
+    clockOffsetMs        -- smoothed server-minus-client time offset from ping/pong
+    connectionState      -- 'connected' | 'grace' (briefly dropped, not yet evicted)
+    graceTimer           -- handle for the eviction timer while in 'grace'
+    rendition            -- optional, which quality/audio this client is on, for diagnostics
+  }>
+  chatBacklog: ring buffer of the last CHAT_RING_BUFFER_SIZE (50) chat messages,
+               each { id, fromUserId, fromDisplayName, text, ts }
+
+Extrapolation rule. The true current position at any instant when playing is
+positionTicks + (now - lastTickWallClock) * playbackRate. When paused it is just positionTicks. Clients
+use the same formula on the state they receive so they can compute where they should be without waiting
+for the next broadcast. positionTicks is in 100ns ticks; convert the wall-clock delta to ticks
+(milliseconds * 10_000) when applying the formula.
+
+Monotonic high-water-mark guard. A heartbeat that reports a position behind the authoritative extrapolated
+position never drags positionTicks backward. Reported positions update only the member's
+reportedPositionTicks (for median and drift detection); the authoritative positionTicks moves only through
+applied commands and the median reconciliation below, never directly from a lagging client's report. This
+prevents a buffering client's stale report from rubber-banding the room.
+
+Median room timeline. When more than two members are connected and playing, the room's reference position
+for drift decisions is the median of the members' reportedPositionTicks. On each heartbeat round the
+server gently reconciles authoritative positionTicks toward that median so the canonical timeline tracks
+the room's real center of mass rather than the fastest or slowest extreme. Any single client whose
+reported position is more than MEDIAN_OUTLIER_RESEEK_S (1.5s) off the median gets a targeted reseek. The
+effect: the room never stutters waiting on one laggard (the median, not the slowest, sets the timeline),
+but the laggard is still pulled back into sync. With two or fewer members the authoritative extrapolated
+position is the reference directly, since a median of two is just their midpoint and adds nothing.
+
+
+THE PartyStateStore INTERFACE (THE SCALE SEAM)
+
+Define this interface in lib/party/state-store.ts and implement InMemoryPartyStateStore now, pinned on
+globalThis. All party logic talks only to this interface. Document in the file, in a comment, that this
+interface is the horizontal-scale boundary and that the in-memory implementation is single-instance only.
+When this is later swapped for Redis, subscribe becomes a Redis subscription and updateParty publishes,
+but the WebSocket layer code does not change.
+
+  interface PartyStateStore {
+    createParty(party): Promise<void>
+    getParty(partyId): Promise<PartyLiveState | null>
+    updateParty(partyId, mutator): Promise<PartyLiveState>   // apply a mutation atomically, return new state
+    addMember(partyId, member): Promise<void>
+    removeMember(partyId, userId): Promise<void>
+    setMemberReady(partyId, userId, ready): Promise<void>
+    heartbeat(partyId, userId, reportedPositionTicks, wallClock): Promise<void>
+    setMemberConnectionState(partyId, userId, state): Promise<void>  // 'connected' | 'grace'
+    appendChat(partyId, message): Promise<void>              // push to ring buffer, trim to 50
+    getChatBacklog(partyId): Promise<ChatMessage[]>          // most-recent 50, for a joiner
+    endParty(partyId): Promise<void>
+    subscribe(partyId, listener): Unsubscribe                // listener fires when this party's state changes
+  }
+
+The in-memory implementation backs this with a Map and an EventEmitter. updateParty applies the mutator
+inside a per-party critical section so mutations are serialized (naturally single-threaded in Node with
+this implementation, but written so a future backing store preserves atomicity). subscribe is what the
+WebSocket layer uses to fan state changes out to all sockets in a party. Reactions deliberately do not
+touch the store: they are fire-and-forget passthrough broadcasts with no backlog, so there is no reaction
+method here.
+
+
+SERVER ARCHITECTURE — ATTACHING THE WEBSOCKET SERVER (DETERMINED, NOT ASSUMED)
+
+Determination. The instrumentation hook CANNOT attach to the Next standalone HTTP server for the upgrade
+event. This was verified at source level against next 16.2.7. The standalone server.js calls startServer()
+from next/dist/server/lib/start-server.js, where the http.Server is a function-local const (around line
+248), never stored on a global and never passed to instrumentation's register() (which Next calls with no
+arguments). Next also installs its own server.on('upgrade', ...) handler (around line 252) that calls
+socket.destroy() on any upgrade it does not recognize. So there is no supported handle to reach that
+server, and Next's own listener would fight ours.
+
+Chosen approach: a dedicated WebSocket server on its own internal port (3002), started from the
+instrumentation hook, in the same process. This keeps the Docker CMD unchanged as node server.js (the
+custom-server alternative was rejected: its only benefit is avoiding one internal port, at the cost of
+owning a piece of Next's startup path forever, a bad trade). Because register() runs inside the Next
+server process, it can start its own ws server on port 3002 and own that listener's upgrade event with
+zero conflict with Next. Critically, this is the same process that runs the /api/party REST route handlers
+and the existing schedulers, so the globalThis-pinned PartyStateStore singleton is shared between the WS
+server and the REST routes exactly as the existing initScheduler, initSubtitleScheduler, initWatcher, and
+initIndexerDiscovery already share process state from this hook.
+
+Implementation:
+- Add ws as a dependency (npm i ws). Do not use socket.io; it adds protocol overhead and its own
+  reconnection semantics that fight the explicit design here.
+- In src/instrumentation.ts, guarded on NEXT_RUNTIME === 'nodejs', after the existing scheduler inits,
+  import and call initPartyServer(). Use a module-level (globalThis-pinned) started guard identical to the
+  scheduler's double-registration guard so a re-evaluated module does not start a second listener.
+- initPartyServer() creates a bare http.Server (or directly a WebSocketServer in noServer mode bound to
+  its own http.Server) listening on port 3002, hostname 0.0.0.0, and handles the upgrade event for the
+  path /api/party/ws. Validate the upgrade request before completing the handshake (see auth below).
+  Reject any other path.
+- Because this listener is on its own port, it does not intercept Next's own upgrades and Next does not
+  intercept it. They coexist in one process, sharing memory.
+
+Public-edge routing. The browser connects same-origin to wss://unified.minijoe.dev/api/party/ws. Caddy
+routes that path to the new internal port while everything else continues to 3001. Add to the unified
+Caddy block, before the catch-all reverse_proxy:
+
+  unified.minijoe.dev {
+    import compressed
+    @partyws path /api/party/ws*
+    reverse_proxy @partyws unified-frontend:3002
+    reverse_proxy unified-frontend:3001
+  }
+
+Caddy upgrades WebSockets automatically (it forwards the Upgrade and Connection headers), so no extra ws
+directive is needed. Expose 3002 on the container the same internal-only way 3001 is exposed
+(192.168.0.50 binding); it has no public surface of its own, it is reachable only through Caddy.
+
+Dev vs prod connection target. In production the client connects to wss://<host>/api/party/ws (same
+origin, Caddy maps the path to 3002). In development there is no Caddy, so the client connects directly to
+ws://<hostname>:3002/api/party/ws while the page is served from :3001. Cookies are not port-scoped, so the
+unified-session cookie is still sent to :3002 on the same hostname. Provide a small helper that builds the
+socket URL per environment.
+
+Content-Security-Policy. next.config.ts currently sets connect-src 'self' http://ip-api.com. Widen it so
+the browser may open the socket. Add the wss origin for production and the ws origin for development:
+  connect-src 'self' http://ip-api.com wss://unified.minijoe.dev ws://localhost:3002
+('self' covers same-origin wss in modern browsers, but list the origins explicitly so the separate dev
+port and any future host change do not silently break the connection.)
+
+BunkerWeb idle reaping. The public path traverses BunkerWeb, CrowdSec, and Caddy. Caddy upgrades
+WebSockets fine. BunkerWeb may reap long-lived idle upgraded connections. The primary defense is traffic:
+the application heartbeat every HEARTBEAT_INTERVAL_MS (5s) plus the ws protocol ping every
+WS_PING_INTERVAL_MS (20s) keep the socket active well under any typical 60s idle timeout. After building,
+the connection MUST be tested from a client that is OFF the tailnet (cellular) to confirm the upgrade
+completes through the full edge and survives at least two minutes idle. If BunkerWeb still reaps it, add a
+WebSocket-aware exception for /api/party/ws as a per-domain setting in
+/opt/docker/compose/edge/docker-compose.yml, in the same style as the existing unified.minijoe.dev_*
+overrides (raise the reverse-proxy read timeout for that path or exempt it from idle close); confirm the
+exact BunkerWeb variable against the running config. Tailnet clients will not hit this; it is purely a
+public-edge concern.
+
+
+AUTHENTICATION AND AUTHORIZATION
+
+Handshake auth (at upgrade time):
+- The browser sends the unified-session cookie automatically on the WebSocket upgrade request
+  (same-origin, and same-hostname in dev). Read it from the upgrade request headers (req.headers.cookie),
+  parse out the unified-session value.
+- Validate it through the existing session path. getSession in lib/dal.ts is built for the Next request
+  context (it reads cookies() and performs rotation). Extract the core lookup into a function callable
+  from the raw upgrade handler:
+    SELECT s.id, s.user_id, s.created_at, s.expires_at, u.username, u.role
+    FROM sessions s JOIN users u ON s.user_id = u.id
+    WHERE s.id = ? AND s.expires_at > ? AND u.is_active = 1
+  Do not duplicate the 24h rotation or cookie-mutation logic into the socket path; rotation stays on HTTP
+  requests. The socket only needs to resolve the cookie to a valid { userId, username, role } or reject.
+- If the session is invalid, destroy the socket during the upgrade (socket.destroy()); do not complete the
+  handshake.
+
+Per-message auth (every control, chat, and reaction message):
+- Each client message names the partyId it acts on. The server confirms, against PartyStateStore, that
+  this userId is a current member of that party before applying or broadcasting anything. A valid session
+  that is not a member of the party gets the message rejected, not applied.
+- This matters specifically because the endpoint is public. Never act on membership inferred from the
+  socket alone; always check membership against current party state.
+
+
+HTTP API — PARTY LIFECYCLE (REST, NOT WEBSOCKET)
+
+Normal Next.js route handlers under app/src/app/api/party. They handle creation, joining, and lookup. The
+WebSocket handles only the live sync, chat, and reactions once a client is in. All are rate-limited with
+the existing checkRateLimit to match the app's conventions.
+
+POST /api/party
+  requireAuth. Body { mediaId }. Validates the media item exists in media_items and is playable (has a
+  file_path; a series-container id with file_path NULL is rejected, parties are per playable item).
+  Generates an opaque party id (makeId(32)) and a short unique 6-char join_code (invite generator
+  approach, regenerated on collision against watch_parties). Inserts watch_parties (status active,
+  host = caller) and a watch_party_members row (is_host 1). Returns { partyId, joinCode, joinUrl } where
+  joinUrl is NEXT_PUBLIC_APP_URL + /play/{mediaId}?party={joinCode}. This satisfies both join methods: the
+  code for manual entry, the link for one-tap join. Rate limit CREATE_RATE_LIMIT (10/hour/user).
+
+POST /api/party/join
+  requireAuth. Body { joinCode } OR { partyId }. Looks up the active party by code or id. If found and
+  active, inserts or reactivates (clears left_at on) the caller's watch_party_members row. Returns
+  { partyId, mediaId } so the client knows what to load. If the party is ended or not found, 404. If the
+  party is for a different media item than the client currently has open, the client navigates to the
+  party's mediaId (the join URL already encodes this). Rate limit JOIN_RATE_LIMIT (30/hour/user).
+
+GET /api/party/[partyId]
+  requireAuth and membership check. Returns durable party info plus the current member list (names, host
+  flag) for rendering the party panel. Live position comes over the socket, not here.
+
+POST /api/party/[partyId]/leave
+  requireAuth. Marks the member left_at. If the leaving member was the last one, end the party (status
+  ended, ended_at). Host leaving does NOT end the party in v1 since control is shared; the party continues
+  for remaining members, and only the last member out ends it. This choice is deliberate and documented.
+
+DELETE /api/party/[partyId]
+  requireAuth, host only. Explicitly ends the party for everyone (status ended). Because the WS server and
+  this route share the globalThis store in one process, the route ends the live party in the store, which
+  fans a party_ended event to all sockets so every client tears down.
+
+
+WEBSOCKET MESSAGE PROTOCOL
+
+All messages are JSON. Every client-to-server message includes { type, partyId } (plus extra fields per
+type) and the server validates membership on each. Every server-to-client state message includes the full
+authoritative snapshot so a just-reconnected client can adopt it wholesale.
+
+CLIENT -> SERVER
+  join       { type:'join', partyId }
+               -- after the socket opens, claim membership; the server adds this socket to the party's
+                  fan-out set, replies with the current state and the chat backlog.
+  control    { type:'control', partyId, action, positionTicks, clientTime }
+               action in 'play' | 'pause' | 'seek'
+               -- the intent. positionTicks is required for seek and is included for play and pause so the
+                  server can correct drift at the moment of the action. clientTime is the client's wall
+                  clock at send, used to refine the clock offset. Sent ONLY for genuine user actions.
+  heartbeat  { type:'heartbeat', partyId, positionTicks, playbackRate, clientTime }
+               -- every HEARTBEAT_INTERVAL_MS (5s); carries the client's current position and effective
+                  rate so the server can detect drift and feed the median. clientTime refines the offset.
+  ready      { type:'ready', partyId, ready:boolean }
+               -- the client reports whether it has buffered enough to play (the readiness gate).
+  ping       { type:'ping', partyId, clientTime }
+               -- application-level clock-offset probe; the server replies with pong carrying serverTime.
+  chat       { type:'chat', partyId, text }
+               -- a chat message body; the server stamps sender identity, timestamp, and id (the client
+                  never supplies those).
+  reaction   { type:'reaction', partyId, emoji }
+               -- a lightweight emoji reaction; the server validates the emoji is in the allowed set and
+                  fans it out with sender identity and timestamp. No backlog.
+  leave      { type:'leave', partyId }
+               -- graceful leave over the socket (in addition to the REST leave).
+
+SERVER -> CLIENT
+  state         { type:'state', partyId, positionTicks, paused, playbackRate, commandSeq, serverTime,
+                  effectiveAt, lastActor:{ userId, displayName, action } | null,
+                  members:[{ userId, displayName, ready, connectionState }] }
+                  -- the authoritative snapshot. serverTime lets the client compute its clock offset and
+                     extrapolate position. effectiveAt is the server timestamp at which the most recent
+                     transition should take effect (positionTicks + PLAY_LEAD_MS or CONTROL_LEAD_MS); for a
+                     periodic keepalive sync with no new transition, effectiveAt equals serverTime (apply
+                     immediately). Sent on join, on every applied control, on membership change, and as a
+                     periodic keepalive sync every KEEPALIVE_STATE_BROADCAST_MS (10s) so drift gets
+                     corrected even absent commands.
+  reseek        { type:'reseek', partyId, positionTicks, effectiveAt }
+                  -- targeted correction to a single client that has drifted past DRIFT_HARD_RESEEK_S
+                     (1.5s) or is a median outlier; the client seeks to this at effectiveAt and does NOT
+                     rebroadcast it as a command.
+  waiting       { type:'waiting', partyId, waitingFor:[{ userId, displayName }] }
+                  -- the party is holding a play at the readiness gate because not everyone is ready; the
+                     UI shows "waiting for X to buffer".
+  chat          { type:'chat', partyId, from:{ userId, displayName }, text, ts, id }
+                  -- a single chat message fanned to all members including the sender; id and ts are
+                     server-assigned.
+  chat_backlog  { type:'chat_backlog', partyId, messages:[{ from:{userId,displayName}, text, ts, id }] }
+                  -- the most-recent CHAT_RING_BUFFER_SIZE (50) messages, sent once on join so a late
+                     joiner immediately sees recent context.
+  reaction      { type:'reaction', partyId, from:{ userId, displayName }, emoji, ts }
+                  -- a single reaction fanned to all members including the sender; ephemeral, no backlog.
+  pong          { type:'pong', partyId, clientTime, serverTime }
+                  -- reply to ping; clientTime is echoed back, serverTime is the server's wall clock, so
+                     the client computes offset = serverTime - (clientTime + roundTrip/2) and smooths it
+                     with CLOCK_OFFSET_EMA_ALPHA.
+  party_ended   { type:'party_ended', partyId }
+                  -- tear down.
+  error         { type:'error', code, message }
+                  -- e.g. not a member, party not found, bad reaction emoji.
+
+Protocol notes:
+- The server never echoes a client's own command back as a command. It applies the command to
+  authoritative state and broadcasts the resulting state to everyone including the originator. Clients
+  reconcile to state messages; they do not act on each other's raw commands.
+- effectiveAt layers on commandSeq, it does not replace it. commandSeq orders and arbitrates competing
+  commands (which one wins); effectiveAt schedules when the winning transition fires across all clients.
+- Chat and reactions ride this same socket with their own message types, authorized by the same
+  per-message membership check. Chat has a server-kept backlog; reactions never do.
+
+
+CLOCK OFFSET AND SCHEDULED TRANSITIONS (effectiveAt)
+
+So that mixed-latency and mixed-transcode clients fire a transition at the same wall-clock instant rather
+than each on receipt, every transition carries an absolute server time at which it takes effect.
+
+Clock offset. Each client periodically sends ping with its clientTime; the server replies pong with the
+echoed clientTime and its own serverTime. The client estimates roundTrip from send-to-receive and computes
+offset = serverTime - (clientTime + roundTrip/2), then smooths it: offset = 0.6*old + 0.4*sample
+(CLOCK_OFFSET_EMA_ALPHA). control and heartbeat messages also carry clientTime so the server and client
+keep refining the offset without a dedicated ping every time. With a stable offset, a client converts any
+server timestamp T to its own local time as T - offset.
+
+Scheduling a transition. When the server applies a play it sets effectiveAt = serverTime + PLAY_LEAD_MS
+(1000ms, the longer lead so every client, including a transcoding one, can pre-buffer before the instant);
+for a pause or a seek it sets effectiveAt = serverTime + CONTROL_LEAD_MS (300ms). Each client receiving
+the state schedules the transition (set paused, set position, then play or stay paused) at local time
+effectiveAt - offset. A client that receives a state whose effectiveAt is already in the past (a slow or
+just-reconnected client) applies it immediately and lets rate-nudge or reseek close the residual gap. For
+the periodic keepalive snapshot with no fresh transition, effectiveAt equals serverTime and the client
+treats it as "this is the current truth, reconcile now".
+
+
+THE SERVER-AUTHORITY COMMAND PIPELINE (THE PAUSE-WAR FIX)
+
+This is the heart of why anyone-can-control does not descend into chaos. Process commands through a single
+serialized path per party.
+
+On receiving a control message:
+1. Validate session and party membership. Reject if not a member.
+2. Enter the party's command-processing critical section. The in-memory store serializes mutations per
+   party; updateParty applies its mutator atomically so a future backing store preserves it.
+3. Apply the action to authoritative state:
+   - play:  set paused=false; set positionTicks to the command's positionTicks (trust the actor's position
+            at the moment they pressed play); set lastTickWallClock=now; increment commandSeq; compute
+            effectiveAt = now + PLAY_LEAD_MS. But first run it through the readiness gate (next section).
+   - pause: set paused=true; set positionTicks to the command's positionTicks; set lastTickWallClock=now;
+            increment commandSeq; compute effectiveAt = now + CONTROL_LEAD_MS.
+   - seek:  set positionTicks to the command's positionTicks; keep paused as-is; set lastTickWallClock=now;
+            increment commandSeq; compute effectiveAt = now + CONTROL_LEAD_MS.
+4. Debounce competing commands. If a command for the same action arrives within COMMAND_DEBOUNCE_MS
+   (300ms) and would not meaningfully change state (for example a second pause while already paused at
+   about the same position), drop it. This absorbs the two-people-hit-pause-at-once case. Use commandSeq
+   and the timestamp to decide. The monotonic high-water-mark guard also applies: a play or seek whose
+   positionTicks is behind the current authoritative position by more than the deadband, arriving from a
+   client we know is lagging, is treated as suspect and reconciled rather than trusted blindly.
+5. For play specifically, gate on readiness (next section). If not all connected members are ready, do not
+   actually start playback: store the pendingPlay intent and broadcast a waiting state instead, arming the
+   play to fire when readiness is met or the gate times out.
+6. Broadcast the new authoritative state to every socket in the party, including the originator, with
+   lastActor set to { userId, displayName, action } so the UI can show "Brittany paused".
+7. Checkpoint to SQLite opportunistically (throttled to CHECKPOINT_THROTTLE_MS, and on pause/seek/join) so
+   restart recovery works.
+
+Because all of this runs through one serialized per-party path and clients only ever render broadcast
+state, simultaneous conflicting inputs collapse into one deterministic ordering by commandSeq. There is no
+client-side optimistic divergence to reconcile.
+
+Note on spurious telemetry. The cleanest defense against a buffering transcode client emitting a false
+pause or a backward micro-seek is that the client never sends those as commands in the first place (see
+the client-integration section: only genuine user actions become intents). The debounce, the high-water
+guard, and the deadband above remain as a light server-side backstop, but they are not the primary
+mechanism, so they cannot accidentally swallow a real user action.
+
+
+THE READINESS GATE (THE CROSS-DEVICE FIX)
+
+The problem: a phone forcing an HEVC transcode and a laptop direct-playing will be ready to start at very
+different times. Naively broadcasting play makes the fast client start while the slow one is still
+buffering, and they desync immediately.
+
+The rule:
+- Each client reports ready=true when its player has buffered enough to play smoothly (use the player's
+  existing canplay and buffered logic; ready means it can play without immediately stalling) and
+  ready=false when it is buffering or transcode-starting.
+- When any member presses play, the server checks all CONNECTED members' ready flags.
+  - If all ready: apply the play, set effectiveAt = now + PLAY_LEAD_MS, broadcast playing state; the lead
+    gives everyone a final pre-buffer window and they start together at the same instant.
+  - If some not ready: do NOT start. Store the pendingPlay intent and broadcast a waiting state listing
+    who is not ready. As each lagging client reports ready, re-check. When the last one is ready, apply
+    the play (position set to where the party paused), broadcast playing state.
+  - Timeout. If the gate is still holding after READINESS_GATE_MAX_WAIT_MS (20s), release it anyway: apply
+    the play for the ready members and let any straggler be pulled in by a reseek the moment it reports
+    ready. This is the median-with-timeout idea: the room does not stall forever on one struggling
+    transcode, but the straggler is not abandoned either.
+- Tolerances are generous on purpose because watchers span the local tailnet and the public edge with
+  different round-trip times, and concurrent transcodes on the N100 have genuinely different startup lag.
+  Do not make the gate twitchy; a member is allowed several seconds to become ready before any UI nudge. A
+  member that has been not-ready for an extended period should be surfaced in the UI as still loading.
+
+Late-joiner two-phase sync. A joiner adopts the state snapshot and seeks to the snapshot's extrapolated
+position to begin buffering. Because loading or transcode startup takes real time, when the player then
+fires canplay the client re-reads the now-current extrapolated authoritative position and seeks again to
+that, so the elapsed startup time does not strand it behind. The joiner reports ready only after this
+second seek settles. This mirrors the snapshot-then-resync-on-canplay pattern and folds directly into the
+readiness gate.
+
+Drift correction during playback:
+- Each heartbeat carries the client's current position. The server computes the expected position from the
+  authoritative timeline (extrapolation rule, reconciled toward the median when more than two members are
+  connected) and compares.
+- Below SEEK_DEADBAND_S (0.25s): do nothing.
+- From 0.25s up to DRIFT_HARD_RESEEK_S (1.5s): the client absorbs the drift with a video.playbackRate
+  nudge, clamped to [0.90, 1.10] (RATE_NUDGE_CLAMP 0.10), proportional to the drift, restoring to 1.0 once
+  back inside the deadband. This is a purely client-side rate adjustment, never a server retranscode, and
+  it does not alter position_ticks accounting. A behind client speeds up slightly until it catches up; an
+  ahead client slows slightly. This avoids a jarring hard seek for small, common drift, which matters for
+  transcoded HLS where a hard seek means a segment refetch and a visible stutter.
+- At or above 1.5s, or when a client is a median outlier beyond MEDIAN_OUTLIER_RESEEK_S (1.5s): the server
+  sends that single client a reseek to the expected position; the client seeks silently and does not
+  broadcast it as a command. This catches the backgrounded-tab-resume case and gradual transcode drift
+  without disturbing everyone.
+- During POST_JOIN_SETTLE_MS (8s) after a join or reconnect, suppress the hard reseek for that client and
+  use only the nudge, so a slow transcode start is given room to converge before any jump.
+
+
+CONNECTION RESILIENCE (BUILT IN, NOT BOLTED ON)
+
+Heartbeat and keepalive:
+- Application-level heartbeat every HEARTBEAT_INTERVAL_MS (5s); the client heartbeat message doubles as
+  this. Also enable ws protocol-level ping/pong: the server pings every WS_PING_INTERVAL_MS (20s) and a
+  socket that misses WS_PONG_MISS_LIMIT (2) consecutive pongs is considered dropped. Together these keep
+  the public-edge path from reaping the socket as idle and detect a dead peer quickly.
+
+Reconnect with resync:
+- The client wraps its socket in a reconnecting wrapper: on unexpected close, attempt reconnect with
+  backoff (immediate, then 1s, 2s, 5s, capped). On reconnect, send join again; the server replies with the
+  full current state and the chat backlog, and the client adopts the state wholesale (compute the
+  extrapolated position from serverTime and the offset, seek there, match paused state) and re-renders the
+  recent chat. Because every state message is a complete snapshot, resync is automatic; there is no
+  incremental replay to get wrong.
+
+Server-side grace window:
+- When a socket drops, do NOT immediately remove the member. Move connectionState to 'grace' and start a
+  DISCONNECT_GRACE_MS (30s) timer. If they reconnect within the window, restore them seamlessly (clear the
+  timer, set connectionState back to 'connected'). If the timer expires, remove them. If removing them
+  leaves zero connected members, keep the party briefly recoverable and end it only after
+  EMPTY_PARTY_IDLE_END_MS (60s) of zero connected members (status ended, checkpoint preserved). This means
+  a backgrounded tab, a phone locking, or a brief cellular blip does not eject someone or trigger a
+  spurious party_ended teardown.
+
+Backgrounded tab specifically:
+- A backgrounded client whose timers throttle will heartbeat late and may drift. The grace window covers
+  the late heartbeat; the drift correction (nudge then reseek) covers the position gap when it foregrounds
+  again. Both already handle it; no special case is needed.
+
+Edge test requirement (do not skip):
+- After building resilience, kill a client's network briefly and confirm it rejoins and resyncs without
+  being ejected and without ending the party. THEN test from an off-tailnet (cellular) client through the
+  full public edge and confirm the upgrade completes and survives at least two minutes idle. If BunkerWeb
+  reaps it, add the WebSocket-aware exception for /api/party/ws described in the server-attach section.
+
+
+CHAT (FIRST-CLASS v1, RIDES THE SAME SOCKET)
+
+Chat is not deferred. It is ephemeral and not persisted to the database long-term, but the server keeps a
+short in-memory backlog per party (the last CHAT_RING_BUFFER_SIZE, 50, messages) so a late joiner
+immediately sees recent context.
+
+Transport. Chat rides the same WebSocket as playback events, using the chat message types above. A client
+sends { type:'chat', partyId, text }. The server, after the same party-membership check used for control,
+stamps the message with a server-assigned id, the sender's userId and displayName resolved from the
+session (never trusted from the client), and a server timestamp ts, appends it to the party's ring buffer
+(trimming to 50), and broadcasts { type:'chat', from, text, ts, id } to all members including the sender.
+On join, the server sends chat_backlog with the most-recent 50 messages so the new arrival sees the recent
+conversation without any history fetch. Nothing is written to SQLite; when the party ends the backlog is
+discarded.
+
+Sender-side identity. Sender name, timestamp, and id are all assigned server-side. The client supplies
+only the text. This is the explicit fix for the reference projects that trusted the client for the name and
+omitted timestamps and ids entirely.
+
+UI. A collapsible chat panel on the player, alongside the party panel (they share the side area). It shows
+the message list with sender name and a relative timestamp, auto-scrolls to the newest message, and has a
+text input with send-on-enter. Messages from the local user are visually distinguished. The panel renders
+the chat_backlog on join so it is never empty for a late joiner. The chat input and the playback controls
+are independent; typing never affects playback.
+
+
+REACTIONS (FIRST-CLASS v1, EPHEMERAL, NO BACKLOG)
+
+Lightweight emoji reactions a member can fire that appear briefly over the video for everyone. A client
+sends { type:'reaction', partyId, emoji }; the server validates the emoji is in the allowed set, checks
+membership, and fans out { type:'reaction', from, emoji, ts } to all members including the sender. There is
+no backlog and nothing touches the PartyStateStore; a reaction that arrives after you do is simply not
+shown, which is the correct behavior for an ephemeral ambient signal.
+
+Default reaction set (eight, chosen to cover the common watch-together moments): laughing, heart,
+surprised, crying, thumbs-up, fire, party-popper, clapping. Concretely the emoji are
+😂  ❤️  😮  😢  👍  🔥  🎉  👏 . Keep the set small and fixed in v1.
+
+Rendering. Each received reaction renders small, in a corner of the video, semi-transparent, and floats or
+fades out over roughly one to two seconds so it never obscures the content. Multiple reactions stack or
+cascade rather than overwriting. Because they are ambient and ephemeral, they are deliberately
+unobtrusive.
+
+
+CLIENT INTEGRATION (THE PLAYER) — THE SINGLE MOST IMPORTANT CORRECTNESS DETAIL
+
+Layer party play onto the existing VideoPlayer as a hook, usePartySync, plus the party and chat panel UI.
+Do not rewrite the player; this is an integration. The existing player wires onPlay=handlePlay,
+onPause=handlePause, onCanPlay=handleCanPlay, onWaiting=handleWaiting, the seek range onChange=handleSeek,
+and reportProgress posting position_ticks to the watch-state route; its play button, keyboard shortcuts,
+and seek scrubber currently mutate video.currentTime and call video.play()/video.pause() directly.
+
+usePartySync(partyId, playerControls):
+- Opens and maintains the reconnecting WebSocket to /api/party/ws (built with the dev-vs-prod URL helper).
+- Sends join on open, heartbeats every 5s with current position and rate, sends ping for clock offset,
+  reports ready based on the player's buffered/canplay state, and (in the two-phase late-join path) reports
+  ready only after the post-canplay re-seek settles.
+- Receives state and applies it to the player at the scheduled local time (effectiveAt - offset): if paused
+  and the player is playing, pause; if playing and paused, play; if the player's position differs from the
+  extrapolated authoritative position by more than SEEK_DEADBAND_S (0.25s), seek (or, within the
+  rate-nudge band, adjust video.playbackRate instead of seeking). Receives reseek and seeks at its
+  effectiveAt. Receives waiting and shows the buffering-for-others overlay. Receives chat and reaction and
+  renders them. Receives chat_backlog on join and fills the chat panel. Receives party_ended and tears
+  down.
+
+THE THREE ACTION ORIGINS, STATED AS THE CRITICAL TRAP. Every play, pause, and seek the player observes has
+one of three origins, and they must be handled differently:
+1. Remote-applied, the client moving the player because a state or reseek message said to. While doing this
+   the hook sets an applyingRemoteState ref; the player's own onPlay/onPause/seeked handlers, which fire as
+   a side effect, must check that ref and NOT send any intent back. This is what prevents the infinite echo
+   loop.
+2. Player-emitted, the <video> element firing pause or a backward micro-seek on its own because it is
+   buffering or starting a transcode. These are NOT user intent and must NOT become commands. Achieve this
+   structurally: do not derive intents from the video element's onPlay/onPause/seeked events at all. Those
+   element events are used only to update local UI state. Intents are emitted exclusively from the genuine
+   user-action surfaces.
+3. Genuine user action, the local user actually clicking the play button, pressing a shortcut, or
+   releasing the scrubber. ONLY these become control intents.
+
+The structural consequence: in party mode the hook intercepts the user-action surfaces (the play/pause
+button onClick, the keyboard handlers, the seek scrubber's commit) so that instead of mutating the video
+directly they call partySync.sendIntent(action, positionTicks). The actual video movement then happens
+only when the resulting server state arrives, routed through the applyingRemoteState path. This is the same
+local-versus-remote distinction extended to user-versus-player-emitted, and it means the server simply
+never receives the spurious buffering events rather than having to filter them, which is both cleaner and
+incapable of swallowing a real action. The light server-side debounce and high-water guard remain only as
+a backstop.
+
+User actions become intents (responsiveness note):
+- Local play/pause/seek by this user sends a control message and does NOT change the player directly. The
+  player moves when the broadcast state arrives, so every client including the actor renders only
+  authoritative state. The round trip on tailnet or even the public edge is small; combined with the
+  effectiveAt lead it feels intentional rather than laggy. A tiny optimistic local apply is permitted for
+  responsiveness only if it reconciles to the next state message, but v1 simplest-correct is to wait for
+  the broadcast.
+
+Party panel UI:
+- A collapsible panel on the player showing the party join code and a copy-link button (both join
+  methods), the member list with per-member ready/loading indicator and connection state, a leave-party
+  button, and for the host an end-party button. A subtle "waiting for X to buffer" overlay appears when the
+  readiness gate is holding a play. An attribution note appears when someone acts ("Brittany paused",
+  "Joseph skipped ahead") from the lastActor field, so shared control feels intentional rather than
+  mysterious. The chat panel lives in this same side area as a first-class sibling, not a reserved empty
+  slot.
+
+Entry points:
+- On /play/[id], if the URL has ?party={joinCode}, auto-join that party on load (POST /api/party/join,
+  then connect the socket). This is the one-tap link join.
+- A "Start watch party" button on the player creates a party for the current item (POST /api/party) and
+  shows the code and link to share.
+- A "Join with code" affordance accessible from the player or home for manual code entry.
+
+
+STARTUP, RECOVERY, AND CLEANUP
+
+- The party WebSocket server and the PartyStateStore initialize in instrumentation.ts alongside the
+  existing schedulers, behind the globalThis-pinned started guard.
+- Rehydration on startup (the chosen recovery path, because it is cheap). On boot, load watch_parties with
+  status active into the in-memory store using each party's last checkpoint (last_position_ticks,
+  last_paused) with an empty member map and paused state. Members reconnect and resync from the snapshot;
+  the small checkpoint is all that is needed, so a server restart does not silently destroy in-progress
+  parties. If no member reconnects within the empty-party idle window, cleanup ends the party.
+- A periodic cleanup (a simple interval in the party server, or the existing cron pattern) ends parties
+  with zero connected members after EMPTY_PARTY_IDLE_END_MS (60s) and prunes their in-memory state. This
+  must run from exactly one process, the same single-process constraint the existing cron jobs have; with
+  one container this is automatic, but it is noted so a future multi-instance deployment does not
+  double-run it.
+- Checkpoint active party position and paused state to SQLite on the CHECKPOINT_THROTTLE_MS (12s) throttle
+  and on pause/seek/member-join, for recovery only. Never checkpoint on every command or heartbeat.
+
+
+EXPLICIT v1 NON-GOALS (SO SCOPE STAYS HONEST)
+
+- No voice chat.
+- No host-only control modes or pass-the-remote (control is shared by all members, by design).
+- No multi-instance or horizontally-scaled deployment (the PartyStateStore interface makes it possible
+  later; v1 is single-container, in-memory, pinned on globalThis).
+- No persisted chat history (chat is ephemeral with a short in-memory backlog only; nothing is written to
+  SQLite).
+- No persisted or replayable reactions (ephemeral, no backlog by design).
+- No custom or expandable reaction set in v1 (the fixed eight emoji above).
+- No seamless cross-item party continuation (a party is one media item; watching the next episode together
+  is a future enhancement).
+- No seek-ahead-of-transcode magic (inherits the player's existing v1 linear-transcode seek limitation;
+  seeking past the transcoded point still returns 503 and resumes by letting the linear transcode reach
+  the target, exactly as today).
+
+This v1 delivers: create or join a party by code or link; everyone synced on one item; anyone can
+play/pause/seek with no pause war; mixed devices start together via the readiness gate and the effectiveAt
+lead; drift self-corrects with a gentle rate-nudge before any hard reseek; the room timeline follows the
+median so one laggard never stalls everyone; brief drops and backgrounded tabs recover gracefully through
+the grace window and resync; and members chat and react in real time over the same socket with a short
+backlog so late joiners see recent context. That is a complete, usable watch-together feature on the
+existing stack.
+
+
+BUILD SEQUENCE (CONDENSED, IN DEPENDENCY ORDER)
+
+1. Durable model and REST lifecycle. Add the watch_parties and watch_party_members migration in the
+   existing idempotent style. Build POST /api/party, POST /api/party/join, GET /api/party/[partyId],
+   POST /api/party/[partyId]/leave, DELETE /api/party/[partyId]. No sockets yet. Test by creating a party,
+   getting a code and link, joining by code, and seeing membership in the DB.
+2. PartyStateStore interface and in-memory implementation, pinned on globalThis, with the Map plus
+   EventEmitter, the chat ring buffer, and the median/high-water-mark logic. Unit-test the mutations,
+   subscribe fan-out, and chat backlog in isolation.
+3. WebSocket server attach and auth. npm i ws; start the dedicated ws server on port 3002 from
+   instrumentation behind the started guard; handle the upgrade on /api/party/ws; validate the
+   unified-session cookie at upgrade via the extracted session query; implement join, the state broadcast,
+   the chat backlog send, and ping/pong clock offset. Add the Caddy route to 3002 and widen the CSP
+   connect-src. Test that two tabs connect, join the same party, and both receive state. (This is a
+   surface-the-plan checkpoint; the attach mechanism is the one real unknown and is resolved to the
+   separate-port approach above.)
+4. Command pipeline and sync. control messages, the serialized server-authority apply, commandSeq,
+   effectiveAt scheduling with asymmetric lead times, debounce, state broadcast with attribution, and the
+   client usePartySync applying state with the applyingRemoteState guard and the user-versus-player-emitted
+   intent separation. Test two clients: one pauses, both pause; one seeks, both seek; mash pause on both at
+   once and confirm no thrash. (This is a surface-the-plan checkpoint; the client anti-echo integration is
+   the delicate part.)
+5. Readiness gate, drift correction, and chat/reactions. ready reporting; play held until all ready or the
+   20s timeout; waiting broadcast; heartbeat-driven drift detection with the deadband, rate-nudge band, and
+   hard reseek; the median room timeline with outlier reseek; the two-phase late-join seek; chat send,
+   backlog, and panel; reactions send and overlay. Test a direct-play client and a transcoding client in
+   one party starting together, a backgrounded tab resyncing on return, and chat plus reactions flowing
+   both ways with a late joiner seeing recent chat.
+6. Resilience and edge hardening. ws ping/pong, client reconnect-with-resync, the server grace window and
+   empty-party idle end, and startup rehydration from checkpoints. Test a brief network kill that rejoins
+   without ejection or party teardown, then test from an off-tailnet cellular client through the full
+   public edge, confirming the upgrade completes and survives idle; if BunkerWeb reaps it, add the
+   WebSocket-aware exception for /api/party/ws.
+7. Panel polish. Attribution notes, copy-link, member ready/connection indicators, the waiting overlay, and
+   the chat panel and reaction overlay styling. Test a full multi-device party end to end.
+
+Use at most five subagents. Do not modify any playback, transcode, codec, audio-track, or subtitle
+behavior; party play only coordinates the existing player.
+
+END OF SPECIFICATION.

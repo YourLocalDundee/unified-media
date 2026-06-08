@@ -36,7 +36,7 @@ const ABSOLUTE_TTL_MS = 90 * 24 * 60 * 60 * 1000      // hard ceiling regardless
 
 // Uses Web Crypto (available in both Node.js 15+ and Edge Runtime).
 // Modulo bias is negligible for 62 chars over a 256-value byte.
-function makeId(size: number): string {
+export function makeId(size: number): string {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
   let result = ''
   const array = new Uint8Array(size)

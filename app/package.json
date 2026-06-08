@@ -30,6 +30,7 @@
     "react-dom": "^19.0.0",
     "recharts": "^3.8.1",
     "tailwind-merge": "^3.6.0",
+    "ws": "^8.21.0",
     "xml2js": "^0.6.2",
     "zustand": "^5.0.14",
     "zxcvbn": "^4.4.2"
@@ -47,6 +48,7 @@
     "@types/nodemailer": "^8.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
+    "@types/ws": "^8.18.1",
     "@types/xml2js": "^0.4.14",
     "@types/zxcvbn": "^4.4.5",
     "autoprefixer": "^10.4.20",
