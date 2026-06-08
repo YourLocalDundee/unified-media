@@ -1452,3 +1452,22 @@ BunkerWeb still reaps it**, add a WebSocket-aware per-domain exception for `/api
 `/opt/docker/compose/edge/docker-compose.yml`, in the same style as the existing `unified.minijoe.dev_*`
 overrides (raise the reverse-proxy read timeout for that path or exempt it from idle close); confirm the
 exact BunkerWeb variable against the running config first. Tailnet clients do not hit this.
+
+### Known issues (audit v0.9.5)
+
+A full 10-domain code audit of this feature is recorded in `PARTY_PLAY_AUDIT.md` at the repo root. The
+build is clean, all constants match the spec, and every v1 non-goal is respected, but the audit found
+open items that should be fixed before the feature is relied on — the endpoint is deployed and public,
+and BunkerWeb's WAF is partly disabled for this domain, so the app is the primary defense. Highlights:
+
+- **Critical.** Inbound WS message fields (`positionTicks`, `action`, `text`, …) are not validated, so
+  one member can corrupt every player and poison the SQLite checkpoint. The median drift reconciliation
+  in `reconcileDrift` can drag the authoritative timeline backward (violates the high-water-mark guard).
+- **High.** No `Origin` check on the WS upgrade (cross-site WebSocket hijacking); sockets are never
+  re-authorized after upgrade (expired/suspended sessions keep control); no per-message rate limiting or
+  per-user resource caps; the membership check falls back to the durable DB row so a never-joined/left
+  socket can still drive state; the client `reseek` timer is uncleared; the two-phase late-join second
+  seek is unimplemented; the ws pong-miss counter is off by one.
+
+See `PARTY_PLAY_AUDIT.md` for the full severity table, file:line locations, fixes, and a remediation
+roadmap.
