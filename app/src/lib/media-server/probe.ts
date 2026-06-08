@@ -1,10 +1,13 @@
-import { path as ffprobePath } from '@ffprobe-installer/ffprobe'
 import { execFile } from 'child_process'
 import { promisify } from 'util'
 import { stat } from 'fs/promises'
 import type { ProbeResult, ProbeStream } from './types'
 
 const execFileAsync = promisify(execFile)
+
+// Use the system ffprobe (shipped by the apt `ffmpeg` package in the runtime image,
+// same source as the ffmpeg binary transcode.ts spawns). Overridable for local dev.
+const FFPROBE_BIN = process.env.FFPROBE_PATH ?? 'ffprobe'
 
 interface RawStream {
   index: number
@@ -18,7 +21,7 @@ interface RawStream {
 }
 
 export async function probeFile(filePath: string): Promise<ProbeResult> {
-  const { stdout } = await execFileAsync(ffprobePath, [
+  const { stdout } = await execFileAsync(FFPROBE_BIN, [
     '-v', 'quiet',
     '-print_format', 'json',
     '-show_streams',
