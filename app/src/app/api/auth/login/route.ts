@@ -16,6 +16,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getDb } from '@/lib/db/index'
 import { verifyPassword } from '@/lib/password'
 import { checkRateLimit } from '@/lib/rate-limit'
+import { getClientIp } from '@/lib/client-ip'
 import { createSession, logEvent } from '@/lib/dal'
 import { cookies } from 'next/headers'
 import { verifyOrigin } from '@/lib/csrf'
@@ -23,18 +24,15 @@ import { verifyOrigin } from '@/lib/csrf'
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000  // 30-day TTL; rotation and absolute max enforced in dal.ts
 const SESSION_COOKIE = 'unified-session'
 
+// A real cost-12 bcrypt hash with no known preimage. When the submitted username
+// does not exist we still run bcrypt.compare against this so the response time is
+// indistinguishable from the "user exists, wrong password" path — closing the
+// username-enumeration timing oracle (A1-004).
+const DUMMY_PASSWORD_HASH = '$2b$12$TVjeVOyMm3bxSN6KiWum9.9sAdZbtyR9CMZZRh3fvW2l40eRel5iq'
+
 interface UserRow {
   id: string; username: string; password_hash: string; role: string
   is_active: number; force_pw_change: number
-}
-
-// x-forwarded-for is a comma-separated list when multiple proxies are in the
-// chain; take only the first (leftmost) value, which is the client IP added by
-// the outermost trusted proxy (BunkerWeb / Caddy).
-function getClientIp(req: NextRequest): string {
-  return req.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
-    ?? req.headers.get('x-real-ip')
-    ?? '127.0.0.1'
 }
 
 export async function POST(req: NextRequest) {
@@ -61,15 +59,6 @@ export async function POST(req: NextRequest) {
   // Case-insensitive so "Admin" and "admin" resolve to the same account.
   const user = db.prepare('SELECT * FROM users WHERE LOWER(username) = LOWER(?)').get(username) as UserRow | undefined
 
-  if (!user) {
-    await logEvent('login_failure', { username }, { ip })
-    return NextResponse.json({ error: 'Invalid username or password' }, { status: 401 })
-  }
-
-  if (!user.is_active) {
-    return NextResponse.json({ error: 'Account suspended. Contact the site owner.' }, { status: 403 })
-  }
-
   // Count failures from the last 5 minutes to decide whether to apply a delay.
   // We check this BEFORE verifyPassword (which is slow by design) so the delay
   // is additive on top of bcrypt time, not redundant with it.
@@ -77,23 +66,36 @@ export async function POST(req: NextRequest) {
     'SELECT COUNT(*) as c FROM login_attempts WHERE LOWER(username) = LOWER(?) AND success = 0 AND created_at > ?'
   ).get(username, Date.now() - 5 * 60 * 1000) as { c: number }).c
 
-  const valid = await verifyPassword(password, user.password_hash)
+  // Always run bcrypt — against the real hash when the user exists, otherwise a
+  // dummy hash — so unknown-username and wrong-password take the same time (A1-004).
+  const valid = await verifyPassword(password, user?.password_hash ?? DUMMY_PASSWORD_HASH)
 
   // Record the attempt after verification so the result is accurate.
   db.prepare('INSERT INTO login_attempts (ip_address, username, success, created_at) VALUES (?, ?, ?, ?)')
-    .run(ip, username.toLowerCase(), valid ? 1 : 0, Date.now())
+    .run(ip, username.toLowerCase(), user && valid ? 1 : 0, Date.now())
 
-  if (!valid) {
+  // Unknown user OR wrong password → one identical 401. Never reveal which of the
+  // two failed, and never return a distinct status for a non-existent account.
+  if (!user || !valid) {
     // Artificial delay after repeated failures makes brute-force measurably
     // slower without revealing the lockout threshold via an immediate 429.
     if (recentFailures >= 2) await new Promise<void>(r => setTimeout(r, 2000))
-    await logEvent('login_failure', { username: user.username }, { userId: user.id, username: user.username, ip })
+    await logEvent('login_failure', { username: user?.username ?? username }, user ? { userId: user.id, username: user.username, ip } : { ip })
     return NextResponse.json({ error: 'Invalid username or password' }, { status: 401 })
   }
 
-  // Session is created before the force_pw_change check so /api/auth/change-password
-  // can call requireAuth() successfully. Without a session the change-password route
-  // redirects back to /login, trapping the user in an infinite loop.
+  // Suspension is only revealed AFTER a correct password, so a guesser without the
+  // password can no longer distinguish "suspended" (403) from "no such user" (401).
+  if (!user.is_active) {
+    await logEvent('login_blocked', { reason: 'suspended' }, { userId: user.id, username: user.username, ip })
+    return NextResponse.json({ error: 'Account suspended. Contact the site owner.' }, { status: 403 })
+  }
+
+  // A session is issued even for force_pw_change accounts so the user can reach
+  // /change-password and authenticate the change-password POST. Enforcement of the
+  // forced change now lives in the session gate: requireAuth() redirects these
+  // accounts to /change-password on every other route (A1-001), and the
+  // change-password route uses getSession() so it stays reachable.
   const sessionId = await createSession(user.id, ip, req.headers.get('user-agent') ?? undefined)
   db.prepare('UPDATE users SET last_login = ? WHERE id = ?').run(Date.now(), user.id)
   await logEvent('login_success', {}, { userId: user.id, username: user.username, ip })

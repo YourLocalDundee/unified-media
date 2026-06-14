@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAdmin, logEvent } from '@/lib/dal'
 import { checkRateLimit } from '@/lib/rate-limit'
+import { getClientIp } from '@/lib/client-ip'
 import { getDb } from '@/lib/db/index'
 
 interface UserRow { role: string; username: string }
@@ -13,7 +14,7 @@ interface UserRow { role: string; username: string }
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await requireAdmin()
 
-  const ip = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? '127.0.0.1'
+  const ip = getClientIp(req)
   const rl = checkRateLimit(`admin-users:${ip}`, 30, 10 * 60 * 1000)
   if (!rl.allowed) {
     return NextResponse.json({ error: 'Too many requests. Try again later.' }, { status: 429 })
@@ -38,7 +39,7 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await requireAdmin()
 
-  const ip = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? '127.0.0.1'
+  const ip = getClientIp(req)
   const rl = checkRateLimit(`admin-users:${ip}`, 30, 10 * 60 * 1000)
   if (!rl.allowed) {
     return NextResponse.json({ error: 'Too many requests. Try again later.' }, { status: 429 })

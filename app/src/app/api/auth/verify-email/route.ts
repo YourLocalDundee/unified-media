@@ -16,6 +16,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getDb } from '@/lib/db/index'
 import { checkRateLimit } from '@/lib/rate-limit'
+import { getClientIp } from '@/lib/client-ip'
 import { createSession, logEvent } from '@/lib/dal'
 import { cookies } from 'next/headers'
 import { verifyOrigin } from '@/lib/csrf'
@@ -32,10 +33,6 @@ function makeUserId(): string {
   crypto.getRandomValues(array)
   for (const byte of array) result += chars[byte % chars.length]
   return result
-}
-
-function getClientIp(req: NextRequest): string {
-  return req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? '127.0.0.1'
 }
 
 interface PendingRow {

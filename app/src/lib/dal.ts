@@ -27,6 +27,10 @@ export interface SessionData {
   username: string
   role: string
   sessionId: string
+  // True when the account is flagged for a forced password change (admin reset or
+  // auto-generated temp password). requireAuth() funnels these users to /change-password;
+  // getSession() still resolves the identity so the change-password flow can use it.
+  forcePwChange: boolean
 }
 
 const SESSION_COOKIE = 'unified-session'
@@ -50,6 +54,7 @@ interface SessionRow {
   user_id: string
   username: string
   role: string
+  force_pw_change: number
   created_at: number
   expires_at: number
   last_seen: number
@@ -67,7 +72,7 @@ export async function getSession(): Promise<SessionData | null> {
   // round-trip and preventing suspended accounts from slipping through on cached sessions.
   const session = db.prepare(
     `SELECT s.id, s.user_id, s.created_at, s.expires_at, s.last_seen,
-            u.username, u.role
+            u.username, u.role, u.force_pw_change
      FROM sessions s
      JOIN users u ON s.user_id = u.id
      WHERE s.id = ? AND s.expires_at > ? AND u.is_active = 1`
@@ -107,25 +112,33 @@ export async function getSession(): Promise<SessionData | null> {
       db.prepare(
         'UPDATE sessions SET id = ?, expires_at = ?, last_seen = ?, created_at = ? WHERE id = ?'
       ).run(newId, now + SESSION_TTL_MS, now, now, sessionId)
-      return { userId: session.user_id, username: session.username, role: session.role, sessionId: newId }
+      return { userId: session.user_id, username: session.username, role: session.role, sessionId: newId, forcePwChange: session.force_pw_change === 1 }
     } catch {
       // Cookie set failed (Server Component context) — skip rotation this request
       // and keep the existing session row valid. Rotation will succeed on the next
       // Route Handler request where cookie mutations are permitted.
       db.prepare('UPDATE sessions SET last_seen = ? WHERE id = ?').run(now, sessionId)
-      return { userId: session.user_id, username: session.username, role: session.role, sessionId }
+      return { userId: session.user_id, username: session.username, role: session.role, sessionId, forcePwChange: session.force_pw_change === 1 }
     }
   }
 
   db.prepare('UPDATE sessions SET last_seen = ? WHERE id = ?').run(now, sessionId)
-  return { userId: session.user_id, username: session.username, role: session.role, sessionId }
+  return { userId: session.user_id, username: session.username, role: session.role, sessionId, forcePwChange: session.force_pw_change === 1 }
 }
 
 // redirect() throws a special Next.js error — TypeScript doesn't narrow the return
 // type here, but calling code can rely on it never returning null.
+//
+// A force_pw_change account holds a valid session but is funnelled to
+// /change-password until it picks a new password. This is the session-gate the
+// audit (A1-001) flagged as missing: previously force_pw_change was only honored
+// in the login *response*, so a user who ignored the client redirect kept a fully
+// usable session. The /change-password page itself is a client component that
+// never calls requireAuth(), so this redirect cannot loop.
 export async function requireAuth(): Promise<SessionData> {
   const session = await getSession()
   if (!session) redirect('/login')
+  if (session.forcePwChange) redirect('/change-password')
   return session
 }
 

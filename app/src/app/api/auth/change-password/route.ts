@@ -12,14 +12,33 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
-import { requireAuth, logEvent } from '@/lib/dal'
+import { getSession, logEvent } from '@/lib/dal'
+import { verifyOrigin } from '@/lib/csrf'
+import { checkRateLimit } from '@/lib/rate-limit'
 import { validatePassword, verifyPassword, hashPassword } from '@/lib/password'
 import { getDb } from '@/lib/db/index'
 
 interface UserRow { password_hash: string }
 
 export async function POST(req: NextRequest) {
-  const session = await requireAuth()
+  if (!verifyOrigin(req)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+
+  // getSession() rather than requireAuth(): this is the only authed route a
+  // force_pw_change user is allowed to reach, so it must NOT redirect them to
+  // /change-password (requireAuth now does). It returns a clean 401 JSON instead
+  // of an opaque redirect for unauthenticated callers (A1-010).
+  const session = await getSession()
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  // Throttle online guessing of the admin-issued temp password (A1-007), mirroring
+  // the profile change-password limiter: 5 attempts per 15 minutes per user.
+  const rl = checkRateLimit(`change-password:${session.userId}`, 5, 15 * 60 * 1000)
+  if (!rl.allowed) {
+    return NextResponse.json(
+      { error: 'Too many attempts. Please wait before trying again.' },
+      { status: 429, headers: { 'Retry-After': '900' } }
+    )
+  }
 
   let body: { currentPassword?: string; newPassword?: string }
   try { body = await req.json() as typeof body }

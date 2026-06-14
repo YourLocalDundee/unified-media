@@ -11,12 +11,14 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth } from '@/lib/dal'
+import { verifyOrigin } from '@/lib/csrf'
 import { getDb } from '@/lib/db/index'
 
 export async function DELETE(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  if (!verifyOrigin(req)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   const session = await requireAuth()
   const { id } = await params
 

@@ -12,9 +12,11 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth, logEvent } from '@/lib/dal'
+import { verifyOrigin } from '@/lib/csrf'
 import { getDb } from '@/lib/db/index'
 
 export async function PATCH(req: NextRequest) {
+  if (!verifyOrigin(req)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   const session = await requireAuth()
   let body: { firstName?: string; lastName?: string; bio?: string; location?: string }
   try { body = await req.json() as typeof body }

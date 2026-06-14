@@ -15,12 +15,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getDb } from '@/lib/db/index'
 import { validatePassword, hashPassword } from '@/lib/password'
 import { checkRateLimit } from '@/lib/rate-limit'
+import { getClientIp } from '@/lib/client-ip'
 import { createHash } from 'crypto'
 import { verifyOrigin } from '@/lib/csrf'
-
-function getClientIp(req: NextRequest): string {
-  return req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? '127.0.0.1'
-}
 
 interface ResetRow { id: string; user_id: string; token_hash: string; expires_at: number; used: number }
 interface UserRow { username: string }

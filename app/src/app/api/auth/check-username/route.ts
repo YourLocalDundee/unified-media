@@ -13,13 +13,10 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { checkRateLimit } from '@/lib/rate-limit'
+import { getClientIp } from '@/lib/client-ip'
 import { getDb } from '@/lib/db/index'
 
 export const dynamic = 'force-dynamic'
-
-function getClientIp(req: NextRequest): string {
-  return req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? '127.0.0.1'
-}
 
 export async function GET(req: NextRequest) {
   const ip = getClientIp(req)

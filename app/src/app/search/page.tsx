@@ -9,7 +9,11 @@
 import type { Metadata } from 'next'
 import { searchTMDB } from '@/lib/media-server/tmdb'
 import SearchInput from './SearchInput'
-import SearchResults from './SearchResults'
+import DiscoverResults from '../browse/DiscoverResults'
+import type { DiscoverItem } from '../browse/DiscoverResults'
+import { getItemsByTmdbIds } from '@/lib/media-server/library'
+import { getUserRequests } from '@/lib/requests/monitor'
+import type { RequestStatus, RequestType } from '@/lib/requests/types'
 import { requireAuth } from '@/lib/dal'
 
 export const metadata: Metadata = {
@@ -33,7 +37,7 @@ export default async function SearchPage({
 }: {
   searchParams: Promise<{ q?: string; page?: string; type?: string }>
 }) {
-  await requireAuth()
+  const session = await requireAuth()
   const { q, page, type } = await searchParams
   const query = q?.trim() || undefined
   const pageNum = Math.max(1, parseInt(page ?? '1', 10) || 1)
@@ -49,6 +53,31 @@ export default async function SearchPage({
   const results = searchData?.results ?? []
   const totalResults = searchData?.totalResults ?? 0
   const totalPages = searchData?.totalPages ?? 0
+
+  // Cross-reference every hit against the local library and the user's own requests
+  // so each card links correctly and shows the right CTA — mirroring /browse's
+  // DiscoverResults instead of the old request-only SearchResults card (A2-002/003).
+  const tmdbIds = results.map((r) => r.tmdbId)
+  const libraryMap = tmdbIds.length > 0 ? getItemsByTmdbIds(tmdbIds) : {}
+
+  const requestMap: Record<string, { status: RequestStatus; requestType: RequestType }> = {}
+  for (const req of getUserRequests(session.userId)) {
+    if (req.status === 'expired') continue
+    requestMap[`${req.media_type}-${req.tmdb_id}`] = { status: req.status, requestType: req.request_type }
+  }
+
+  const items: DiscoverItem[] = results.map((r) => ({
+    tmdbId: r.tmdbId,
+    mediaType: r.mediaType,
+    title: r.title,
+    year: r.year,
+    posterPath: r.posterPath,
+    rating: r.rating,
+    overview: r.overview,
+    libraryId: libraryMap[r.tmdbId] ?? null,
+    requestStatus: requestMap[`${r.mediaType}-${r.tmdbId}`]?.status ?? null,
+    requestType: requestMap[`${r.mediaType}-${r.tmdbId}`]?.requestType ?? null,
+  }))
 
   return (
     <div className="min-h-screen bg-zinc-950 text-white">
@@ -113,7 +142,7 @@ export default async function SearchPage({
               </p>
             )}
 
-            <SearchResults results={results} query={query} />
+            <DiscoverResults items={items} query={query} />
 
             {/* Pagination */}
             {totalPages > 1 && (

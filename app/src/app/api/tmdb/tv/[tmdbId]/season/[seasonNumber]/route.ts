@@ -35,9 +35,18 @@ export async function GET(
     const episodes = (raw.episodes ?? [])
       .filter((ep: Record<string, unknown>) => ep.episode_number)
       .map((ep: Record<string, unknown>) => ({
+        // id + the rich fields are consumed by SeasonAccordion/EpisodeRow (stable React
+        // key, still image, synopsis, runtime, rating). Omitting them left every episode
+        // row keyed `undefined` with no image/overview/runtime (A2-005). The other
+        // consumers (TorrentPickModal/SeriesScopeModal) read only episodeNumber/name.
+        id: (ep.id as number) ?? null,
         episodeNumber: ep.episode_number as number,
         name: (ep.name as string) ?? null,
         airDate: (ep.air_date as string) ?? null,
+        stillPath: (ep.still_path as string) ?? null,
+        overview: (ep.overview as string) ?? null,
+        runtime: (ep.runtime as number) ?? null,
+        voteAverage: (ep.vote_average as number) ?? null,
       }))
 
     return NextResponse.json({ episodes })

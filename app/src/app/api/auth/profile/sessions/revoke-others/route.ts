@@ -10,11 +10,13 @@
  * requireAuth() — there is nothing the caller can forge to widen the blast radius.
  */
 
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth } from '@/lib/dal'
+import { verifyOrigin } from '@/lib/csrf'
 import { getDb } from '@/lib/db/index'
 
-export async function POST() {
+export async function POST(req: NextRequest) {
+  if (!verifyOrigin(req)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   const session = await requireAuth()
   const db = getDb()
   // The `AND id != ?` exclusion ensures the current session is never deleted,

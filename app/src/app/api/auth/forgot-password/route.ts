@@ -15,15 +15,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getDb } from '@/lib/db/index'
 import { checkRateLimit } from '@/lib/rate-limit'
+import { getClientIp } from '@/lib/client-ip'
 import { sendEmail } from '@/lib/email'
 import { createHash, randomBytes } from 'crypto'
 import { verifyOrigin } from '@/lib/csrf'
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3001'
-
-function getClientIp(req: NextRequest): string {
-  return req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? '127.0.0.1'
-}
 
 interface UserRow { id: string; username: string; email: string }
 

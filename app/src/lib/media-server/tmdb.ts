@@ -528,10 +528,13 @@ export async function searchTMDB(
     }
   }
 
-  // type === 'all': fetch both in parallel at page 1
+  // type === 'all': fetch BOTH at the requested page (previously hard-coded to 1,
+  // which made every Next/Prev click re-render page 1 — A2-001). When one type runs
+  // out of pages before the other, TMDB returns an empty list for it at that page, so
+  // the merge below naturally degrades to the remaining type's results.
   const [movies, shows] = await Promise.all([
-    fetchSearchPage<TMDBMovieListItem>('/search/movie', query, 1),
-    fetchSearchPage<TMDBTVListItem>('/search/tv', query, 1),
+    fetchSearchPage<TMDBMovieListItem>('/search/movie', query, page),
+    fetchSearchPage<TMDBTVListItem>('/search/tv', query, page),
   ])
 
   // Interleave by original order position so results feel balanced
@@ -547,7 +550,8 @@ export async function searchTMDB(
   return {
     results: merged,
     totalResults: movies.total_results + shows.total_results,
+    // The combined feed has results through whichever type paginates furthest.
     totalPages: Math.max(movies.total_pages, shows.total_pages),
-    page: 1,
+    page,
   }
 }

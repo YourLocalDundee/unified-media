@@ -9,5 +9,9 @@ export function verifyOrigin(request: Request): boolean {
   // Browsers always send Origin on cross-origin requests; its absence means a same-origin or
   // server-to-server call, both of which are safe to allow.
   if (!origin) return true
-  return ALLOWED_ORIGINS.some(o => origin === o || origin.startsWith(o))
+  // Exact match only. The previous `origin.startsWith(o)` branch was bypassable with a
+  // suffix domain — e.g. `https://unified.minijoe.dev.evil.com` passes startsWith against
+  // `https://unified.minijoe.dev` (A1-002). An exact compare against the full-origin
+  // allowlist (which already includes the dev ports) closes that hole.
+  return ALLOWED_ORIGINS.includes(origin)
 }

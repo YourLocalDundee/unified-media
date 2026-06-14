@@ -701,6 +701,13 @@ NEXT_PUBLIC_APP_URL=http://localhost:3001
 ADMIN_USERNAME=<admin username>
 ADMIN_PASSWORD=<strong password meeting policy>
 DB_PATH=./unified.db
+# Number of trusted reverse proxies in front of the app that each APPEND to
+# X-Forwarded-For. Production path is BunkerWeb -> Caddy, so default 2. This is how
+# getClientIp() finds the real client IP for rate limiting/audit (A1-005): it reads
+# the Nth-from-right XFF entry, so client-forged left-side entries can't spoof a
+# fresh rate-limit bucket. Set too low and the spoof reopens; too high and every
+# client collapses onto one shared bucket. Unset in dev (direct connection).
+TRUSTED_PROXY_COUNT=2
 
 # SMTP — all optional; if unset, verification codes print to stdout (docker logs)
 SMTP_HOST=

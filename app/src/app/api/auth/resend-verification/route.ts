@@ -12,6 +12,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getDb } from '@/lib/db/index'
 import { checkRateLimit } from '@/lib/rate-limit'
+import { getClientIp } from '@/lib/client-ip'
 import { sendEmail, buildVerificationEmail } from '@/lib/email'
 import { verifyOrigin } from '@/lib/csrf'
 
@@ -19,10 +20,6 @@ function makeCode(): string {
   const array = new Uint8Array(6)
   crypto.getRandomValues(array)
   return Array.from(array).map(b => b % 10).join('')
-}
-
-function getClientIp(req: NextRequest): string {
-  return req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? '127.0.0.1'
 }
 
 interface PendingRow { id: string; email: string; username: string; expires_at: number }
