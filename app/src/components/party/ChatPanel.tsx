@@ -10,6 +10,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Send, ArrowDown } from 'lucide-react'
 import type { ChatMessageDTO } from '@/lib/party/types'
+import { MAX_CHAT_LENGTH } from '@/lib/party/constants'
 
 // Don't yank a user who scrolled up; only auto-scroll when already near the bottom.
 const NEAR_BOTTOM_THRESHOLD_PX = 60
@@ -18,6 +19,8 @@ interface Props {
   messages: ChatMessageDTO[]
   selfUserId: string
   onSend: (text: string) => void
+  /** Transient server error (rate-limited / not-a-member) surfaced from usePartySync (A5-06). */
+  error?: string | null
 }
 
 function relativeTime(ts: number): string {
@@ -28,7 +31,7 @@ function relativeTime(ts: number): string {
   return new Date(ts).toLocaleDateString()
 }
 
-export function ChatPanel({ messages, selfUserId, onSend }: Props) {
+export function ChatPanel({ messages, selfUserId, onSend, error }: Props) {
   const [text, setText] = useState('')
   const [atBottom, setAtBottom] = useState(true)
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -55,8 +58,9 @@ export function ChatPanel({ messages, selfUserId, onSend }: Props) {
   const submit = () => {
     const trimmed = text.trim()
     if (!trimmed) return
-    // Defensive cap mirroring the input maxLength; the server is the real gate.
-    onSend(trimmed.slice(0, 500))
+    // Cap on the same shared constant the server enforces (A5-06) — the server is still
+    // the real gate, but client and server no longer disagree (was 500 vs 2000).
+    onSend(trimmed.slice(0, MAX_CHAT_LENGTH))
     setText('')
   }
 
@@ -105,6 +109,11 @@ export function ChatPanel({ messages, selfUserId, onSend }: Props) {
           Latest
         </button>
       )}
+      {error && (
+        <p className="border-t border-zinc-800 px-3 py-1 text-[11px] text-amber-400" role="status">
+          {error}
+        </p>
+      )}
       <div className="flex items-center gap-1.5 border-t border-zinc-800 p-2">
         <input
           value={text}
@@ -116,7 +125,7 @@ export function ChatPanel({ messages, selfUserId, onSend }: Props) {
             }
           }}
           placeholder="Message…"
-          maxLength={500}
+          maxLength={MAX_CHAT_LENGTH}
           className="min-w-0 flex-1 rounded-md bg-zinc-800 px-2.5 py-1.5 text-sm text-zinc-100 placeholder-zinc-500 outline-none focus:ring-1 focus:ring-sky-600"
         />
         <button

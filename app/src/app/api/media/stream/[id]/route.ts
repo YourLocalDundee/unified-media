@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth } from '@/lib/dal'
 import { getItemById } from '@/lib/media-server/library'
 import fs from 'fs'
+import { Readable } from 'stream'
 import { stat } from 'fs/promises'
 import path from 'path'
 
@@ -46,27 +47,41 @@ export async function GET(
   const mimeType = getMimeType(filePath)
   const rangeHeader = req.headers.get('range')
 
+  // Readable.toWeb bridges the Node stream and honors backpressure (it pauses the
+  // fs read when the consumer is slow), unlike a manual enqueue-everything loop
+  // that buffers the whole chunk backlog in memory for a stalled client (A4-L6).
+  const toWeb = (stream: fs.ReadStream) => Readable.toWeb(stream) as unknown as ReadableStream<Uint8Array>
+  const unsatisfiable = () =>
+    new NextResponse(null, { status: 416, headers: { 'Content-Range': `bytes */${fileSize}`, 'Accept-Ranges': 'bytes' } })
+
   if (rangeHeader) {
-    const [, rangeValue] = rangeHeader.split('=')
-    const [startStr, endStr] = (rangeValue ?? '').split('-')
-    const start = parseInt(startStr ?? '0', 10)
-    const end = endStr ? parseInt(endStr, 10) : fileSize - 1
+    // Only a single byte-range is supported. Validate strictly and answer 416 per
+    // RFC 7233 for malformed, multi-range, or unsatisfiable requests instead of
+    // emitting a broken 206 with a negative Content-Length or a mid-flight stream
+    // error (A4-H3). The old parser fed raw parseInt() straight into createReadStream.
+    const match = /^bytes=(\d*)-(\d*)$/.exec(rangeHeader.trim())
+    if (!match || (match[1] === '' && match[2] === '')) return unsatisfiable()
+
+    let start: number
+    let end: number
+    if (match[1] === '') {
+      // Suffix range: bytes=-N → the final N bytes.
+      const suffixLen = parseInt(match[2], 10)
+      if (!Number.isFinite(suffixLen) || suffixLen <= 0) return unsatisfiable()
+      start = Math.max(0, fileSize - suffixLen)
+      end = fileSize - 1
+    } else {
+      start = parseInt(match[1], 10)
+      end = match[2] === '' ? fileSize - 1 : parseInt(match[2], 10)
+    }
+    end = Math.min(end, fileSize - 1)
+
+    if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || start >= fileSize || end < start) {
+      return unsatisfiable()
+    }
+
     const chunkSize = end - start + 1
-
-    const stream = fs.createReadStream(filePath, { start, end })
-    // Node.js ReadableStream must be bridged to the Web ReadableStream that Next.js Route Handlers expect.
-    const webStream = new ReadableStream({
-      start(controller) {
-        stream.on('data', chunk => controller.enqueue(chunk))
-        stream.on('end', () => controller.close())
-        stream.on('error', err => controller.error(err))
-      },
-      cancel() {
-        stream.destroy()
-      },
-    })
-
-    return new NextResponse(webStream, {
+    return new NextResponse(toWeb(fs.createReadStream(filePath, { start, end })), {
       status: 206,
       headers: {
         'Content-Type': mimeType,
@@ -78,19 +93,7 @@ export async function GET(
     })
   }
 
-  const stream = fs.createReadStream(filePath)
-  const webStream = new ReadableStream({
-    start(controller) {
-      stream.on('data', chunk => controller.enqueue(chunk))
-      stream.on('end', () => controller.close())
-      stream.on('error', err => controller.error(err))
-    },
-    cancel() {
-      stream.destroy()
-    },
-  })
-
-  return new NextResponse(webStream, {
+  return new NextResponse(toWeb(fs.createReadStream(filePath)), {
     status: 200,
     headers: {
       'Content-Type': mimeType,

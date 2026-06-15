@@ -68,12 +68,23 @@ export function isAllowedReaction(emoji: string): emoji is ReactionEmoji {
 // --- input validation (audit C1) ---
 // Absolute ceiling on any client-supplied position. 24h in ticks; any reported or
 // commanded position must be a finite number in [0, MAX_POSITION_TICKS].
+// A5-08 (intentional): this is a coarse INTEGER-column guard, NOT media-duration
+// validation. The WS process doesn't know each item's runtime, and the player already
+// clamps currentTime to duration locally and the linear-transcode seek limit bounds real
+// playback, so a value above the true runtime is a cosmetic/telemetry concern, not
+// corruption. Kept coarse on purpose; tighten only if duration is threaded into live state.
 export const MAX_POSITION_TICKS = 86_400 * TICKS_PER_SECOND
+// Shared chat-length ceiling — both the server gate and the client input/slice use this
+// single constant (A5-06), so they can no longer disagree.
 export const MAX_CHAT_LENGTH = 2000
 
 // --- WS abuse controls (audit H3) — per-socket token buckets over a rolling window ---
 export const WS_RATE_WINDOW_MS = 10_000
 export const WS_CHAT_MAX_PER_WINDOW = 15
+// A5-09 (accepted for v1): reactions are rate-limited per sender but not coalesced, so
+// fan-out is O(members) per reaction and the aggregate is bounded-but-large at the
+// MAX_MEMBERS_PER_PARTY=50 ceiling. Fine at home-server scale; the client also caps
+// concurrent rendered floaters (A5-12). Lower this or coalesce server-side if needed.
 export const WS_REACTION_MAX_PER_WINDOW = 30
 export const WS_CONTROL_MAX_PER_WINDOW = 30
 export const WS_MSG_MAX_PER_WINDOW = 200 // overall per-socket ceiling across all message types

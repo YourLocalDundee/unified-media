@@ -1,14 +1,22 @@
 // Frame-by-frame advance/rewind panel.
-// Assumes 24 fps — the most common film frame rate. The browser has no API to
-// query the actual frame rate of the loaded video, so 1/24 s is a reasonable
-// constant. Users can nudge manually if the content is 25/30/60 fps.
+// The frame rate is measured from the video itself via requestVideoFrameCallback
+// (A4-M5) rather than assuming 24 fps — so the step size and frame counter are
+// correct for 25/30/50/60 fps content too. Falls back to 24 fps when rVFC is
+// unavailable or the video hasn't presented enough frames yet to measure.
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 
-// Step size in seconds. 1/24 ≈ 41.67ms per frame.
-const FRAME_DURATION = 1 / 24
+const DEFAULT_FPS = 24
+
+interface FrameMeta {
+  mediaTime: number
+  presentedFrames: number
+}
+type VideoWithRVFC = HTMLVideoElement & {
+  requestVideoFrameCallback?: (cb: (now: number, metadata: FrameMeta) => void) => number
+}
 
 interface Props {
   videoRef: React.RefObject<HTMLVideoElement>
@@ -32,6 +40,9 @@ function formatTimeDetailed(seconds: number): string {
 
 export default function MediaFrameAdvance({ videoRef }: Props) {
   const [currentTime, setCurrentTime] = useState(0)
+  const [fps, setFps] = useState(DEFAULT_FPS)
+  const fpsRef = useRef(DEFAULT_FPS)
+  useEffect(() => { fpsRef.current = fps }, [fps])
 
   useEffect(() => {
     const video = videoRef.current
@@ -41,13 +52,39 @@ export default function MediaFrameAdvance({ videoRef }: Props) {
     return () => video.removeEventListener('timeupdate', handleTimeUpdate)
   }, [videoRef])
 
+  // Measure fps over a short window of presented frames (requires playback — paused
+  // video presents no frames, so it stays at the default until the user plays once).
+  useEffect(() => {
+    const video = videoRef.current as VideoWithRVFC | null
+    if (!video || typeof video.requestVideoFrameCallback !== 'function') return
+    let cancelled = false
+    let first: FrameMeta | null = null
+    const onFrame = (_now: number, md: FrameMeta) => {
+      if (cancelled) return
+      if (!first) {
+        first = { mediaTime: md.mediaTime, presentedFrames: md.presentedFrames }
+      } else {
+        const dt = md.mediaTime - first.mediaTime
+        const df = md.presentedFrames - first.presentedFrames
+        if (dt > 0.25 && df > 0) {
+          const measured = df / dt
+          if (measured >= 10 && measured <= 121) setFps(Math.round(measured))
+          return // stable estimate captured — stop sampling
+        }
+      }
+      video.requestVideoFrameCallback?.(onFrame)
+    }
+    video.requestVideoFrameCallback(onFrame)
+    return () => { cancelled = true }
+  }, [videoRef])
+
   const handleForward = () => {
     const video = videoRef.current
     if (!video) return
     // Must pause before seeking; seeking a playing video causes the browser to
     // resume from the new position, making the step invisible to the user.
     video.pause()
-    video.currentTime += FRAME_DURATION
+    video.currentTime += 1 / fpsRef.current
   }
 
   const handleBack = () => {
@@ -55,11 +92,10 @@ export default function MediaFrameAdvance({ videoRef }: Props) {
     if (!video) return
     video.pause()
     // Clamp to 0 to avoid negative currentTime which some browsers reject.
-    video.currentTime = Math.max(0, video.currentTime - FRAME_DURATION)
+    video.currentTime = Math.max(0, video.currentTime - 1 / fpsRef.current)
   }
 
-  // Approximate frame counter, assuming 24 fps.
-  const frameNumber = Math.floor(currentTime * 24)
+  const frameNumber = Math.floor(currentTime * fps)
 
   return (
     <div>
@@ -79,7 +115,7 @@ export default function MediaFrameAdvance({ videoRef }: Props) {
         </button>
         <span className="text-zinc-300 text-sm">Frame {frameNumber}</span>
       </div>
-      <p className="text-zinc-400 text-xs">{formatTimeDetailed(currentTime)}</p>
+      <p className="text-zinc-400 text-xs">{formatTimeDetailed(currentTime)} · {fps} fps</p>
     </div>
   )
 }

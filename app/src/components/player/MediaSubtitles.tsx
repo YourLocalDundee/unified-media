@@ -4,7 +4,7 @@
 // Settings are persisted to localStorage and restored on mount.
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 interface Props {
   videoRef: React.RefObject<HTMLVideoElement>
@@ -52,11 +52,11 @@ function injectStyle(css: string) {
   el.textContent = css
 }
 
-// _videoRef is unused here because subtitle delay is currently UI-state-only;
-// actual per-cue timestamp offset would require manipulating WebVTT cue objects,
-// which is not yet implemented.
-export default function MediaSubtitles({ videoRef: _videoRef }: Props) {
+export default function MediaSubtitles({ videoRef }: Props) {
   const [delay, setDelay] = useState(0)
+  // Each cue's TRUE (unshifted) start/end, captured the first time we touch it, so
+  // re-applying a new delay offsets from the original rather than compounding.
+  const originalCueTimes = useRef(new WeakMap<TextTrackCue, { start: number; end: number }>())
   const [fontSize, setFontSize] = useState<FontSize>('100%')
   const [color, setColor] = useState<FontColor>('#ffffff')
   const [background, setBackground] = useState<Background>('transparent')
@@ -87,6 +87,36 @@ export default function MediaSubtitles({ videoRef: _videoRef }: Props) {
       JSON.stringify({ delay, fontSize, color, background, align, shadow, opacity }),
     )
   }, [delay, fontSize, color, background, align, shadow, opacity])
+
+  // Apply the delay to the actual subtitle cue timestamps (A4-M6). Previously this
+  // control mutated nothing — it shifted only its own state. We offset every loaded
+  // cue's start/end by delay seconds from its captured original, and re-apply when a
+  // track is added (VideoPlayer mounts one <track> per stream) so a freshly loaded
+  // track also picks up the current offset.
+  useEffect(() => {
+    const video = videoRef.current
+    if (!video) return
+    const shiftSec = delay / 1000
+    const applyShift = () => {
+      for (const track of Array.from(video.textTracks)) {
+        const cues = track.cues
+        if (!cues) continue
+        for (let i = 0; i < cues.length; i++) {
+          const cue = cues[i]
+          let orig = originalCueTimes.current.get(cue)
+          if (!orig) {
+            orig = { start: cue.startTime, end: cue.endTime }
+            originalCueTimes.current.set(cue, orig)
+          }
+          cue.startTime = Math.max(0, orig.start + shiftSec)
+          cue.endTime = Math.max(0, orig.end + shiftSec)
+        }
+      }
+    }
+    applyShift()
+    video.textTracks.addEventListener('addtrack', applyShift)
+    return () => video.textTracks.removeEventListener('addtrack', applyShift)
+  }, [delay, videoRef])
 
   function adjustDelay(delta: number) {
     setDelay((prev) => Math.max(DELAY_MIN, Math.min(DELAY_MAX, prev + delta)))

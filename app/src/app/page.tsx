@@ -6,12 +6,14 @@
 import { Suspense } from 'react'
 import Link from 'next/link'
 import { getResumeItems, getWatchState, getRecentlyAdded, getItemById } from '@/lib/media-server/library'
+import { tmdbImageUrl } from '@/lib/media-server'
 import { getAllRequests } from '@/lib/requests/monitor'
 import { getTorrents } from '@/lib/qbittorrent/api'
 import { getTorrentStateLabel, getTorrentStateColor } from '@/lib/qbittorrent/types'
 import { formatBytes, formatDate } from '@/lib/utils'
 import MediaCard from '@/components/media/MediaCard'
 import { Badge } from '@/components/ui/Badge'
+import { JoinPartyButton } from '@/components/party/JoinPartyButton'
 import { requireAuth } from '@/lib/dal'
 import type { MediaItem, WatchState } from '@/lib/media-server/types'
 import type { NativeRequestWithUser } from '@/lib/requests/types'
@@ -34,6 +36,10 @@ export default async function HomePage() {
   await requireAuth()
   return (
     <div className="space-y-10">
+      <div className="flex items-center justify-end">
+        {/* Manual code entry for a watch party — the one join path that isn't a one-tap link (A5-01). */}
+        <JoinPartyButton />
+      </div>
       <Suspense fallback={<SectionSkeleton title="Continue Watching" />}>
         <ContinueWatchingSection />
       </Suspense>
@@ -93,6 +99,22 @@ function UnavailableMessage({ message }: { message: string }) {
   )
 }
 
+// Resolve a card poster URL with a fallback chain. Episodes carry no poster_path
+// (the scanner never writes one and the enricher only enriches movies/series), so
+// without a fallback they render as a gray placeholder while every movie/series in
+// the same row shows its poster. Fall back to the parent series' poster, then a
+// backdrop, before giving up. Reuses the shared `tmdbImageUrl` builder so the TMDB
+// base URL is never hardcoded here.
+function resolveCardImage(item: MediaItem, series?: MediaItem): string | undefined {
+  return (
+    tmdbImageUrl(item.poster_path, 'w342') ??
+    tmdbImageUrl(series?.poster_path ?? null, 'w342') ??
+    tmdbImageUrl(series?.backdrop_path ?? null, 'w780') ??
+    tmdbImageUrl(item.backdrop_path, 'w780') ??
+    undefined
+  )
+}
+
 // ---------------------------------------------------------------------------
 // Continue Watching
 // ---------------------------------------------------------------------------
@@ -117,22 +139,20 @@ async function ContinueWatchingSection() {
           ? watchState.position_ticks / item.runtime_ticks
           : 0
 
-      // Poster comes from TMDB — the media server stores the TMDB path, not a local URL.
-      const imageUrl = item.poster_path
-        ? `https://image.tmdb.org/t/p/w185${item.poster_path}`
+      // Episodes store their parent under series_id; fetch it once so it can supply
+      // both the display title and the poster fallback (episodes have no poster_path).
+      const series = item.type === 'episode' && item.series_id
+        ? getItemById(item.series_id)
         : undefined
+
+      // Poster comes from TMDB — the media server stores the TMDB path, not a local URL.
+      const imageUrl = resolveCardImage(item, series)
 
       if (item.type === 'episode') {
         // For episodes we show the series title as the card title so the row
         // is recognizable at a glance; the episode code goes into the subtitle.
-        let seriesTitle = item.title
+        let seriesTitle = series ? series.title : item.title
         let subtitle: string | undefined
-        if (item.series_id) {
-          const series = getItemById(item.series_id)
-          if (series) {
-            seriesTitle = series.title
-          }
-        }
         if (item.season_number != null && item.episode_number != null) {
           const epLabel = item.episode_title ?? item.title
           subtitle = `S${String(item.season_number).padStart(2,'0')}E${String(item.episode_number).padStart(2,'0')} · ${epLabel}`
@@ -237,9 +257,11 @@ async function LatestAddedSection() {
       <SectionHeading title="Recently Added" viewAllHref="/library" />
       <div className="flex gap-4 overflow-x-auto pb-2 scrollbar-thin scrollbar-thumb-border">
         {items.map((item) => {
-          const imageUrl = item.poster_path
-            ? `https://image.tmdb.org/t/p/w185${item.poster_path}`
-            : undefined
+          // Recently Added is normally movies/series, but a mis-classified episode
+          // (e.g. a top-level anime episode) can land here with no poster_path — fall
+          // back to its parent series' poster the same way Continue Watching does.
+          const series = item.series_id ? getItemById(item.series_id) : undefined
+          const imageUrl = resolveCardImage(item, series)
           return (
             <div key={item.id} className="flex-shrink-0">
               <MediaCard

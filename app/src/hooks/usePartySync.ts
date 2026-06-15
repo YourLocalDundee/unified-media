@@ -36,8 +36,14 @@ import type {
   LastActor,
 } from '@/lib/party/types'
 
-const PING_INTERVAL_MS = 10_000
+// Match the 5s heartbeat cadence (A5-10) so the clock-offset EMA — which is fed only by
+// pong replies — refreshes as often as the spec intends, not half as often.
+const PING_INTERVAL_MS = 5_000
 const CHAT_CAP = 200
+// Cap how many reaction floaters can be on screen at once (A5-12). Reactions are
+// rate-limited per sender but not coalesced, so several spammers can stack dozens of
+// floaters; keep only the most recent so the corner column can't fill the screen.
+const REACTION_RENDER_CAP = 12
 const READY_DEBOUNCE_MS = 400
 const RECONNECT_BACKOFF_MS = [0, 1000, 2000, 5000]
 
@@ -60,6 +66,10 @@ export interface UsePartySyncResult {
   /** Raised by the hook while it programmatically mutates the video. VideoPlayer
    *  reads it so element-event handlers know the change was remote. */
   applyingRemoteStateRef: React.RefObject<boolean>
+  /** Last user-facing server error (rate-limited / not-a-member / bad reaction),
+   *  auto-clears after a few seconds. Lets the panel show why a chat/reaction was
+   *  dropped instead of failing silently (A5-06). */
+  lastError: string | null
   ended: boolean
   sendIntent: (action: ControlAction, positionTicks: number) => void
   sendChat: (text: string) => void
@@ -94,6 +104,9 @@ export function usePartySync(
       enabled && partyId ? 'connecting' : 'ended',
     )
   const [ended, setEnded] = useState(false)
+  // Transient, user-facing server error surfaced to the panel (A5-06).
+  const [lastError, setLastError] = useState<string | null>(null)
+  const errorClearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // --- Refs (live values, not re-render triggers) ---
   const wsRef = useRef<WebSocket | null>(null)
@@ -359,17 +372,22 @@ export function usePartySync(
           )
           break
         case 'reaction':
-          setReactions((prev) => [
-            ...prev,
-            {
-              // M16: guaranteed-unique id so same-millisecond reactions cannot
-              // collide (which caused stuck/dropped reactions and React key warnings).
-              id: crypto.randomUUID(),
-              from: msg.from,
-              emoji: msg.emoji,
-              ts: msg.ts,
-            },
-          ])
+          setReactions((prev) => {
+            const next = [
+              ...prev,
+              {
+                // M16: guaranteed-unique id so same-millisecond reactions cannot
+                // collide (which caused stuck/dropped reactions and React key warnings).
+                id: crypto.randomUUID(),
+                from: msg.from,
+                emoji: msg.emoji,
+                ts: msg.ts,
+              },
+            ]
+            // A5-12: bound concurrent floaters (their per-id expiry timers in
+            // ReactionOverlay reconcile and clear when an id drops off the array).
+            return next.length > REACTION_RENDER_CAP ? next.slice(next.length - REACTION_RENDER_CAP) : next
+          })
           break
         case 'pong': {
           const now = Date.now()
@@ -399,11 +417,25 @@ export function usePartySync(
           closedByUsRef.current = true
           wsRef.current?.close()
           break
-        case 'error':
-          // Non-fatal protocol errors (bad emoji, not a member). Surface via console;
-          // the UI shows connection state, and a hard 'not a member' just won't sync.
+        case 'error': {
+          // Non-fatal protocol errors (rate-limited, bad emoji, not a member). Surface
+          // user-facing ones to the panel so a dropped chat/reaction isn't silent (A5-06);
+          // everything still logs to console.
           console.warn('[party] server error', msg.code, msg.message)
+          const USER_FACING: Record<string, string> = {
+            rate_limited: 'Slow down — too many messages.',
+            not_member: 'You are no longer in this party.',
+            bad_reaction: 'That reaction could not be sent.',
+            bad_field: 'Message could not be sent.',
+          }
+          const friendly = USER_FACING[msg.code]
+          if (friendly) {
+            setLastError(friendly)
+            if (errorClearTimerRef.current) clearTimeout(errorClearTimerRef.current)
+            errorClearTimerRef.current = setTimeout(() => setLastError(null), 4000)
+          }
           break
+        }
       }
     },
     [applyState, withRemoteApply, videoRef, markConnectionStable],
@@ -688,6 +720,7 @@ export function usePartySync(
     reactions,
     connectionState,
     applyingRemoteStateRef,
+    lastError,
     ended,
     sendIntent,
     sendChat,

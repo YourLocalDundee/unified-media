@@ -114,20 +114,9 @@ export function isActiveMember(partyId: string, userId: string): boolean {
   return row != null
 }
 
-/** Mark a member as left (set left_at). No-op if already left or never joined. */
-export function markMemberLeft(partyId: string, userId: string): void {
-  getDb()
-    .prepare('UPDATE watch_party_members SET left_at = ? WHERE party_id = ? AND user_id = ? AND left_at IS NULL')
-    .run(Date.now(), partyId, userId)
-}
-
-/** Count of currently-active members in a party. */
-export function countActiveMembers(partyId: string): number {
-  const row = getDb()
-    .prepare('SELECT COUNT(*) AS n FROM watch_party_members WHERE party_id = ? AND left_at IS NULL')
-    .get(partyId) as { n: number }
-  return row.n
-}
+// markMemberLeft / countActiveMembers were removed (A5-07): the atomic
+// leaveAndMaybeEnd() (M10) is the only supported leave path, and reintroducing a
+// non-atomic last-member update would resurrect the race that fix eliminated.
 
 /** End a party: status ended, stamp ended_at. */
 export function endPartyRow(partyId: string): void {

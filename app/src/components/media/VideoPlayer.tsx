@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState, useCallback } from 'react'
+import { useEffect, useRef, useState, useCallback, memo } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   Play,
@@ -31,6 +31,16 @@ import { ReactionBar } from '@/components/party/ReactionBar'
 import { ReactionOverlay } from '@/components/party/ReactionOverlay'
 import { StartPartyButton } from '@/components/party/StartPartyButton'
 import { joinParty, getPartyInfo, leaveParty, endParty } from '@/lib/party/client'
+
+// Memoized party children (A4-H6). `currentTime` state updates ~4×/sec during
+// playback and re-renders VideoPlayer; without memo these heavy panels reconcile on
+// every tick. usePartySync returns useCallback-stable handlers and state arrays that
+// only change on real party events, so their props are referentially stable between
+// time ticks and memo short-circuits the re-render.
+const PartyPanelMemo = memo(PartyPanel)
+const ChatPanelMemo = memo(ChatPanel)
+const ReactionOverlayMemo = memo(ReactionOverlay)
+const ReactionBarMemo = memo(ReactionBar)
 
 // ---------------------------------------------------------------------------
 // Time formatting (HH:MM:SS / MM:SS for player display)
@@ -99,6 +109,15 @@ export default function VideoPlayer(props: PlaybackData) {
   const pendingSeekRef = useRef<number | null>(null)
   // Guards the one-time, preference-driven default audio/subtitle selection on mount.
   const defaultsApplied = useRef(false)
+  // Last position (ticks) reported to the progress endpoint, to skip redundant writes (A4-H5).
+  const lastReportedTicksRef = useRef(-1)
+  // Makes handleEnded idempotent (browsers can fire 'ended' twice) and lets us abort the
+  // in-flight next-episode fetch on unmount (A4-M8).
+  const didEndRef = useRef(false)
+  const endedAbortRef = useRef<AbortController | null>(null)
+  // True while the user is dragging the seek bar; suppresses timeupdate-driven setCurrentTime
+  // so the thumb doesn't jump back to the playhead between drag events (A4-M3).
+  const isScrubbingRef = useRef(false)
 
   // Player state
   const [isLoading, setIsLoading] = useState(true)
@@ -176,13 +195,31 @@ export default function VideoPlayer(props: PlaybackData) {
       try {
         const joined = await joinParty({ joinCode: props.initialJoinCode })
         if (cancelled) return
+        // If the party is for a different media item than this player has open, navigate
+        // to the party's media instead of syncing against the wrong file (A5-02). The
+        // link path normally already encodes the right [id], but a code entered here for
+        // a party watching item B while we show item A must not sync in place.
+        if (joined.mediaId !== itemId) {
+          router.replace(`/play/${joined.mediaId}?party=${joined.joinCode}`)
+          return
+        }
         setPartyId(joined.partyId)
         setPartyJoinCode(joined.joinCode)
         setPartyMediaId(joined.mediaId)
-        // Resolve host + member list for the panel.
-        const info = await getPartyInfo(joined.partyId)
-        if (cancelled) return
-        setPartyHostUserId(info.hostUserId)
+        // Resolve host for the panel. This is a SECOND request after the join already
+        // succeeded; a transient failure must not strip the host's "End party" control,
+        // so retry a few times instead of swallowing it once (A5-05).
+        for (let attempt = 0; attempt < 3 && !cancelled; attempt++) {
+          try {
+            const info = await getPartyInfo(joined.partyId)
+            if (cancelled) return
+            setPartyHostUserId(info.hostUserId)
+            break
+          } catch (e) {
+            if (attempt === 2) console.warn('[VideoPlayer] getPartyInfo failed after retries', e)
+            else await new Promise((r) => setTimeout(r, 500 * (attempt + 1)))
+          }
+        }
       } catch (e) {
         console.warn('[VideoPlayer] party auto-join failed', e)
       }
@@ -325,10 +362,16 @@ export default function VideoPlayer(props: PlaybackData) {
       console.warn('[VideoPlayer] progressApiUrl not set, progress will not be reported')
       return
     }
+    // Send the actual current position, not a hard-coded 0 (A4-L5). On a resume the
+    // seek has already landed in handleLoadedMetadata before 'play' fires, so posting
+    // 0 here would briefly overwrite the resume position with 0 (lost on a crash in
+    // that window).
+    const positionTicks = Math.round((videoRef.current?.currentTime ?? 0) * 10_000_000)
+    lastReportedTicksRef.current = positionTicks
     fetch(progressApiUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ mediaId: itemId, positionTicks: 0, played: false }),
+      body: JSON.stringify({ mediaId: itemId, positionTicks, played: false }),
     }).catch(() => {})
   }, [itemId, progressApiUrl])
 
@@ -336,6 +379,11 @@ export default function VideoPlayer(props: PlaybackData) {
     (isPaused: boolean) => {
       if (!progressApiUrl) return
       const positionTicks = Math.round((videoRef.current?.currentTime ?? 0) * 10_000_000)
+      // Skip redundant writes for an unchanged position (A4-H5) — a paused/stationary
+      // player previously re-upserted the same row into the single SQLite writer every
+      // 10s forever.
+      if (positionTicks === lastReportedTicksRef.current) return
+      lastReportedTicksRef.current = positionTicks
       fetch(progressApiUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -365,6 +413,10 @@ export default function VideoPlayer(props: PlaybackData) {
   }, [itemId, progressApiUrl])
 
   const handleQualityChange = useCallback((quality: QualityOption) => {
+    // Capture the current position so the re-init resumes here instead of restarting
+    // from 0 (A4-M1). Mirrors the audio-switch path; consumed once in
+    // handleLoadedMetadata via the same single currentTime path.
+    pendingSeekRef.current = videoRef.current?.currentTime ?? 0
     setCurrentQuality(quality)
     setActiveStreamUrl(quality.streamUrl)
     setActiveIsHls(quality.isHls)
@@ -454,6 +506,8 @@ export default function VideoPlayer(props: PlaybackData) {
     async function initVideo() {
       setIsLoading(true)
       setError(null)
+      // A fresh source load can legitimately reach 'ended' again (A4-M8 idempotency guard).
+      didEndRef.current = false
 
       const video = videoRef.current
       if (!video) {
@@ -509,14 +563,22 @@ export default function VideoPlayer(props: PlaybackData) {
             } else if (data.type === 'networkError') {
               if (data.details === 'fragLoadError') {
                 // 503 from the segment endpoint means the linear transcode has not
-                // reached this segment yet (v1 seek limitation). The user should seek
-                // backwards to a position that has already been transcoded.
+                // reached this requested segment yet (v1 seek limitation). Rather than
+                // wedging on a terminal error overlay that asks the user to seek back
+                // themselves (A4-H4), snap back to the last buffered (transcoded)
+                // position, restart the loader, and resume.
                 const code = data.response?.code
-                setError(
-                  code === 503
-                    ? 'Seek past the current transcode position. Seek backwards to a played section to resume.'
-                    : `Network error loading segment: ${data.details}`,
-                )
+                if (code === 503) {
+                  const v = videoRef.current
+                  const buf = v?.buffered
+                  const safe = buf && buf.length > 0 ? Math.max(0, buf.end(buf.length - 1) - 1) : 0
+                  if (v) v.currentTime = safe
+                  hls.startLoad()
+                  v?.play().catch(() => {})
+                  setIsLoading(false)
+                  return
+                }
+                setError(`Network error loading segment: ${data.details}`)
               } else {
                 setError(`Network error: ${data.details ?? 'connection failed'}`)
               }
@@ -566,6 +628,21 @@ export default function VideoPlayer(props: PlaybackData) {
     window.addEventListener('beforeunload', handler)
     return () => window.removeEventListener('beforeunload', handler)
   }, [reportStop])
+
+  // Final progress write on React unmount (A4-H1). `beforeunload` only covers a full
+  // page unload/refresh — it does NOT fire on Next.js client navigation (autoplay
+  // router.push, back gestures, deep links), so without this the last position is lost
+  // up to 10s stale. reportStop clears the interval and is guarded against a no-start
+  // player by didReportStart, so it is safe to call once here. Keep the latest closure
+  // in a ref so the empty-dep effect fires only on true unmount.
+  const reportStopRef = useRef(reportStop)
+  reportStopRef.current = reportStop
+  useEffect(() => {
+    return () => {
+      endedAbortRef.current?.abort()
+      if (didReportStart.current) reportStopRef.current()
+    }
+  }, [])
 
   // ---------------------------------------------------------------------------
   // Fullscreen sync
@@ -725,6 +802,9 @@ export default function VideoPlayer(props: PlaybackData) {
     if (pendingSeekRef.current != null) {
       video.currentTime = pendingSeekRef.current
       pendingSeekRef.current = null
+      // The position is now set by the switch; mark resume applied so a later natural
+      // load can't re-seek to the stale resume point and jump the user backward (A4-M7).
+      resumeApplied.current = true
       return
     }
     const resumeSeconds = resumePositionTicks / 10_000_000
@@ -756,16 +836,36 @@ export default function VideoPlayer(props: PlaybackData) {
     if (!didReportStart.current) {
       didReportStart.current = true
       reportStart()
+    }
+    // (Re)start the progress interval on play; each tick skips while paused/unchanged (A4-H5).
+    if (!progressInterval.current) {
       progressInterval.current = setInterval(() => {
         const vid = videoRef.current
-        if (vid) reportProgress(vid.paused)
+        if (!vid || vid.paused) return
+        // In party mode, the local element can still be playing during the
+        // `effectiveAt` window of a remote-applied pause; skip the write so a
+        // slightly-ahead position isn't checkpointed for continue-watching (A5-04).
+        // partyKbdRef.current.active is live; applyingRemoteStateRef is a stable ref.
+        if (partyKbdRef.current.active && party.applyingRemoteStateRef.current) return
+        reportProgress(false)
       }, 10_000)
     }
   }
 
-  const handlePause = () => setIsPlaying(false)
+  const handlePause = () => {
+    setIsPlaying(false)
+    // Stop the periodic writes while paused; capture the paused position once (A4-H5).
+    if (progressInterval.current) {
+      clearInterval(progressInterval.current)
+      progressInterval.current = null
+    }
+    reportProgress(true)
+  }
 
   const handleTimeUpdate = () => {
+    // While scrubbing, the seek input owns currentTime; ignore the still-playing video's
+    // timeupdate so the thumb doesn't snap back to the playhead mid-drag (A4-M3).
+    if (isScrubbingRef.current) return
     const video = videoRef.current
     if (video) setCurrentTime(video.currentTime)
   }
@@ -779,9 +879,15 @@ export default function VideoPlayer(props: PlaybackData) {
   const handleCanPlay = () => setIsLoading(false)
 
   const handleEnded = useCallback(() => {
+    // Some browsers fire 'ended' more than once (ended → seek-to-near-end → ended);
+    // make this idempotent so the next-episode fetch / countdown isn't double-triggered (A4-M8).
+    if (didEndRef.current) return
+    didEndRef.current = true
     reportStop()
     if (seriesId && nextEpisodeApiBase) {
-      fetch(`${nextEpisodeApiBase}/${seriesId}/next-episode`)
+      const ctrl = new AbortController()
+      endedAbortRef.current = ctrl
+      fetch(`${nextEpisodeApiBase}/${seriesId}/next-episode`, { signal: ctrl.signal })
         .then((r) => r.json())
         .then((ep: NextEpisode | null) => {
           if (!ep) return
@@ -789,7 +895,7 @@ export default function VideoPlayer(props: PlaybackData) {
           setCountdown(10)
           setCountdownActive(true)
         })
-        .catch(() => {})
+        .catch(() => {}) // includes AbortError on unmount
     } else if (seriesId && !nextEpisodeApiBase) {
       console.warn('[VideoPlayer] nextEpisodeApiBase not set, next episode autoplay disabled')
     }
@@ -816,10 +922,12 @@ export default function VideoPlayer(props: PlaybackData) {
   }, [countdownActive])
 
   useEffect(() => {
-    if (countdown === 0 && nextEpisode) {
+    // Require countdownActive too (A4-M8): cancelAutoplay clears it, so a countdown
+    // that already reached 0 can't navigate after the user backed out.
+    if (countdown === 0 && nextEpisode && countdownActive) {
       router.push(`/watch/${nextEpisode.id}`)
     }
-  }, [countdown, nextEpisode, router])
+  }, [countdown, nextEpisode, countdownActive, router])
 
   // ---------------------------------------------------------------------------
   // Control actions
@@ -1075,7 +1183,7 @@ export default function VideoPlayer(props: PlaybackData) {
 
       {/* Party reaction overlay */}
       {partyActive && (
-        <ReactionOverlay reactions={party.reactions} onExpire={party.expireReaction} />
+        <ReactionOverlayMemo reactions={party.reactions} onExpire={party.expireReaction} />
       )}
 
       {/* Party readiness-gate "waiting for others to buffer" overlay */}
@@ -1109,6 +1217,9 @@ export default function VideoPlayer(props: PlaybackData) {
           step={0.5}
           value={currentTime}
           onChange={handleSeek}
+          onPointerDown={() => { isScrubbingRef.current = true }}
+          onPointerUp={() => { isScrubbingRef.current = false }}
+          onPointerCancel={() => { isScrubbingRef.current = false }}
           className="w-full mb-3 h-1.5 accent-white cursor-pointer"
           aria-label="Seek"
         />
@@ -1124,7 +1235,7 @@ export default function VideoPlayer(props: PlaybackData) {
           </button>
 
           <button
-            onClick={togglePlay}
+            onClick={(e) => { e.currentTarget.blur(); togglePlay() }}
             className="text-white p-1 hover:text-zinc-300 transition-colors"
             aria-label={isPlaying ? 'Pause' : 'Play'}
           >
@@ -1172,7 +1283,7 @@ export default function VideoPlayer(props: PlaybackData) {
           {/* Party reaction bar */}
           {partyActive && (
             <div className="hidden sm:block">
-              <ReactionBar onReact={party.sendReaction} />
+              <ReactionBarMemo onReact={party.sendReaction} />
             </div>
           )}
 
@@ -1303,7 +1414,7 @@ export default function VideoPlayer(props: PlaybackData) {
       {/* Party side area: PartyPanel + ChatPanel as siblings. */}
       {partyActive && partyPanelOpen && (
         <div className="absolute right-0 top-0 z-30 flex h-full w-80 max-w-[85vw] flex-col border-l border-zinc-800 bg-zinc-950/95 backdrop-blur">
-          <PartyPanel
+          <PartyPanelMemo
             joinCode={partyJoinCode}
             joinUrl={partyJoinUrl}
             mediaId={partyMediaId}
@@ -1316,10 +1427,11 @@ export default function VideoPlayer(props: PlaybackData) {
             onLeave={handlePartyLeave}
             onEnd={handlePartyEnd}
           />
-          <ChatPanel
+          <ChatPanelMemo
             messages={party.chatMessages}
             selfUserId={selfUserId}
             onSend={party.sendChat}
+            error={party.lastError}
           />
         </div>
       )}

@@ -27,22 +27,31 @@ export default function MediaSnapshot({ videoRef, title }: MediaSnapshotProps) {
     const canvas = document.createElement('canvas')
     canvas.width = video.videoWidth
     canvas.height = video.videoHeight
-    canvas.getContext('2d')!.drawImage(video, 0, 0)
-
-    canvas.toBlob((blob) => {
-      if (!blob) return
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      const timestamp = Date.now()
-      a.href = url
-      a.download = `${title}-${timestamp}.png`
-      // Programmatic click triggers the browser's save dialog without a user gesture on the link.
-      a.click()
-      // Revoke immediately after click — the browser has already queued the download.
-      URL.revokeObjectURL(url)
-      setFeedback('saved')
+    // drawImage/toBlob throw a SecurityError on a tainted canvas (cross-origin stream
+    // without CORS). The native /api/media/stream is same-origin, but the Jellyfin
+    // proxy path could taint it — catch so it surfaces as feedback, not an uncaught
+    // exception (A4-L1).
+    try {
+      canvas.getContext('2d')!.drawImage(video, 0, 0)
+      canvas.toBlob((blob) => {
+        if (!blob) { setFeedback('error'); setTimeout(() => setFeedback('idle'), 2000); return }
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        const timestamp = Date.now()
+        a.href = url
+        a.download = `${title}-${timestamp}.png`
+        // Programmatic click triggers the browser's save dialog without a user gesture on the link.
+        a.click()
+        // Defer the revoke — a large (4K) PNG may still be reading when the URL is
+        // revoked on the next line, aborting the save.
+        setTimeout(() => URL.revokeObjectURL(url), 10_000)
+        setFeedback('saved')
+        setTimeout(() => setFeedback('idle'), 2000)
+      }, 'image/png')
+    } catch {
+      setFeedback('error')
       setTimeout(() => setFeedback('idle'), 2000)
-    }, 'image/png')
+    }
   }
 
   return (

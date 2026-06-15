@@ -49,12 +49,14 @@ export default function MediaJumpToTime({ videoRef, duration }: Props) {
       setError('Invalid format. Use MM:SS or HH:MM:SS.')
       return
     }
-    if (parsed < 0 || parsed > duration) {
+    if (parsed < 0) {
       setError('Time is out of range.')
       return
     }
     if (!videoRef.current) return
-    videoRef.current.currentTime = parsed
+    // Clamp to the end rather than erroring, and don't range-check against a
+    // still-loading duration of 0 (which used to fail every jump) — A4-L2.
+    videoRef.current.currentTime = duration > 0 ? Math.min(parsed, duration) : parsed
     setError('')
     setInput('')
   }

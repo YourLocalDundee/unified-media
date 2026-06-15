@@ -49,16 +49,19 @@ export default function MediaABLoop({ videoRef }: Props) {
       }
       setActive(false)
     } else {
-      // Capture A/B into closure locals so the interval callback is not
-      // affected if the user updates pointA/pointB while the loop is active.
-      const a = pointA
-      const b = pointB
+      // Normalise order so a loop works whether the user set B before A, and refuse
+      // a degenerate near-zero-length loop that would ping-pong the playhead every
+      // tick (A4-M4). Capture into closure locals so a later A/B edit doesn't affect
+      // the running loop.
+      const lo = Math.min(pointA, pointB)
+      const hi = Math.max(pointA, pointB)
+      if (hi - lo < 0.1) return
       // Poll at 300ms — fine enough for practical loop accuracy without taxing the main thread.
       loopIntervalRef.current = setInterval(() => {
         const video = videoRef.current
         if (!video) return
-        if (video.currentTime >= b) {
-          video.currentTime = a
+        if (video.currentTime >= hi) {
+          video.currentTime = lo
         }
       }, 300)
       setActive(true)
@@ -97,7 +100,7 @@ export default function MediaABLoop({ videoRef }: Props) {
       <div className="flex gap-2">
         <button
           onClick={handleToggleLoop}
-          disabled={pointA === null || pointB === null}
+          disabled={pointA === null || pointB === null || Math.abs(pointA - pointB) < 0.1}
           className={`rounded px-3 py-1.5 text-sm disabled:opacity-40 disabled:cursor-not-allowed ${
             active ? 'bg-green-600 text-white' : 'bg-zinc-700 text-zinc-300 hover:bg-zinc-600'
           }`}

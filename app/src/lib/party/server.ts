@@ -392,12 +392,19 @@ async function reconcileDrift(rt: ServerRuntime, partyId: string): Promise<void>
     return m.reportedPositionTicks + deltaMs * TICKS_PER_MS * state.playbackRate
   }
 
+  // Snapshot each connected member's projected position ONCE, before any await (A5-03).
+  // heartbeat() mutates reportedPositionTicks/lastHeartbeat outside the per-party lock;
+  // re-reading those across the `await store.updateParty` below could make the median and
+  // the per-member reseek comparison disagree. Using a single snapshot keeps them
+  // internally consistent and honors the scale-seam's atomicity contract.
+  const snapshot = connected.map((m) => ({ m, projected: projectReport(m) }))
+
   let reference = extrapolatePosition(state, now)
 
   // With more than two connected members, reconcile the authoritative timeline
   // toward the median of reported positions so the room center sets the clock.
   if (connected.length > 2) {
-    const median = medianReportedPositionTicks(connected.map(projectReport))
+    const median = medianReportedPositionTicks(snapshot.map((s) => s.projected))
     const gapTicks = Math.abs(reference - median)
     // Reconcile conservatively: only when the gap is meaningful (>= deadband).
     if (gapTicks >= secondsToTicks(SEEK_DEADBAND_S)) {
@@ -420,9 +427,10 @@ async function reconcileDrift(rt: ServerRuntime, partyId: string): Promise<void>
 
   // Per-member targeted reseek for hard-drift / median outliers, suppressing
   // hard reseeks during POST_JOIN_SETTLE_MS after that member joined/reconnected.
-  for (const m of connected) {
+  // Uses the same snapshot taken above (A5-03) so the comparison matches the median.
+  for (const { m, projected } of snapshot) {
     if (now - m.joinedAt < POST_JOIN_SETTLE_MS) continue
-    const driftS = Math.abs(ticksToSeconds(reference - projectReport(m)))
+    const driftS = Math.abs(ticksToSeconds(reference - projected))
     if (driftS >= DRIFT_HARD_RESEEK_S || driftS >= MEDIAN_OUTLIER_RESEEK_S) {
       sendToMember(rt, state, m.userId, {
         type: 'reseek',

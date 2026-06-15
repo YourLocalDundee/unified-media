@@ -47,10 +47,25 @@ export default function MediaEqualizer({ initAudioChain }: Props) {
     })
   }
 
-  function resetChainGains(chain: AudioChainNodes) {
-    chain.eqFilters.forEach((f) => {
-      f.gain.value = 0
-    })
+  // True bypass (A4-L3): lift the 10 biquads out of the signal path entirely so the
+  // disabled EQ processes no samples — `source → compressor` directly — rather than the
+  // old soft-bypass that left all 10 filters in-path at 0 dB. The compressor/gain/panner
+  // (and karaoke, which taps the panner) are downstream and untouched, so other audio
+  // tools keep working. disconnect() throws when the edge doesn't exist — guard each.
+  function engageEq(chain: AudioChainNodes) {
+    const eq = chain.eqFilters
+    if (eq.length === 0) return
+    try { chain.source.disconnect(chain.compressor) } catch {}
+    try { chain.source.connect(eq[0]) } catch {}
+    try { eq[eq.length - 1].connect(chain.compressor) } catch {}
+  }
+
+  function bypassEq(chain: AudioChainNodes) {
+    const eq = chain.eqFilters
+    if (eq.length === 0) return
+    try { chain.source.disconnect(eq[0]) } catch {}
+    try { eq[eq.length - 1].disconnect(chain.compressor) } catch {}
+    try { chain.source.connect(chain.compressor) } catch {}
   }
 
   function handleToggle() {
@@ -59,13 +74,14 @@ export default function MediaEqualizer({ initAudioChain }: Props) {
       const chain = initAudioChain()
       if (!chain) return
       chainRef.current = chain
+      engageEq(chain)
       applyGainsToChain(chain, gains)
       setEnabled(true)
     } else {
-      // Disabling: reset all EQ band gains to 0 dB (flat) rather than destroying the chain,
-      // because other audio tools may still be using it.
+      // Disabling: truly bypass the EQ band (remove the biquads from the path) rather
+      // than destroying the shared chain, which other audio tools may still be using.
       if (chainRef.current) {
-        resetChainGains(chainRef.current)
+        bypassEq(chainRef.current)
       }
       setEnabled(false)
     }

@@ -5,13 +5,41 @@
 // useRef — createMediaElementSource() throws InvalidStateError if called twice on
 // the same element, so we must never re-create the chain for the same video element.
 'use client'
-import { useRef, useCallback } from 'react'
+import { useRef, useCallback, useEffect } from 'react'
 import type { AudioChainNodes } from './types'
 import { EQ_FREQUENCIES } from './types'
 
 export function useAudioChain(videoRef: React.RefObject<HTMLVideoElement | null>) {
   // Persists the chain across renders without triggering re-renders.
   const chainRef = useRef<AudioChainNodes | null>(null)
+
+  // Tear the graph down on unmount (A4-C1). Browsers hard-cap concurrent
+  // AudioContexts (~6 in Chrome), and createMediaElementSource permanently claims
+  // the <video> element. Without this, every /play/A → /play/B navigation leaked a
+  // context + source node, and after a few episode hops initChain() would throw and
+  // all audio tools would silently die. Closing the context also stops any
+  // timeupdate-driven automation still wired to it.
+  useEffect(() => {
+    return () => {
+      const chain = chainRef.current
+      if (!chain) return
+      try {
+        chain.source.disconnect()
+        chain.eqFilters.forEach((f) => f.disconnect())
+        chain.compressor.disconnect()
+        chain.gainNode.disconnect()
+        chain.panner.disconnect()
+        // These are optional on the type (built lazily in some paths) — guard each.
+        chain.analyser?.disconnect()
+        chain.splitter?.disconnect()
+        chain.merger?.disconnect()
+        chain.karaokeGainL?.disconnect()
+        chain.karaokeGainR?.disconnect()
+      } catch { /* nodes may already be disconnected */ }
+      chain.context.close().catch(() => { /* context may already be closing/closed */ })
+      chainRef.current = null
+    }
+  }, [])
 
   const initChain = useCallback((): AudioChainNodes | null => {
     // Guard: return existing chain — createMediaElementSource() can only be called once per element.

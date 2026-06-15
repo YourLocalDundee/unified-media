@@ -14,6 +14,25 @@ interface Props {
   videoRef: React.RefObject<HTMLVideoElement>
 }
 
+// Disconnect the karaoke sub-graph and restore panner → destination. Module-level
+// so it is stable for both the toggle-off path and the unmount cleanup (A4-H2).
+function teardownKaraokeGraph(chain: AudioChainNodes) {
+  const { panner, splitter, merger, karaokeGainL, karaokeGainR, context } = chain
+  // The karaoke nodes are optional on the type; if the sub-graph was never built
+  // there is nothing to tear down — just make sure panner reaches the destination.
+  // disconnect() throws if the connection doesn't exist — guard each so a partial
+  // teardown still completes rather than aborting mid-way.
+  if (splitter && merger && karaokeGainL && karaokeGainR) {
+    try { panner.disconnect(splitter) } catch {}
+    try { splitter.disconnect(karaokeGainL, 0) } catch {}
+    try { splitter.disconnect(karaokeGainR, 1) } catch {}
+    try { karaokeGainL.disconnect(merger, 0, 0) } catch {}
+    try { karaokeGainR.disconnect(merger, 0, 0) } catch {}
+    try { merger.disconnect(context.destination) } catch {}
+  }
+  try { panner.connect(context.destination) } catch {}
+}
+
 export default function MediaAudioTools({ initAudioChain, videoRef }: Props) {
   const [volumeGain, setVolumeGain] = useState(1)
   const [compressorEnabled, setCompressorEnabled] = useState(false)
@@ -31,6 +50,9 @@ export default function MediaAudioTools({ initAudioChain, videoRef }: Props) {
   useEffect(() => { volumeGainRef.current = volumeGain }, [volumeGain])
   const noiseGateThresholdRef = useRef(noiseGateThreshold)
   useEffect(() => { noiseGateThresholdRef.current = noiseGateThreshold }, [noiseGateThreshold])
+  // Mirror karaoke state so the empty-dep unmount effect can read its CURRENT value.
+  const karaokeRef = useRef(karaoke)
+  useEffect(() => { karaokeRef.current = karaoke }, [karaoke])
 
   useEffect(() => {
     try {
@@ -218,15 +240,7 @@ export default function MediaAudioTools({ initAudioChain, videoRef }: Props) {
       karaokeGainR.connect(merger, 0, 0)
       merger.connect(context.destination)
     } else {
-      // disconnect() throws if the connection doesn't exist — wrap each individually
-      // so a partial teardown still completes rather than aborting mid-way.
-      try { panner.disconnect(splitter) } catch {}
-      try { splitter.disconnect(karaokeGainL, 0) } catch {}
-      try { splitter.disconnect(karaokeGainR, 1) } catch {}
-      try { karaokeGainL.disconnect(merger, 0, 0) } catch {}
-      try { karaokeGainR.disconnect(merger, 0, 0) } catch {}
-      try { merger.disconnect(context.destination) } catch {}
-      panner.connect(context.destination)
+      teardownKaraokeGraph(chain)
     }
   }
 
@@ -234,7 +248,14 @@ export default function MediaAudioTools({ initAudioChain, videoRef }: Props) {
     return () => {
       normalizerCleanupRef.current?.()
       noiseGateCleanupRef.current?.()
+      // Tear down the karaoke sub-graph if it was left wired when the panel closed,
+      // so it doesn't dangle off the (closing) AudioContext on unmount (A4-H2).
+      if (karaokeRef.current) {
+        const chain = initAudioChain()
+        if (chain) teardownKaraokeGraph(chain)
+      }
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   return (
