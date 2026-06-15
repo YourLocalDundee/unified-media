@@ -99,6 +99,10 @@ export function runMigrations(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at);
     CREATE INDEX IF NOT EXISTS idx_audit_log_user_created ON audit_log(user_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_watch_events_user_started ON watch_events(user_id, started_at);
+    -- One watch_events row per (user, item): the native progress beacon upserts this
+    -- row (A3-01) instead of appending, so /history shows distinct items, not a flood.
+    -- watch_events has had no writer until now, so existing DBs hold no duplicate rows.
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_watch_events_user_item ON watch_events(user_id, item_id);
     CREATE INDEX IF NOT EXISTS idx_login_attempts_ip_created ON login_attempts(ip_address, created_at);
   `)
 
@@ -467,6 +471,8 @@ export function runMigrations(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_media_tmdb ON media_items(tmdb_id);
     CREATE INDEX IF NOT EXISTS idx_media_series ON media_items(series_id);
     CREATE INDEX IF NOT EXISTS idx_media_file ON media_items(file_path);
+    -- Composite for per-season episode fetch + next-episode/resume ordering (A3-17).
+    CREATE INDEX IF NOT EXISTS idx_media_series_season_ep ON media_items(series_id, season_number, episode_number);
 
     CREATE TABLE IF NOT EXISTS media_watch_state (
       id              INTEGER PRIMARY KEY AUTOINCREMENT,

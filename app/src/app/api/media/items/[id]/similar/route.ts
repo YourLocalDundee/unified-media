@@ -10,7 +10,10 @@ export async function GET(
 ) {
   await requireAuth()
   const { id } = await params
-  const limit = parseInt(req.nextUrl.searchParams.get('limit') ?? '10', 10)
+  // Clamp so ?limit=abc (NaN) or a negative/huge value can't reach LIMIT and throw
+  // a 500 from better-sqlite3 (A3-14).
+  const rawLimit = parseInt(req.nextUrl.searchParams.get('limit') ?? '10', 10)
+  const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(1, rawLimit), 100) : 10
   const items = getSimilarItems(id, limit)
   return NextResponse.json(items)
 }

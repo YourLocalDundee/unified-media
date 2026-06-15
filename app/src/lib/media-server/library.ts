@@ -18,13 +18,24 @@ export function getItemById(id: string): MediaItem | undefined {
 type SortKey = 'title_asc' | 'title_desc' | 'year_desc' | 'year_asc' | 'added_desc' | 'added_asc'
 
 // Pre-built ORDER BY clauses — kept as a lookup to prevent SQL injection via the sort param
+// COALESCE(sort_title, title) COLLATE NOCASE so case and NULL sort_title don't
+// produce blank-keyed rows at the head and the order matches everywhere (A3-09).
 const SORT_CLAUSE: Record<SortKey, string> = {
-  title_asc:   'ORDER BY sort_title ASC',
-  title_desc:  'ORDER BY sort_title DESC',
+  title_asc:   'ORDER BY COALESCE(sort_title, title) COLLATE NOCASE ASC',
+  title_desc:  'ORDER BY COALESCE(sort_title, title) COLLATE NOCASE DESC',
   year_desc:   'ORDER BY year DESC NULLS LAST',
   year_asc:    'ORDER BY year ASC NULLS LAST',
   added_desc:  'ORDER BY added_at DESC',
   added_asc:   'ORDER BY added_at ASC',
+}
+
+// `type` may be a concrete type ('movie'/'series'/...) or the pseudo-type 'all',
+// which spans the two owned top-level types. Kept here (not inlined) so the
+// matching getCountByType stays in lockstep.
+function typeWhere(type: string): { clause: string; params: string[] } {
+  return type === 'all'
+    ? { clause: `type IN ('movie','series')`, params: [] }
+    : { clause: `type = ?`, params: [type] }
 }
 
 export function getItemsByType(
@@ -36,21 +47,42 @@ export function getItemsByType(
 ): MediaItem[] {
   const db = getDb()
   const order = SORT_CLAUSE[sort] ?? SORT_CLAUSE.title_asc
+  const { clause, params } = typeWhere(type)
   if (year) {
     return db
-      .prepare(`SELECT * FROM media_items WHERE type = ? AND year = ? ${order} LIMIT ? OFFSET ?`)
-      .all(type, year, limit, offset) as MediaItem[]
+      .prepare(`SELECT * FROM media_items WHERE ${clause} AND year = ? ${order} LIMIT ? OFFSET ?`)
+      .all(...params, year, limit, offset) as MediaItem[]
   }
   return db
-    .prepare(`SELECT * FROM media_items WHERE type = ? ${order} LIMIT ? OFFSET ?`)
-    .all(type, limit, offset) as MediaItem[]
+    .prepare(`SELECT * FROM media_items WHERE ${clause} ${order} LIMIT ? OFFSET ?`)
+    .all(...params, limit, offset) as MediaItem[]
+}
+
+// Count for the same predicate getItemsByType uses, so pagination totals stay
+// correct for the 'all' tab and year-filtered views (A3-08, A3-11).
+export function getCountByType(type: string, year?: number): number {
+  const db = getDb()
+  const { clause, params } = typeWhere(type)
+  const where = year ? `WHERE ${clause} AND year = ?` : `WHERE ${clause}`
+  const queryParams = year ? [...params, year] : params
+  return (db.prepare(`SELECT COUNT(*) AS n FROM media_items ${where}`).get(...queryParams) as { n: number }).n
 }
 
 export function searchItems(query: string, limit = 20): MediaItem[] {
   const db = getDb()
-  const like = '%' + query + '%'
+  // Escape LIKE wildcards so a literal % or _ in the query doesn't match everything,
+  // and restrict to top-level owned types so raw episode rows don't leak into a
+  // movie/series search context (A3-13).
+  const escaped = query.replace(/[\\%_]/g, (c) => '\\' + c)
+  const like = '%' + escaped + '%'
   return db
-    .prepare('SELECT * FROM media_items WHERE title LIKE ? OR sort_title LIKE ? LIMIT ?')
+    .prepare(
+      `SELECT * FROM media_items
+       WHERE type IN ('movie','series')
+         AND (title LIKE ? ESCAPE '\\' OR sort_title LIKE ? ESCAPE '\\')
+       ${SORT_CLAUSE.title_asc}
+       LIMIT ?`
+    )
     .all(like, like, limit) as MediaItem[]
 }
 
@@ -136,6 +168,65 @@ export function upsertWatchState(
   }
 }
 
+const TICKS_PER_SECOND = 10_000_000
+
+// Record/refresh the user's watch_events row for this media (A3-01). watch_events
+// is what /history and the admin "Watches"/activity views read, but nothing ever
+// wrote it — only media_watch_state was updated, so the whole history feature was
+// permanently empty. One row per (user, item) via the unique index, upserted so a
+// periodic progress beacon refreshes the row rather than flooding the log.
+// watched_sec/completed are kept monotonic so a backward scrub can't shrink the
+// recorded progress. Best-effort: history logging must never disrupt playback.
+export function recordWatchEvent(
+  userId: string,
+  mediaId: string,
+  positionTicks: number,
+  played: boolean,
+): void {
+  try {
+    const db = getDb()
+    const item = db
+      .prepare(
+        `SELECT type, title, series_id, season_number, episode_number, runtime_ticks
+         FROM media_items WHERE id = ?`,
+      )
+      .get(mediaId) as
+      | { type: string; title: string; series_id: string | null; season_number: number | null; episode_number: number | null; runtime_ticks: number | null }
+      | undefined
+    if (!item) return
+
+    const now = Date.now()
+    const runtimeTicks = item.runtime_ticks ?? 0
+    const watchedSec = Math.round(positionTicks / TICKS_PER_SECOND)
+    const durationSec = runtimeTicks > 0 ? Math.round(runtimeTicks / TICKS_PER_SECOND) : null
+    const progressPct = runtimeTicks > 0 ? Math.min(100, (positionTicks / runtimeTicks) * 100) : null
+
+    // Episodes log the parent series title alongside the episode title.
+    let seriesTitle: string | null = null
+    if (item.type === 'episode' && item.series_id) {
+      const s = db.prepare('SELECT title FROM media_items WHERE id = ?').get(item.series_id) as { title: string } | undefined
+      seriesTitle = s?.title ?? null
+    }
+
+    db.prepare(
+      `INSERT INTO watch_events
+         (user_id, item_id, item_title, series_title, item_type, season_num, episode_num,
+          progress_pct, duration_sec, watched_sec, completed, started_at, ended_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(user_id, item_id) DO UPDATE SET
+         progress_pct = excluded.progress_pct,
+         duration_sec = excluded.duration_sec,
+         watched_sec  = MAX(watched_sec, excluded.watched_sec),
+         completed    = MAX(completed, excluded.completed),
+         ended_at     = excluded.ended_at`,
+    ).run(
+      userId, mediaId, item.title, seriesTitle, item.type,
+      item.season_number ?? null, item.episode_number ?? null,
+      progressPct, durationSec, watchedSec, played ? 1 : 0, now, now,
+    )
+  } catch { /* best-effort history logging — never disrupt playback */ }
+}
+
 export function getResumeItems(userId: string, limit = 12): MediaItem[] {
   const db = getDb()
   return db
@@ -147,15 +238,20 @@ export function getResumeItems(userId: string, limit = 12): MediaItem[] {
          AND media_watch_state.played = 0
          AND media_watch_state.position_ticks > 0
          AND media_items.type IN ('movie', 'episode')
-       ORDER BY media_watch_state.last_played DESC
+       ORDER BY media_watch_state.updated_at DESC
        LIMIT ?`,
     )
     .all(userId, limit) as MediaItem[]
 }
 
+// Resolve the "Watch Now" target for a series (A3-06). Prefer an in-progress
+// episode (most recently touched); otherwise the first UNWATCHED episode by
+// (season, episode); return undefined only when every episode is played, so the
+// caller's episodes[0] fallback means "rewatch from the start".
 export function getSeriesResumeEpisode(userId: string, seriesId: string): MediaItem | undefined {
   const db = getDb()
-  return db
+
+  const inProgress = db
     .prepare(
       `SELECT media_items.*
        FROM media_items
@@ -166,6 +262,22 @@ export function getSeriesResumeEpisode(userId: string, seriesId: string): MediaI
          AND media_watch_state.played = 0
          AND media_watch_state.position_ticks > 0
        ORDER BY media_watch_state.updated_at DESC
+       LIMIT 1`,
+    )
+    .get(userId, seriesId) as MediaItem | undefined
+  if (inProgress) return inProgress
+
+  return db
+    .prepare(
+      `SELECT media_items.*
+       FROM media_items
+       LEFT JOIN media_watch_state
+         ON media_watch_state.media_id = media_items.id
+        AND media_watch_state.user_id = ?
+       WHERE media_items.series_id = ?
+         AND media_items.type = 'episode'
+         AND COALESCE(media_watch_state.played, 0) = 0
+       ORDER BY media_items.season_number, media_items.episode_number
        LIMIT 1`,
     )
     .get(userId, seriesId) as MediaItem | undefined

@@ -77,5 +77,8 @@ export default function MediaCard({
   )
 
   if (onClick) return inner
-  return <Link href={href ?? `/browse/${id}`}>{inner}</Link>
+  // Default to the owned-items surface, not /browse. MediaCard is a library
+  // component, so a missing href should never drop the user into the acquisition
+  // UI for content they already own (CLAUDE.md routing rule; A3-18).
+  return <Link href={href ?? `/library/${id}`}>{inner}</Link>
 }

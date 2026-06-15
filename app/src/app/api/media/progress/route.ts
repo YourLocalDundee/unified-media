@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth } from '@/lib/dal'
-import { upsertWatchState } from '@/lib/media-server/library'
+import { upsertWatchState, recordWatchEvent } from '@/lib/media-server/library'
 
 export const dynamic = 'force-dynamic'
 
@@ -21,6 +21,8 @@ export async function POST(req: NextRequest) {
   }
 
   upsertWatchState(session.userId, mediaId, positionTicks, played)
+  // Also feed watch_events so /history and the admin activity views have data (A3-01).
+  recordWatchEvent(session.userId, mediaId, positionTicks, played)
 
   return NextResponse.json({ ok: true })
 }

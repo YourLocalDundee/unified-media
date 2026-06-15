@@ -2,8 +2,7 @@ import { Suspense } from 'react'
 import type { Metadata } from 'next'
 import Link from 'next/link'
 import MediaCard from '@/components/media/MediaCard'
-import { getItemsByType, getTotalCount, getAvailableFilters } from '@/lib/media-server/library'
-import type { MediaItem } from '@/lib/media-server/types'
+import { getItemsByType, getCountByType, getAvailableFilters } from '@/lib/media-server/library'
 import { requireAuth } from '@/lib/dal'
 
 export const metadata: Metadata = {
@@ -46,36 +45,15 @@ async function LibraryGrid({
   count: number
 }) {
   const offset = (page - 1) * count
-  let items: MediaItem[] = []
-  let totalCount = 0
-
-  if (itemType === 'movies') {
-    items = getItemsByType('movie', count, offset, year, sort)
-    const counts = getTotalCount()
-    totalCount = year ? items.length : counts.movies
-  } else if (itemType === 'shows') {
-    items = getItemsByType('series', count, offset, year, sort)
-    const counts = getTotalCount()
-    totalCount = year ? items.length : counts.series
-  } else {
-    const half = Math.floor(count / 2)
-    const movies = getItemsByType('movie', half, 0, year, sort)
-    const series = getItemsByType('series', half, 0, year, sort)
-    items = [...movies, ...series].sort((a, b) => {
-      if (sort === 'added_desc') return b.added_at - a.added_at
-      if (sort === 'added_asc')  return a.added_at - b.added_at
-      if (sort === 'year_desc')  return (b.year ?? 0) - (a.year ?? 0)
-      if (sort === 'year_asc')   return (a.year ?? 0) - (b.year ?? 0)
-      if (sort === 'title_desc') return (b.sort_title ?? b.title).localeCompare(a.sort_title ?? a.title)
-      const aKey = (a.sort_title ?? a.title).toLowerCase()
-      const bKey = (b.sort_title ?? b.title).toLowerCase()
-      return aKey < bKey ? -1 : aKey > bKey ? 1 : 0
-    })
-    const counts = getTotalCount()
-    totalCount = year ? items.length : counts.movies + counts.series
-  }
-
-  const totalPages = itemType === 'all' || year ? 1 : Math.ceil(totalCount / count)
+  // Map the tab to a concrete type or the 'all' pseudo-type, then page entirely in
+  // SQL with a matching COUNT. The old 'all' branch fetched half a page of each
+  // type from offset 0, merged, re-sorted in JS, and forced totalPages=1 — so the
+  // default tab silently capped at ~count items with no pagination, and a
+  // year-filtered view misreported its total the same way (A3-08, A3-11).
+  const dbType = itemType === 'movies' ? 'movie' : itemType === 'shows' ? 'series' : 'all'
+  const items = getItemsByType(dbType, count, offset, year, sort)
+  const totalCount = getCountByType(dbType, year)
+  const totalPages = Math.max(1, Math.ceil(totalCount / count))
 
   return (
     <div className="flex flex-col gap-6">
