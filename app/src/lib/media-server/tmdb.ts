@@ -194,6 +194,8 @@ async function fetchSearchPage<T>(
 
 export type TrendingCategory =
   | 'trending'
+  | 'trending-movies'
+  | 'trending-tv'
   | 'popular-movies'
   | 'popular-tv'
   | 'top-rated-movies'
@@ -201,6 +203,8 @@ export type TrendingCategory =
 
 const CATEGORY_ENDPOINT: Record<TrendingCategory, string> = {
   'trending':          '/trending/all/week',
+  'trending-movies':   '/trending/movie/week',
+  'trending-tv':       '/trending/tv/week',
   'popular-movies':    '/movie/popular',
   'popular-tv':        '/tv/popular',
   'top-rated-movies':  '/movie/top_rated',
@@ -223,8 +227,8 @@ export async function getTrendingContent(
   if (!res.ok) throw new Error(`TMDB ${res.status}: ${endpoint}`)
   const data = await res.json() as TMDBListResponse<TMDBMovieListItem & TMDBTVListItem & { media_type?: string }>
 
-  const isTv = category === 'popular-tv' || category === 'top-rated-tv'
-  const isMovie = category === 'popular-movies' || category === 'top-rated-movies'
+  const isTv = category === 'popular-tv' || category === 'top-rated-tv' || category === 'trending-tv'
+  const isMovie = category === 'popular-movies' || category === 'top-rated-movies' || category === 'trending-movies'
 
   const results: TMDBSearchResult[] = data.results
     .filter((r) => {

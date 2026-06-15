@@ -6,6 +6,60 @@ monitoring downloads.
 
 ---
 
+## ⚠️ Known Issues — Full Audit 2026-06-13
+
+A 21-agent read-only audit ran on 2026-06-13 covering every page, all 105 API routes, and the lib layer, plus
+cross-cutting passes (a11y/mobile, resilience, deploy/runtime, input validation, temporal, untrusted-input). Build was
+clean (`type-check` + `build` pass, `npm audit` 0 vulns). ~379 findings; the 19 raw criticals collapse to ~10 distinct
+issues. **Full detail and per-domain reports live in [`analysis/audit-2026-06-13/00-SUMMARY.md`](analysis/audit-2026-06-13/00-SUMMARY.md)
+plus `analysis/audit-2026-06-13/01..21-*.md`.** Fix the P0 block before shipping further features.
+
+### Critical (deduped)
+
+**Security**
+- **Unauthenticated internal proxies.** `src/proxy.ts` only checks a session cookie is *present*, not valid. The
+  qBittorrent `[...path]` proxy, most jellyfin routes (`stream`, `playback/[id]`, `sessions/*`, `subtitles/*`,
+  `image/[itemId]`, `series/[id]*`, `seasons/[seasonId]/episodes`), and `api/torznab/search` all run with **no
+  `requireAuth()`**, handing attacker input to qBit/Jellyfin with server credentials. (A7-01, A4, A13-01, A12-02, A14-C1/C2)
+- **CSRF effectively off.** `verifyOrigin` runs on only ~12 of 51 mutating routes, and uses `origin.startsWith()` so
+  `unified.minijoe.dev.evil.com` passes; a missing Origin is allowed. (`lib/csrf.ts:11`; A6-01, A9-01, A1-002)
+- **Forced password change is bypassable.** The 30-day session cookie is set before the `force_pw_change` check.
+  (`api/auth/login/route.ts:97`; A1-001)
+- **Indexer `api_key` leaked to the browser** in plaintext on every indexer GET. (`lib/indexer/config.ts:7`; A12-01)
+
+**Data loss / engine**
+- **auto-delete can delete user-owned media** — matches `media_items` by `tmdb_id`+`type` with no ownership link.
+  (`lib/automation/auto-delete.ts:50`; A11-C1) Highest-risk behavior in the app.
+- **`monitored_items` has no unique index** → dead dedup guards → duplicate rows and double grabs.
+  (`db/migrations.ts:160`, `automation/monitor.ts:88`; A6-02, A11-C2) Plus a fire-and-forget grab that races the cron (A11-C3).
+
+**Functional / resource / deploy**
+- **Watch history is permanently empty** — nothing writes `watch_events`; the player writes `media_watch_state`.
+  (`history/page.tsx:48`; A3-01, A20-03)
+- **Player AudioContext never torn down** — browsers cap ~6, so long sessions break all audio tools. (`useAudioChain.ts:16`; A4)
+- **Deploy fragments broken** — healthcheck uses `curl` (absent from the `node:24-slim` runtime image → container
+  unhealthy forever); committed `caddy.fragment`/`docker-compose.fragment.yml` lack the party `ws` route. (A18-C1/C2)
+
+### Systemic patterns (HIGH)
+- Many client mutations never check `res.ok` (failed delete/suspend/save report success). (A7-04, A9-10/11, A10-03/06/07)
+- ~13 of 18 `components/media/*` are dead, plus the alt `downloads/components/*` UI and `party/JoinByCodeModal`; full
+  delete-or-wire list in `analysis/audit-2026-06-13/17-resilience-deadcode.md`.
+- No-op settings: the Display page (except Theme), 9 of 11 Playback prefs, the Torrent Interface tab. (A08)
+- Heavy work synchronously in request handlers: `media/scan` (ffprobe+TMDB), subtitle download, embedded-subtitle
+  ffmpeg — needs a job queue. (A10-08, A15-H1/H2)
+- All `next/image` are `unoptimized`. (A02-006, A15-G)
+- No `error.tsx`/`not-found.tsx`/`loading.tsx`/`aria-live` anywhere in the app. (A16, A17)
+
+### Remediation order
+- **P0** — add auth to qbit/jellyfin/torznab routes (+ make `proxy.ts` validate sessions); fix and enforce `verifyOrigin`
+  on all mutations; give auto-delete an ownership key; gate force-password-change; stop returning `api_key` to the client.
+- **P1** — unique index on `monitored_items` (dedupe existing rows first); atomic `grabbing` status; fix healthcheck +
+  edge fragments; resolve the `auto_approved`/`auto_delete_at` mismatch (A20-01); move scan/subtitle/ffmpeg work to a job queue.
+- **P2** — wire or remove watch history; tear down the AudioContext; add broad `res.ok` handling; add `error.tsx`/
+  `not-found.tsx` + `aria-live`; enable image optimization; delete the ~27 dead modules; fix continue-watching ordering (A20-02).
+
+---
+
 ## 1. Project Overview
 
 ### What this is
@@ -353,12 +407,17 @@ app/
 - Download queue summary (qBt `GET /transfer/info` + active torrents count)
 - Auto-refreshes download summary every 10 seconds via React Query `refetchInterval`
 
-**`/browse` — Discover + acquisition browser (v0.8.0+)**
-- Defaults to **discover mode**: TMDB trending/popular/genre content cross-referenced against local library
-- Type tabs: ✦ Browse (discover) · Movies · TV Shows
-- Discover mode: TMDB trending categories + genre filter pills; shows Quick/Long-term request buttons per card
-- `RequestOptions` component handles per-card request UI — two buttons for old content, one for new
-- `/browse/discover/[mediaType]/[tmdbId]` — full detail page for TMDB items not yet in library
+**`/browse` — TMDB discovery surface (v0.9.6+)**
+- **Every tab is TMDB discovery**, cross-referenced against the local library so "In Library" / request status show inline. Owned-media-by-type browsing lives at `/library`, not here.
+- Type tabs scope the TMDB feed by media type:
+  - **✦ Browse** — mixed movie + TV (`/trending/all/week`, popular/top-rated of both)
+  - **Movies** — movies only (`discoverType='movie'`: trending/popular/top-rated movies + movie genre pills)
+  - **TV Shows** — TV only (`discoverType='tv'`: trending/popular/top-rated TV + TV genre pills)
+- Trending categories are type-aware (`getTrendingContent` gained `trending-movies` / `trending-tv` → `/trending/{movie,tv}/week`). `catsForType()` / `defaultCatForType()` in `browse/page.tsx` pick the valid category set + default per `discoverType`; an out-of-scope `cat` query falls back to the type default.
+- Search (`searchTMDB(query, discoverType, page)`) is scoped to the active tab's type, so Movies/TV search paginate correctly (only the mixed `'all'` feed interleaves movie+TV).
+- `RequestOptions` component handles per-card request UI — two buttons for old content, one for new. For **TV** it opens `SeriesScopeModal` so the user can grab the full series, specific seasons (e.g. just Season 1), or individual episodes before submitting. This is the path to "find Pokémon → grab Season 1".
+- `/browse/discover/[mediaType]/[tmdbId]` — full detail page for TMDB items not yet in library (same `RequestOptions` / season-scope flow via `RequestButton`).
+- **Prior behaviour (pre-v0.9.6):** the Movies/TV Shows tabs filtered the *local library*. That duplicated `/library` and blocked discovering un-owned content by type; they are now TMDB discovery.
 
 **`/browse/[id]` — Acquisition detail**
 - For content the user does not yet own (or wants to re-acquire); `RequestOptions` is intentionally present here
@@ -633,9 +692,9 @@ All rows in `media_items` are owned content (scanned from disk). The routing rul
 - **Owned series** → `/library/${id}` — play-only detail, no acquisition controls
 - **Owned movie** → `/play/${id}` directly from list/card contexts; `/library/${id}` from full detail pages
 - **Discoverable content** (TMDB, not yet in library) → `/browse/discover/${mediaType}/${tmdbId}`
-- **Browse library tabs** (Movies/TV Shows within `/browse`) → `/browse/${id}` — intentionally shows acquisition controls even for owned items when reached from the Browse surface
+- **Browse cards that are already owned** → `/browse/${id}` (the "In Library — Watch" affordance on a discover card reached from the Browse surface) — intentionally shows the acquisition detail for an owned item, because the user got there from discovery.
 
-If an item appears in both contexts, the context determines the destination: Library links → Library detail, Browse links → Browse detail. Never link from home-page or library-context cards to `/browse/[id]` for owned content — that drops the user into the acquisition UI for something they already have.
+`/browse` is now entirely TMDB discovery (all three tabs); there is no longer a "browse library tabs" surface there — owned-media-by-type lives at `/library`. If an item appears in both contexts, the context determines the destination: Library links → Library detail, Browse/discover links → Browse detail. Never link from home-page or library-context cards to `/browse/[id]` for owned content — that drops the user into the acquisition UI for something they already have.
 
 ### Video element errors do not bubble as React events
 
