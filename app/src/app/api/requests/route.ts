@@ -176,6 +176,7 @@ export async function POST(req: NextRequest) {
             scope_seasons: scopeSeasons ? (Array.isArray(scopeSeasons) ? scopeSeasons : null) : null,
             scope_episodes: scopeEpisodes ? (Array.isArray(scopeEpisodes) ? scopeEpisodes : null) : null,
             monitor_future: Boolean(monitorFuture),
+            language,
           })
         } catch (itemErr) {
           // 'already exists' is fine — a previous request may have already created the item.

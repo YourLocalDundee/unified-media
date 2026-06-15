@@ -68,6 +68,7 @@ export function tryAutoApprove(requestId: number): boolean {
       scope_seasons: scopeSeasonsRaw ? (JSON.parse(scopeSeasonsRaw) as number[]) : null,
       scope_episodes: scopeEpisodesRaw ? (JSON.parse(scopeEpisodesRaw) as Array<{s:number;e:number}>) : null,
       monitor_future: Boolean(monitorFuture),
+      language: request.language ?? 'any',
     })
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)

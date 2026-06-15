@@ -69,6 +69,13 @@ export function getItemById(id: number): MonitoredItem | undefined {
     .get(id) as MonitoredItem | undefined
 }
 
+/** All monitored items for a TMDB id (any scope) — used by the season-grab status check. */
+export function getItemsByTmdbId(tmdbId: number): MonitoredItem[] {
+  return getDb()
+    .prepare('SELECT * FROM monitored_items WHERE tmdb_id = ? ORDER BY id')
+    .all(tmdbId) as MonitoredItem[]
+}
+
 export function createItem(data: {
   type: MediaType
   title: string
@@ -81,6 +88,8 @@ export function createItem(data: {
   scope_seasons?: number[] | null
   scope_episodes?: Array<{ s: number; e: number }> | null
   monitor_future?: boolean
+  // ISO 639-1 code or 'any' (default). Honored by the grab cron via grabItem.
+  language?: string
 }): MonitoredItem {
   const db = getDb()
   const now = Date.now()
@@ -90,11 +99,11 @@ export function createItem(data: {
       `INSERT INTO monitored_items
         (type, title, tmdb_id, tvdb_id, year, quality_profile_id, root_path,
          monitored, status, scope_type, scope_seasons, scope_episodes, monitor_future,
-         created_at, updated_at)
+         language, created_at, updated_at)
        VALUES
         (@type, @title, @tmdb_id, @tvdb_id, @year, @quality_profile_id, @root_path,
          1, 'wanted', @scope_type, @scope_seasons, @scope_episodes, @monitor_future,
-         @created_at, @updated_at)`
+         @language, @created_at, @updated_at)`
       // New items always start monitored=1, status='wanted' so the next scheduler tick picks them up
     )
     .run({
@@ -110,6 +119,7 @@ export function createItem(data: {
       scope_seasons: data.scope_seasons != null ? JSON.stringify(data.scope_seasons) : null,
       scope_episodes: data.scope_episodes != null ? JSON.stringify(data.scope_episodes) : null,
       monitor_future: data.monitor_future ? 1 : 0,
+      language: data.language ?? 'any',
       created_at: now,
       updated_at: now,
     })
@@ -133,6 +143,7 @@ const ITEM_ALLOWED_FIELDS = new Set<string>([
   'scope_seasons',
   'scope_episodes',
   'monitor_future',
+  'language',
 ])
 
 export function updateItem(

@@ -20,7 +20,7 @@ interface Props {
 
 type UIState = 'idle' | 'loading' | 'picking' | 'scoping' | 'error'
 
-const LANGUAGE_OPTIONS = [
+export const LANGUAGE_OPTIONS = [
   { value: 'any', label: 'Any language' },
   { value: 'en',  label: 'English' },
   { value: 'fr',  label: 'French' },

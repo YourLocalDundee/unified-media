@@ -5,6 +5,7 @@ import { getMovieDetail, getTVDetail } from '@/lib/media-server/tmdb'
 import { getItemsByTmdbIds } from '@/lib/media-server/library'
 import { getRequestByTmdb } from '@/lib/requests/monitor'
 import RequestButton from './RequestButton'
+import { SeasonGrabControl } from '@/components/media/SeasonGrabControl'
 
 interface PageProps {
   params: Promise<{ mediaType: string; tmdbId: string }>
@@ -81,6 +82,8 @@ export default async function DiscoverDetailPage({ params }: PageProps) {
   const isMovie = mediaType === 'movie'
   const movie = isMovie ? (detail as Awaited<ReturnType<typeof getMovieDetail>>) : null
   const tv = !isMovie ? (detail as Awaited<ReturnType<typeof getTVDetail>>) : null
+  // Admins get the per-season direct-grab control on the Seasons list.
+  const isAdmin = session.role === 'admin'
 
   const title = movie?.title ?? tv?.name ?? ''
   const tagline = movie?.tagline ?? tv?.tagline ?? null
@@ -249,6 +252,17 @@ export default async function DiscoverDetailPage({ params }: PageProps) {
                       )}
                       {s.airDate && (
                         <p className="text-[10px] text-zinc-500">{s.airDate.slice(0, 4)}</p>
+                      )}
+                      {/* Admin-only per-season direct grab (skip specials/season 0). */}
+                      {isAdmin && s.seasonNumber > 0 && (
+                        <SeasonGrabControl
+                          tmdbId={tmdbId}
+                          title={title}
+                          year={year}
+                          seasonNumber={s.seasonNumber}
+                          seasonName={s.name ?? `Season ${s.seasonNumber}`}
+                          episodeCount={s.episodeCount}
+                        />
                       )}
                     </div>
                   </div>

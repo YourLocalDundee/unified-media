@@ -75,7 +75,9 @@ async function LibraryGrid({
               year={item.year ?? undefined}
               imageUrl={item.poster_path ? `https://image.tmdb.org/t/p/w300${item.poster_path}` : undefined}
               type={item.type === 'movie' ? 'Movie' : 'Series'}
-              href={item.type === 'series' ? `/library/${item.id}` : `/play/${item.id}`}
+              // Both movies and series open the info/detail page first (Watch Now plays from there)
+              // rather than jumping straight into playback.
+              href={`/library/${item.id}`}
             />
           ))}
         </div>

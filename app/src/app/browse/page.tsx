@@ -1,30 +1,31 @@
 /**
  * browse/page.tsx
  *
- * Main browse page — the discovery surface. Every tab browses TMDB
- * (discoverable content), cross-referenced against the local library so
- * "In Library" / request status show inline:
- *   - "✦ Browse" : mixed movie + TV trending/popular feed
- *   - "Movies"   : TMDB movies only (trending/popular/top-rated + genres)
- *   - "TV Shows" : TMDB TV only (trending/popular/top-rated + genres)
+ * The TMDB discovery surface. Every tab is TMDB discovery, cross-referenced against
+ * the local library so "In Library" / request status show inline. Owned-media-by-type
+ * browsing lives at /library, not here.
  *
- * Owned-media-by-type browsing lives at /library, not here. A TV result links
- * into the request flow where SeriesScopeModal lets you grab a whole series,
- * specific seasons (e.g. just Season 1), or individual episodes.
+ * Controls (work together):
+ *   - Type tabs: ✦ Browse (All) · Movies · TV Shows  → media-type scope
+ *   - Sort: Popularity / Top Rated / Newest / Oldest / Most Voted
+ *   - Year filter, Min-rating filter, Genre pills (single-type only), name search
  *
- * All data fetching happens in async Server Components so there are no client
- * waterfalls. The page shell renders instantly while Suspense handles the grid.
+ * Fetch strategy (within TMDB's API constraints):
+ *   - Movies/TV (single type), no query → discoverTMDB(type, {sort,year,minRating,genre})
+ *   - All, no filters set            → trending mixed feed (getTrendingContent)
+ *   - All, filters set               → merge discoverTMDB('movie') + ('tv') at the same sort
+ *   - Name search (any type)         → searchTMDB(q,type); year/minRating/sort applied to the
+ *                                       returned page (TMDB /search has no sort_by)
  */
 
 import { Suspense } from 'react'
 import type { Metadata } from 'next'
 import { getItemsByTmdbIds } from '@/lib/media-server/library'
-import { searchTMDB, getTrendingContent, getGenres, discoverByGenre } from '@/lib/media-server/tmdb'
-import type { TrendingCategory } from '@/lib/media-server/tmdb'
+import { searchTMDB, getTrendingContent, getGenres, discoverTMDB } from '@/lib/media-server/tmdb'
+import type { DiscoverSort, TMDBSearchResult } from '@/lib/media-server/tmdb'
 import { requireAuth } from '@/lib/dal'
 import { getUserRequests } from '@/lib/requests/monitor'
-import type { RequestStatus } from '@/lib/requests/types'
-import type { RequestType } from '@/lib/requests/types'
+import type { RequestStatus, RequestType } from '@/lib/requests/types'
 import DiscoverResults from './DiscoverResults'
 import type { DiscoverItem } from './DiscoverResults'
 import RescanButton from './RescanButton'
@@ -34,103 +35,168 @@ export const metadata: Metadata = {
 }
 
 // ---------------------------------------------------------------------------
-// Discover type model
+// Filter model
 // ---------------------------------------------------------------------------
 
-// URL `type` tab → TMDB media-type scope
 type ItemType = 'discover' | 'movies' | 'shows'
 type DiscoverType = 'all' | 'movie' | 'tv'
 
-const TREND_CATS_ALL: TrendingCategory[] = ['trending', 'popular-movies', 'popular-tv', 'top-rated-movies', 'top-rated-tv']
-const TREND_CATS_MOVIE: TrendingCategory[] = ['trending-movies', 'popular-movies', 'top-rated-movies']
-const TREND_CATS_TV: TrendingCategory[] = ['trending-tv', 'popular-tv', 'top-rated-tv']
-
-function catsForType(t: DiscoverType): TrendingCategory[] {
-  return t === 'movie' ? TREND_CATS_MOVIE : t === 'tv' ? TREND_CATS_TV : TREND_CATS_ALL
-}
-
-function defaultCatForType(t: DiscoverType): TrendingCategory {
-  return t === 'movie' ? 'trending-movies' : t === 'tv' ? 'trending-tv' : 'trending'
-}
-
-// Labels for the mixed "✦ Browse" feed need the type qualifier; the single-type
-// tabs don't (the tab itself already says Movies / TV Shows).
-const ALL_LABELS: Partial<Record<TrendingCategory, string>> = {
-  'trending':         'Trending',
-  'popular-movies':   'Popular Movies',
-  'popular-tv':       'Popular TV',
-  'top-rated-movies': 'Top Rated Movies',
-  'top-rated-tv':     'Top Rated TV',
-}
-
-function categoryLabel(cat: TrendingCategory, t: DiscoverType): string {
-  if (t === 'all') return ALL_LABELS[cat] ?? cat
-  if (cat.startsWith('trending')) return 'Trending'
-  if (cat.startsWith('popular')) return 'Popular'
-  return 'Top Rated'
-}
+const SORT_OPTIONS: { value: DiscoverSort; label: string }[] = [
+  { value: 'popularity', label: 'Popularity' },
+  { value: 'rating',     label: 'Top Rated' },
+  { value: 'newest',     label: 'Newest' },
+  { value: 'oldest',     label: 'Oldest' },
+  { value: 'votes',      label: 'Most Voted' },
+]
+const VALID_SORTS = SORT_OPTIONS.map((s) => s.value)
+const MIN_RATING_OPTIONS = [0, 5, 6, 7, 8, 9]
 
 function discoverTypeFor(itemType: ItemType): DiscoverType {
   return itemType === 'movies' ? 'movie' : itemType === 'shows' ? 'tv' : 'all'
 }
 
+// Interleave two result lists so a merged movie+tv feed feels balanced (mirrors searchTMDB('all')).
+function interleave(a: TMDBSearchResult[], b: TMDBSearchResult[]): TMDBSearchResult[] {
+  const out: TMDBSearchResult[] = []
+  const max = Math.max(a.length, b.length)
+  for (let i = 0; i < max; i++) {
+    if (i < a.length) out.push(a[i])
+    if (i < b.length) out.push(b[i])
+  }
+  return out
+}
+
+// Client-side sort for the name-search path (TMDB /search has no sort_by). 'votes' is a
+// no-op (search results carry no vote count) — fall back to TMDB's relevance order.
+function sortResults(arr: TMDBSearchResult[], sort: DiscoverSort): TMDBSearchResult[] {
+  const c = [...arr]
+  switch (sort) {
+    case 'rating': return c.sort((x, y) => (y.rating ?? 0) - (x.rating ?? 0))
+    case 'newest': return c.sort((x, y) => (y.year ?? 0) - (x.year ?? 0))
+    case 'oldest': return c.sort((x, y) => (x.year ?? 0) - (y.year ?? 0))
+    default:       return c
+  }
+}
+
+interface FilterState {
+  query?: string
+  page: number
+  itemType: ItemType
+  discoverType: DiscoverType
+  sort: DiscoverSort
+  year?: number
+  minRating?: number
+  genreId?: number
+}
+
+// Build a /browse query string preserving the chosen subset of the current filters.
+function buildQuery(f: FilterState, overrides: Omit<Partial<FilterState>, 'genreId'> & { genreId?: number | null } = {}): string {
+  const s = { ...f, ...overrides }
+  const p = new URLSearchParams()
+  p.set('type', s.itemType)
+  if (s.query) p.set('q', s.query)
+  if (s.sort !== 'popularity') p.set('sort', s.sort)
+  if (s.year) p.set('year', String(s.year))
+  if (s.minRating) p.set('minRating', String(s.minRating))
+  // genreId override of null explicitly drops it (used when switching type)
+  const genre = 'genreId' in overrides ? overrides.genreId : s.genreId
+  if (genre) p.set('genre', String(genre))
+  return `/browse?${p.toString()}`
+}
+
 interface BrowsePageProps {
-  searchParams: Promise<{ q?: string; page?: string; type?: string; cat?: string; genre?: string }>
+  searchParams: Promise<{ q?: string; page?: string; type?: string; genre?: string; sort?: string; year?: string; minRating?: string }>
 }
 
 // ---------------------------------------------------------------------------
-// Category + genre filter bars
+// Controls
 // ---------------------------------------------------------------------------
 
-function TrendingCategoryTabs({
-  active,
-  discoverType,
-  itemType,
-}: {
-  active: TrendingCategory
-  discoverType: DiscoverType
-  itemType: ItemType
-}) {
-  const cats = catsForType(discoverType)
+function TypeTabs({ f }: { f: FilterState }) {
+  const tabs: { value: ItemType; label: string }[] = [
+    { value: 'discover', label: '✦ Browse' },
+    { value: 'movies',   label: 'Movies' },
+    { value: 'shows',    label: 'TV Shows' },
+  ]
   return (
-    <div className="flex flex-wrap gap-2">
-      {cats.map((cat) => (
+    <div className="flex gap-1">
+      {tabs.map((tab) => (
         <a
-          key={cat}
-          href={`/browse?type=${itemType}&cat=${cat}`}
-          className={`rounded-full px-4 py-1.5 text-xs font-medium transition-colors ${
-            active === cat
-              ? 'bg-primary text-primary-foreground'
-              : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700 hover:text-white'
+          key={tab.value}
+          // Switching type keeps the search + sort/year/rating but drops genre (genre IDs are type-specific).
+          href={buildQuery(f, { itemType: tab.value, genreId: null })}
+          className={`rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
+            f.itemType === tab.value ? 'bg-white text-black' : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700 hover:text-white'
           }`}
         >
-          {categoryLabel(cat, discoverType)}
+          {tab.label}
         </a>
       ))}
     </div>
   )
 }
 
-async function GenreFilterBar({
-  genreType,
-  activeGenreId,
-  category,
-  itemType,
-}: {
-  genreType: 'movie' | 'tv'
-  activeGenreId?: number
-  category: TrendingCategory
-  itemType: ItemType
-}) {
-  const genres = await getGenres(genreType).catch(() => [])
+function FilterBar({ f }: { f: FilterState }) {
+  const placeholder =
+    f.discoverType === 'movie' ? 'Search movies…' : f.discoverType === 'tv' ? 'Search TV shows…' : 'Search TMDB…'
+  const currentYear = new Date().getFullYear()
+  const years: number[] = []
+  for (let y = currentYear; y >= 1950; y--) years.push(y)
+  const select = 'rounded-lg bg-zinc-800 px-3 py-2 text-sm text-white outline-none focus:ring-2 focus:ring-white/20 cursor-pointer'
+
+  return (
+    <form method="GET" action="/browse" className="flex flex-wrap items-center gap-2">
+      <input
+        type="search"
+        name="q"
+        defaultValue={f.query ?? ''}
+        placeholder={placeholder}
+        className="min-w-0 flex-1 rounded-lg bg-zinc-800 px-4 py-2 text-sm text-white placeholder-zinc-500 outline-none focus:ring-2 focus:ring-white/20"
+      />
+
+      <select name="sort" defaultValue={f.sort} className={select} title="Sort">
+        {SORT_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+      </select>
+
+      <select name="year" defaultValue={f.year?.toString() ?? ''} className={select} title="Year">
+        <option value="">All years</option>
+        {years.map((y) => <option key={y} value={y}>{y}</option>)}
+      </select>
+
+      <select name="minRating" defaultValue={f.minRating?.toString() ?? ''} className={select} title="Minimum rating">
+        <option value="">Any rating</option>
+        {MIN_RATING_OPTIONS.filter((r) => r > 0).map((r) => <option key={r} value={r}>{r}+ ★</option>)}
+      </select>
+
+      {/* Preserve the active type + genre across a filter submit. */}
+      <input type="hidden" name="type" value={f.itemType} />
+      {f.genreId && <input type="hidden" name="genre" value={f.genreId} />}
+
+      <button type="submit" className="rounded-lg bg-white px-4 py-2 text-sm font-medium text-black hover:bg-zinc-200">
+        Apply
+      </button>
+
+      {(f.query || f.year || f.minRating || f.sort !== 'popularity' || f.genreId) && (
+        <a href={`/browse?type=${f.itemType}`} className="rounded-lg bg-zinc-800 px-3 py-2 text-sm text-white hover:bg-zinc-700">
+          Clear
+        </a>
+      )}
+    </form>
+  )
+}
+
+async function GenreFilterBar({ f }: { f: FilterState }) {
+  // Genre pills are only meaningful for a single media type (genre IDs differ movie vs tv)
+  // and only when browsing (not searching).
+  if (f.discoverType === 'all' || f.query) return null
+  const genres = await getGenres(f.discoverType).catch(() => [])
   if (genres.length === 0) return null
-  const base = `?type=${itemType}&cat=${category}`
   return (
     <div className="flex flex-wrap gap-1.5">
       <a
-        href={base}
+        href={buildQuery(f, { genreId: null })}
         className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
-          !activeGenreId ? 'bg-white text-black' : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700 hover:text-white'
+          !f.genreId ? 'bg-white text-black' : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700 hover:text-white'
         }`}
       >
         All
@@ -138,9 +204,9 @@ async function GenreFilterBar({
       {genres.map((g) => (
         <a
           key={g.id}
-          href={`${base}&genre=${g.id}`}
+          href={buildQuery(f, { genreId: g.id })}
           className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
-            activeGenreId === g.id ? 'bg-white text-black' : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700 hover:text-white'
+            f.genreId === g.id ? 'bg-white text-black' : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700 hover:text-white'
           }`}
         >
           {g.name}
@@ -151,69 +217,54 @@ async function GenreFilterBar({
 }
 
 // ---------------------------------------------------------------------------
-// Discover Grid (TMDB search or trending/popular with library cross-reference)
+// Discover grid
 // ---------------------------------------------------------------------------
 
-async function DiscoverGrid({
-  query,
-  page,
-  category,
-  genreId,
-  discoverType,
-  itemType,
-  userId,
-}: {
-  query?: string
-  page: number
-  category: TrendingCategory
-  genreId?: number
-  discoverType: DiscoverType
-  itemType: ItemType
-  userId: string
-}) {
-  let results: Awaited<ReturnType<typeof searchTMDB>>['results'] = []
-  let totalResults = 0
-  let totalPages = 0
+async function fetchDiscover(f: FilterState): Promise<{ results: TMDBSearchResult[]; totalPages: number; totalResults: number }> {
+  const { query, page, discoverType, sort, year, minRating, genreId } = f
 
-  // genreType is fixed by the tab for single-type views; for the mixed feed it
-  // follows whichever category is active.
-  const genreType: 'movie' | 'tv' =
-    discoverType === 'tv'
-      ? 'tv'
-      : discoverType === 'movie'
-      ? 'movie'
-      : category === 'popular-tv' || category === 'top-rated-tv' || category === 'trending-tv'
-      ? 'tv'
-      : 'movie'
-
-  if (query && query.trim().length > 0) {
-    const searchData = await searchTMDB(query.trim(), discoverType, page).catch(() => null)
-    results = searchData?.results ?? []
-    totalResults = searchData?.totalResults ?? 0
-    totalPages = searchData?.totalPages ?? 0
-  } else if (genreId) {
-    const genreData = await discoverByGenre(genreType, genreId, page).catch(() => null)
-    results = genreData?.results ?? []
-    totalResults = genreData?.totalResults ?? 0
-    totalPages = genreData?.totalPages ?? 0
-  } else {
-    const trendData = await getTrendingContent(category, page).catch(() => null)
-    results = trendData?.results ?? []
-    totalResults = trendData?.totalResults ?? 0
-    totalPages = trendData?.totalPages ?? 0
+  if (query) {
+    const data = await searchTMDB(query, discoverType, page).catch(() => null)
+    let results = data?.results ?? []
+    if (year) results = results.filter((r) => r.year === year)
+    if (minRating) results = results.filter((r) => (r.rating ?? 0) >= minRating)
+    results = sortResults(results, sort)
+    return { results, totalPages: data?.totalPages ?? 0, totalResults: data?.totalResults ?? 0 }
   }
 
-  // Batch TMDB-ID lookup against local library to get native item IDs in one pass
+  if (discoverType === 'all') {
+    const filtersActive = sort !== 'popularity' || !!year || !!minRating
+    if (!filtersActive) {
+      const t = await getTrendingContent('trending', page).catch(() => null)
+      return { results: t?.results ?? [], totalPages: t?.totalPages ?? 0, totalResults: t?.totalResults ?? 0 }
+    }
+    const [m, tv] = await Promise.all([
+      discoverTMDB('movie', { sortBy: sort, year, minRating, page }).catch(() => null),
+      discoverTMDB('tv', { sortBy: sort, year, minRating, page }).catch(() => null),
+    ])
+    return {
+      results: interleave(m?.results ?? [], tv?.results ?? []),
+      totalPages: Math.max(m?.totalPages ?? 0, tv?.totalPages ?? 0),
+      totalResults: (m?.totalResults ?? 0) + (tv?.totalResults ?? 0),
+    }
+  }
+
+  const data = await discoverTMDB(discoverType, { genreId, sortBy: sort, year, minRating, page }).catch(() => null)
+  return { results: data?.results ?? [], totalPages: data?.totalPages ?? 0, totalResults: data?.totalResults ?? 0 }
+}
+
+async function DiscoverGrid({ f, userId }: { f: FilterState; userId: string }) {
+  const { results, totalPages, totalResults } = await fetchDiscover(f)
+
+  // Batch TMDB-ID lookup against the local library to surface "In Library" / Watch.
   const tmdbIds = results.map((r) => r.tmdbId)
   const libraryMap = tmdbIds.length > 0 ? getItemsByTmdbIds(tmdbIds) : {}
 
-  // Build request status map for current user so each card reflects the user's own state.
-  // Expired slots are excluded so the item appears requestable again rather than stuck.
+  // Per-user request status (expired excluded so the item is requestable again).
   const userRequests = getUserRequests(userId)
   const requestMap: Record<string, { status: RequestStatus; requestType: RequestType }> = {}
   for (const req of userRequests) {
     if (req.status === 'expired') continue
-    // Composite key avoids collision between movie/tv items that share a TMDB ID
     requestMap[`${req.media_type}-${req.tmdb_id}`] = { status: req.status, requestType: req.request_type }
   }
 
@@ -230,55 +281,33 @@ async function DiscoverGrid({
     requestType: requestMap[`${r.mediaType}-${r.tmdbId}`]?.requestType ?? null,
   }))
 
-  const pageBase = query
-    ? `?type=${itemType}&q=${encodeURIComponent(query)}`
-    : genreId
-    ? `?type=${itemType}&cat=${category}&genre=${genreId}`
-    : `?type=${itemType}&cat=${category}`
-
   return (
     <div className="flex flex-col gap-6">
-      {/* Category tabs only when not searching */}
-      {!query && <TrendingCategoryTabs active={category} discoverType={discoverType} itemType={itemType} />}
+      <GenreFilterBar f={f} />
 
-      {/* Genre filter bar only when not searching */}
-      {!query && (
-        <GenreFilterBar
-          genreType={genreType}
-          activeGenreId={genreId}
-          category={category}
-          itemType={itemType}
-        />
-      )}
-
-      {query && results.length > 0 && (
+      {f.query && results.length > 0 && (
         <p className="text-sm text-zinc-400">
-          {totalResults.toLocaleString()} result{totalResults !== 1 ? 's' : ''} for &ldquo;{query}&rdquo;
+          {totalResults.toLocaleString()} result{totalResults !== 1 ? 's' : ''} for &ldquo;{f.query}&rdquo;
+          {(f.year || f.minRating || f.sort !== 'popularity') && ' (sort/filters applied to this page)'}
         </p>
       )}
 
-      <DiscoverResults items={items} query={query} />
+      <DiscoverResults items={items} query={f.query} />
 
       {totalPages > 1 && (
         <nav className="flex items-center justify-center gap-3">
-          {page > 1 && (
-            <a href={`${pageBase}&page=${page - 1}`}
-              className="rounded bg-zinc-800 px-4 py-2 text-sm text-white hover:bg-zinc-700">Prev</a>
+          {f.page > 1 && (
+            <a href={buildQuery(f, { page: f.page - 1 })} className="rounded bg-zinc-800 px-4 py-2 text-sm text-white hover:bg-zinc-700">Prev</a>
           )}
-          <span className="text-sm text-zinc-400">Page {page} of {totalPages}</span>
-          {page < totalPages && (
-            <a href={`${pageBase}&page=${page + 1}`}
-              className="rounded bg-zinc-800 px-4 py-2 text-sm text-white hover:bg-zinc-700">Next</a>
+          <span className="text-sm text-zinc-400">Page {f.page} of {totalPages}</span>
+          {f.page < totalPages && (
+            <a href={buildQuery(f, { page: f.page + 1 })} className="rounded bg-zinc-800 px-4 py-2 text-sm text-white hover:bg-zinc-700">Next</a>
           )}
         </nav>
       )}
     </div>
   )
 }
-
-// ---------------------------------------------------------------------------
-// Skeleton
-// ---------------------------------------------------------------------------
 
 function BrowseGridSkeleton() {
   return (
@@ -298,95 +327,33 @@ function BrowseGridSkeleton() {
 }
 
 // ---------------------------------------------------------------------------
-// Search bar
-// ---------------------------------------------------------------------------
-
-function FilterBar({ query, itemType }: { query?: string; itemType: ItemType }) {
-  const placeholder =
-    itemType === 'movies' ? 'Search movies…' : itemType === 'shows' ? 'Search TV shows…' : 'Search TMDB…'
-  return (
-    <form method="GET" action="/browse" className="flex flex-wrap items-center gap-2">
-      <input
-        type="search"
-        name="q"
-        defaultValue={query ?? ''}
-        placeholder={placeholder}
-        className="min-w-0 flex-1 rounded-lg bg-zinc-800 px-4 py-2 text-sm text-white placeholder-zinc-500 outline-none focus:ring-2 focus:ring-white/20"
-      />
-
-      <input type="hidden" name="type" value={itemType} />
-
-      <button
-        type="submit"
-        className="rounded-lg bg-white px-4 py-2 text-sm font-medium text-black hover:bg-zinc-200"
-      >
-        Search
-      </button>
-
-      {query && (
-        <a
-          href={`/browse?type=${itemType}`}
-          className="rounded-lg bg-zinc-800 px-3 py-2 text-sm text-white hover:bg-zinc-700"
-        >
-          Clear
-        </a>
-      )}
-    </form>
-  )
-}
-
-// ---------------------------------------------------------------------------
-// Type tabs
-// ---------------------------------------------------------------------------
-
-function TypeTabs({ active, query }: { active: ItemType; query?: string }) {
-  const tabs: { value: ItemType; label: string }[] = [
-    { value: 'discover', label: '✦ Browse' },
-    { value: 'movies',   label: 'Movies' },
-    { value: 'shows',    label: 'TV Shows' },
-  ]
-  // Carry the active search across a type switch; cat/genre are type-specific so reset.
-  const extra = query ? `&q=${encodeURIComponent(query)}` : ''
-  return (
-    <div className="flex gap-1">
-      {tabs.map((tab) => (
-        <a
-          key={tab.value}
-          href={`/browse?type=${tab.value}${extra}`}
-          className={`rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
-            active === tab.value
-              ? 'bg-white text-black'
-              : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700 hover:text-white'
-          }`}
-        >
-          {tab.label}
-        </a>
-      ))}
-    </div>
-  )
-}
-
-// ---------------------------------------------------------------------------
 // Page
 // ---------------------------------------------------------------------------
 
 export default async function BrowsePage({ searchParams }: BrowsePageProps) {
   const session = await requireAuth()
   const params = await searchParams
-  const query    = params.q?.trim() || undefined
-  const page     = Math.max(1, parseInt(params.page ?? '1', 10) || 1)
+
   const itemType: ItemType = (['movies', 'shows', 'discover'].includes(params.type ?? '')
     ? params.type
     : 'discover') as ItemType
-  const discoverType = discoverTypeFor(itemType)
+  const sortRaw = params.sort ?? 'popularity'
+  const sort: DiscoverSort = (VALID_SORTS as string[]).includes(sortRaw) ? (sortRaw as DiscoverSort) : 'popularity'
+  const yearN = params.year ? parseInt(params.year, 10) : NaN
+  const minRatingN = params.minRating ? parseInt(params.minRating, 10) : NaN
 
-  const validCats = catsForType(discoverType)
-  const catRaw = params.cat ?? ''
-  const trendCategory: TrendingCategory = (validCats as readonly string[]).includes(catRaw)
-    ? (catRaw as TrendingCategory)
-    : defaultCatForType(discoverType)
-
-  const genreId = params.genre ? parseInt(params.genre, 10) || undefined : undefined
+  const f: FilterState = {
+    query: params.q?.trim() || undefined,
+    page: Math.max(1, parseInt(params.page ?? '1', 10) || 1),
+    itemType,
+    discoverType: discoverTypeFor(itemType),
+    sort,
+    year: Number.isFinite(yearN) ? yearN : undefined,
+    minRating: Number.isFinite(minRatingN) && minRatingN > 0 ? minRatingN : undefined,
+    genreId: params.genre ? parseInt(params.genre, 10) || undefined : undefined,
+  }
+  // Genre only applies to single-type browsing.
+  if (f.discoverType === 'all' || f.query) f.genreId = undefined
 
   return (
     <div className="min-h-screen bg-zinc-950 text-white">
@@ -397,21 +364,12 @@ export default async function BrowsePage({ searchParams }: BrowsePageProps) {
             <RescanButton />
           </div>
 
-          <FilterBar query={query} itemType={itemType} />
-
-          <TypeTabs active={itemType} query={query} />
+          <FilterBar f={f} />
+          <TypeTabs f={f} />
         </div>
 
         <Suspense fallback={<BrowseGridSkeleton />}>
-          <DiscoverGrid
-            query={query}
-            page={page}
-            category={trendCategory}
-            genreId={genreId}
-            discoverType={discoverType}
-            itemType={itemType}
-            userId={session.userId}
-          />
+          <DiscoverGrid f={f} userId={session.userId} />
         </Suspense>
       </div>
     </div>

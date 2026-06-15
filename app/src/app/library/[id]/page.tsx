@@ -7,6 +7,7 @@ import type { MediaItem } from '@/lib/media-server/types'
 import { formatDuration } from '@/lib/utils'
 import { Button } from '@/components/ui/Button'
 import MediaCard from '@/components/media/MediaCard'
+import { LibraryItemAdminMenu } from '@/components/media/LibraryItemAdminMenu'
 import { requireAuth } from '@/lib/dal'
 
 interface Props {
@@ -24,6 +25,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 
 export default async function LibraryDetailPage({ params }: Props) {
   const session = await requireAuth()
+  const isAdmin = session.role === 'admin'
   const { id } = await params
   const item: MediaItem | undefined = getItemById(id)
   if (!item) notFound()
@@ -63,6 +65,12 @@ export default async function LibraryDetailPage({ params }: Props) {
 
   return (
     <div className="relative min-h-screen">
+      {/* Admin-only corner settings: delete-from-server lives here. */}
+      {isAdmin && (
+        <div className="absolute right-4 top-4 z-20">
+          <LibraryItemAdminMenu itemId={item.id} title={item.title} />
+        </div>
+      )}
       {backdropUrl && (
         <div className="absolute inset-0 -z-10">
           <Image

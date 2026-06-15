@@ -34,7 +34,8 @@ export function initScheduler(): void {
     if (wanted.length === 0) return
     console.log(`[automation] Poll tick: ${wanted.length} wanted items`)
     for (const item of wanted) {
-      const result = await grabItem(item)
+      // Honor the item's chosen language on background grabs (defaults to 'any').
+      const result = await grabItem(item, { language: item.language })
       console.log(`[automation] ${item.title}: ${result}`)
     }
   })

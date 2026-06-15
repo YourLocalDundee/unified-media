@@ -570,6 +570,9 @@ export function runMigrations(db: Database.Database): void {
     'ALTER TABLE monitored_items ADD COLUMN scope_seasons TEXT',
     'ALTER TABLE monitored_items ADD COLUMN scope_episodes TEXT',
     'ALTER TABLE monitored_items ADD COLUMN monitor_future INTEGER DEFAULT 0',
+    // monitored_items — per-item language constraint ('any' = no constraint; ISO 639-1 = strict).
+    // The grab cron passes this to grabItem so background grabs honor the chosen language.
+    "ALTER TABLE monitored_items ADD COLUMN language TEXT NOT NULL DEFAULT 'any'",
     // media_requests — mirrors monitored_items scope columns
     "ALTER TABLE media_requests ADD COLUMN scope_type TEXT DEFAULT 'full'",
     'ALTER TABLE media_requests ADD COLUMN scope_seasons TEXT',

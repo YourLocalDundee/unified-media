@@ -175,6 +175,32 @@ export function findBestRelease(
 }
 
 // ---------------------------------------------------------------------------
+// findSeasonPack — availability probe for the admin season-grab (no side effects)
+// ---------------------------------------------------------------------------
+
+/**
+ * Search indexers for a SEASON PACK of one season and return the best release that
+ * passes the quality profile + language, or null if no pack qualifies. Pack-only:
+ * releases naming the season but NOT an individual S##E## episode (mirrors the
+ * pack-preference in filterByScope). Read-only — used to decide pack vs. episode
+ * fallback before anything is grabbed.
+ */
+export async function findSeasonPack(
+  title: string,
+  seasonNumber: number,
+  profile: QualityProfile,
+  language = 'any',
+): Promise<TorznabResult | null> {
+  const s = String(seasonNumber).padStart(2, '0')
+  const raw = await searchAllIndexers({ q: `${title} S${s}`, cats: '5000' })
+  const seasonRe = new RegExp(`S${s}|Season.?${seasonNumber}(?!\\d)`, 'i')
+  const episodeRe = /S\d{2}E\d{2}/i
+  const packs = raw.filter((r) => seasonRe.test(r.title) && !episodeRe.test(r.title))
+  if (packs.length === 0) return null
+  return findBestRelease(packs, profile, language)
+}
+
+// ---------------------------------------------------------------------------
 // grabItem
 // ---------------------------------------------------------------------------
 

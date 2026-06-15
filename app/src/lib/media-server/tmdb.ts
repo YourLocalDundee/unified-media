@@ -270,19 +270,52 @@ export async function getGenres(type: 'movie' | 'tv'): Promise<TMDBGenre[]> {
   }
 }
 
-export async function discoverByGenre(
+// UI-facing sort options; mapped to TMDB /discover sort_by below.
+export type DiscoverSort = 'popularity' | 'rating' | 'newest' | 'oldest' | 'votes'
+
+export interface DiscoverOptions {
+  genreId?: number
+  sortBy?: DiscoverSort
+  year?: number
+  minRating?: number
+  page?: number
+}
+
+/**
+ * Generalized TMDB Discover (replaces the old genre-only discoverByGenre). Hits
+ * /discover/{type} with sort + optional genre/year/min-rating filters. The date sort
+ * field differs by type (primary_release_date for movies, first_air_date for tv), and
+ * the rating sort gets a vote-count floor so a single 10.0 vote can't top the list.
+ */
+export async function discoverTMDB(
   type: 'movie' | 'tv',
-  genreId: number,
-  page = 1,
+  opts: DiscoverOptions = {},
 ): Promise<TMDBSearchResponse> {
   const token = process.env.TMDB_ACCESS_TOKEN
   if (!token) throw new Error('TMDB_ACCESS_TOKEN not set')
+  const { genreId, sortBy = 'popularity', year, minRating, page = 1 } = opts
+
+  const dateField = type === 'movie' ? 'primary_release_date' : 'first_air_date'
+  const sortMap: Record<DiscoverSort, string> = {
+    popularity: 'popularity.desc',
+    rating: 'vote_average.desc',
+    newest: `${dateField}.desc`,
+    oldest: `${dateField}.asc`,
+    votes: 'vote_count.desc',
+  }
+
   const qs = new URLSearchParams({
     language: 'en-US',
     page: String(page),
-    with_genres: String(genreId),
-    sort_by: 'popularity.desc',
+    sort_by: sortMap[sortBy],
+    include_adult: 'false',
   })
+  if (genreId) qs.set('with_genres', String(genreId))
+  if (year) qs.set(type === 'movie' ? 'primary_release_year' : 'first_air_date_year', String(year))
+  // Rating sort needs a vote floor so a 1-vote 10.0 doesn't dominate the page.
+  if (sortBy === 'rating') qs.set('vote_count.gte', type === 'movie' ? '100' : '50')
+  if (minRating && minRating > 0) qs.set('vote_average.gte', String(minRating))
+
   const endpoint = `/discover/${type}`
   const res = await fetch(`${BASE}${endpoint}?${qs.toString()}`, {
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
@@ -558,4 +591,18 @@ export async function searchTMDB(
     totalPages: Math.max(movies.total_pages, shows.total_pages),
     page,
   }
+}
+
+// ---------------------------------------------------------------------------
+// Season episode numbers — used by the admin season-grab to fan out per-episode
+// ---------------------------------------------------------------------------
+
+/** Regular (episode_number > 0) episode numbers for a TV season. Specials (S0) excluded by caller. */
+export async function getSeasonEpisodeNumbers(tmdbId: number, seasonNumber: number): Promise<number[]> {
+  const data = await tmdbFetch<{ episodes?: { episode_number: number }[] }>(
+    `/tv/${tmdbId}/season/${seasonNumber}?language=en-US`,
+  )
+  return (data.episodes ?? [])
+    .map((e) => e.episode_number)
+    .filter((n) => typeof n === 'number' && n > 0)
 }

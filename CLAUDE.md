@@ -409,14 +409,34 @@ app/
 
 **`/browse` — TMDB discovery surface (v0.9.6+)**
 - **Every tab is TMDB discovery**, cross-referenced against the local library so "In Library" / request status show inline. Owned-media-by-type browsing lives at `/library`, not here.
-- Type tabs scope the TMDB feed by media type:
-  - **✦ Browse** — mixed movie + TV (`/trending/all/week`, popular/top-rated of both)
-  - **Movies** — movies only (`discoverType='movie'`: trending/popular/top-rated movies + movie genre pills)
-  - **TV Shows** — TV only (`discoverType='tv'`: trending/popular/top-rated TV + TV genre pills)
-- Trending categories are type-aware (`getTrendingContent` gained `trending-movies` / `trending-tv` → `/trending/{movie,tv}/week`). `catsForType()` / `defaultCatForType()` in `browse/page.tsx` pick the valid category set + default per `discoverType`; an out-of-scope `cat` query falls back to the type default.
-- Search (`searchTMDB(query, discoverType, page)`) is scoped to the active tab's type, so Movies/TV search paginate correctly (only the mixed `'all'` feed interleaves movie+TV).
+- **Filter model (v0.9.7+)** — Type tabs + filter controls work together (`FilterState` in `browse/page.tsx`):
+  - **Type tabs**: ✦ Browse (`all`) · Movies (`movie`) · TV Shows (`tv`) — media-type scope.
+  - **Sort** (`sort`): Popularity / Top Rated / Newest / Oldest / Most Voted → `discoverTMDB`'s
+    `DiscoverSort` → TMDB `sort_by` (rating adds a `vote_count.gte` floor; Newest/Oldest use
+    `primary_release_date` for movies, `first_air_date` for tv).
+  - **Year** + **Min rating** filters; **Genre** pills (single-type only — genre IDs differ movie/tv).
+  - URL params: `type, q, sort, year, minRating, genre, page` — `buildQuery()` preserves the subset.
+- Fetch strategy (`fetchDiscover()`), within TMDB's API limits:
+  - Movies/TV, no query → `discoverTMDB(type, {sortBy, year, minRating, genreId, page})`.
+  - **All**, no filters → trending mixed feed (`getTrendingContent('trending')` — the default landing).
+  - **All**, any filter set → merge `discoverTMDB('movie', …)` + `discoverTMDB('tv', …)` at the same sort, interleaved.
+  - **Name search** (any type) → `searchTMDB(q, type, page)`; year/minRating/sort applied client-side to the
+    returned page (TMDB `/search` has no `sort_by` — labeled "applied to this page" in the UI).
+- `discoverTMDB(type, opts)` (`tmdb.ts`) replaced the old genre-only `discoverByGenre`. The
+  `trending-movies`/`trending-tv` categories on `getTrendingContent` remain but are no longer used by
+  the typed tabs (Sort presets replaced them).
 - `RequestOptions` component handles per-card request UI — two buttons for old content, one for new. For **TV** it opens `SeriesScopeModal` so the user can grab the full series, specific seasons (e.g. just Season 1), or individual episodes before submitting. This is the path to "find Pokémon → grab Season 1".
 - `/browse/discover/[mediaType]/[tmdbId]` — full detail page for TMDB items not yet in library (same `RequestOptions` / season-scope flow via `RequestButton`).
+- **Admin per-season direct-grab (v0.9.7+):** on a TV detail page each season card shows a `SeasonGrabControl`
+  (admin only). Pick a language + quality profile, then `POST /api/grab/season` (`requireAdmin`+`verifyOrigin`):
+  - `mode:'auto'` → `findSeasonPack()` (`grabber.ts`) searches a season **pack** in that language/quality →
+    grabs it (creating a `scope:'seasons'` monitored item) or returns `no_pack`.
+  - `no_pack` → the UI offers "Grab episode by episode" → `mode:'episodes'` fans out one **wanted** monitored
+    item per episode (`getSeasonEpisodeNumbers`); the 15-min grab cron then finds each until the season is full.
+  - `GET /api/grab/season/status?tmdbId=&season=` reports `{total,grabbed}` for a progress badge.
+  - Bypasses the quick/long-term request system — this is a direct admin grab. Honored end-to-end because
+    `monitored_items` now has a **`language`** column and the cron passes it to `grabItem` (also fixes the
+    prior latent bug where a normal request's language was dropped on background grabs).
 - **Prior behaviour (pre-v0.9.6):** the Movies/TV Shows tabs filtered the *local library*. That duplicated `/library` and blocked discovering un-owned content by type; they are now TMDB discovery.
 
 **`/browse/[id]` — Acquisition detail**
@@ -433,12 +453,19 @@ app/
 **`/library` — Owned media grid**
 - Paginated grid of all locally owned content from `media_items` (movies + series containers)
 - Type tabs: All · Movies · TV Shows; sort by title/year/added; items-per-page selector (25/50/100)
-- Series cards link to `/library/${id}`; movie cards link to `/play/${id}` directly
+- **All cards (movies + series) link to `/library/${id}`** (the info/detail page) — clicking a movie
+  no longer jumps straight into playback (v0.9.7+); Watch Now plays from the detail page. (The home
+  page's Recently Added still links movies directly to `/play/${id}`.)
 - Distinct from Browse — no TMDB discovery, no request controls, no acquisition UI
 
-**`/library/[id]` — Play-only media detail**
+**`/library/[id]` — Play-only media detail (+ admin delete, v0.9.7+)**
 - Poster, backdrop, synopsis, year/runtime metadata — same visual layout as `/browse/[id]`
 - **No acquisition controls**: no `RequestOptions`, no retention selector, no grab method, no language picker
+- **Admin-only corner gear** (`LibraryItemAdminMenu`) → "Delete from server": confirm modal →
+  `DELETE /api/admin/media/[id]` → `purgeMediaItem()` (`lib/media-server/purge.ts`) removes the file(s)
+  from disk (+ tidies empty dirs), deletes the matching torrent(s) from the download client (via
+  `grab_history.info_hash`), and clears the `media_items`/watch-state/`monitored_items`/`media_requests`/
+  grab rows; then redirects to `/library`. Gated by `requireAdmin` + `verifyOrigin`; non-admins never see the gear.
 - Movie with `file_path`: Watch Now → `/play/${item.id}`
 - Series container: Watch Now resolves resume episode via `getSeriesResumeEpisode` or falls back to `episodes[0]`; full season/episode accordion where each row links to `/play/${ep.id}`
 - Similar items section links to `/library/${s.id}` (series) or `/play/${s.id}` (movie) — never to `/browse`
@@ -690,7 +717,8 @@ When the scanner processes an episode file it creates a parent series row in `me
 All rows in `media_items` are owned content (scanned from disk). The routing rule is:
 
 - **Owned series** → `/library/${id}` — play-only detail, no acquisition controls
-- **Owned movie** → `/play/${id}` directly from list/card contexts; `/library/${id}` from full detail pages
+- **Owned movie** → `/library/${id}` from the `/library` grid (the info page; Watch Now plays from there,
+  v0.9.7+). The home dashboard's Recently Added/Continue Watching still link movies straight to `/play/${id}`.
 - **Discoverable content** (TMDB, not yet in library) → `/browse/discover/${mediaType}/${tmdbId}`
 - **Browse cards that are already owned** → `/browse/${id}` (the "In Library — Watch" affordance on a discover card reached from the Browse surface) — intentionally shows the acquisition detail for an owned item, because the user got there from discovery.
 

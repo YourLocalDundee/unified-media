@@ -39,6 +39,9 @@ export interface MonitoredItem {
   scope_episodes: string | null
   // 1 = continue monitoring and grabbing new episodes as they release
   monitor_future: number | null  // 0 | 1
+  // ISO 639-1 language code, or 'any' for no constraint. Passed to grabItem so the
+  // background grab cron honors the language chosen at request/grab time.
+  language: string
 }
 
 export interface QualityProfile {
