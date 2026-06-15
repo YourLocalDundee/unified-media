@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react'
 import type { TorrentSearchResult } from '@/app/api/torrent-search/route'
+import { ModalPortal } from '@/components/ui/ModalPortal'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -68,6 +69,32 @@ function detectLang(title: string): string | null {
   return null
 }
 
+type ScopeSeason = number | 'all'
+type ScopeEpisode = number | 'all'
+
+interface ScopeSeasonInfo {
+  seasonNumber: number
+  name: string | null
+  episodeCount: number | null
+}
+
+interface ScopeEpisodeInfo {
+  episodeNumber: number
+  name: string | null
+}
+
+// Build the indexer search query for the chosen TV scope. Mirrors the auto-grab
+// grabber's `buildSearchParams`: "Title S04E06" for a specific episode, "Title S04"
+// for a whole season, and the bare title for the entire series. Embedding SxxExx in
+// the free-text query is the proven path used by the working auto-grab flow, so the
+// indexer aggregation layer returns releases scoped to the selection.
+function buildScopedQuery(title: string, season: ScopeSeason, episode: ScopeEpisode): string {
+  if (season === 'all') return title
+  const s = `S${String(season).padStart(2, '0')}`
+  if (episode === 'all') return `${title} ${s}`
+  return `${title} ${s}E${String(episode).padStart(2, '0')}`
+}
+
 const LANGUAGE_OPTIONS = [
   { value: 'any', label: 'Any language' },
   { value: 'en',  label: 'English' },
@@ -125,6 +152,15 @@ export function TorrentPickModal({
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
 
+  // TV scope selection — lets the user pre-scope the indexer search to an entire
+  // series, a single season, or a single episode before browsing releases. Only
+  // populated for mediaType === 'tv'; movies keep their single-scope flow untouched.
+  const [seasons, setSeasons] = useState<ScopeSeasonInfo[]>([])
+  const [scopeSeason, setScopeSeason] = useState<ScopeSeason>('all')
+  const [scopeEpisode, setScopeEpisode] = useState<ScopeEpisode>('all')
+  const [scopeEpisodes, setScopeEpisodes] = useState<ScopeEpisodeInfo[]>([])
+  const [scopeEpisodesLoading, setScopeEpisodesLoading] = useState(false)
+
   const inputRef = useRef<HTMLInputElement>(null)
 
   const runSearch = useCallback(async (q: string) => {
@@ -151,6 +187,65 @@ export function TorrentPickModal({
     inputRef.current?.focus()
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // Load the season list for the TV scope selector (no-op for movies). Depends only
+  // on the stable tmdbId, and never writes a value it reads back — no render loop.
+  useEffect(() => {
+    if (mediaType !== 'tv') return
+    let cancelled = false
+    fetch(`/api/tmdb/tv/${tmdbId}`)
+      .then(r => (r.ok ? r.json() : Promise.reject(new Error(`TMDB ${r.status}`))))
+      .then((data: { seasons?: ScopeSeasonInfo[] }) => {
+        if (cancelled) return
+        // Drop season 0 (specials) — indexers rarely have clean releases for them.
+        setSeasons((data.seasons ?? []).filter(s => s.seasonNumber > 0))
+      })
+      .catch(() => { /* scope selector simply won't render — search still works title-wide */ })
+    return () => { cancelled = true }
+  }, [mediaType, tmdbId])
+
+  // Season dropdown change — reset episode, load that season's episodes for the
+  // episode dropdown, and re-run the search pre-scoped to the new selection.
+  async function handleSeasonChange(value: string) {
+    if (value === 'all') {
+      setScopeSeason('all')
+      setScopeEpisode('all')
+      setScopeEpisodes([])
+      const q = buildScopedQuery(title, 'all', 'all')
+      setQuery(q)
+      void runSearch(q)
+      return
+    }
+    const season = parseInt(value, 10)
+    setScopeSeason(season)
+    setScopeEpisode('all')
+    setScopeEpisodes([])
+    setScopeEpisodesLoading(true)
+    try {
+      const r = await fetch(`/api/tmdb/tv/${tmdbId}/season/${season}`)
+      if (r.ok) {
+        const data = await r.json() as { episodes?: ScopeEpisodeInfo[] }
+        setScopeEpisodes(data.episodes ?? [])
+      }
+    } catch {
+      /* episode dropdown stays empty; season-pack search still works */
+    } finally {
+      setScopeEpisodesLoading(false)
+    }
+    const q = buildScopedQuery(title, season, 'all')
+    setQuery(q)
+    void runSearch(q)
+  }
+
+  // Episode dropdown change — re-run the search pre-scoped to SxxExx (or the season
+  // pack when "All episodes" is chosen).
+  function handleEpisodeChange(value: string) {
+    const episode: ScopeEpisode = value === 'all' ? 'all' : parseInt(value, 10)
+    setScopeEpisode(episode)
+    const q = buildScopedQuery(title, scopeSeason, episode)
+    setQuery(q)
+    void runSearch(q)
+  }
 
   // Indexer list for filter
   const indexers = ['all', ...Array.from(new Set(results.map(r => r.indexerName))).sort()]
@@ -220,6 +315,7 @@ export function TorrentPickModal({
   }
 
   return (
+    <ModalPortal>
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
       onClick={e => { if (e.target === e.currentTarget) onClose() }}
@@ -248,6 +344,44 @@ export function TorrentPickModal({
             ✕
           </button>
         </div>
+
+        {/* TV scope selector — pre-scope the indexer search to a season or episode */}
+        {mediaType === 'tv' && seasons.length > 0 && (
+          <div className="flex flex-wrap items-center gap-2 px-5 py-3 border-b border-zinc-800 shrink-0">
+            <span className="text-xs text-zinc-500 shrink-0">Scope:</span>
+            <select
+              value={scopeSeason === 'all' ? 'all' : String(scopeSeason)}
+              onChange={e => void handleSeasonChange(e.target.value)}
+              className="rounded px-2 py-1 text-xs bg-zinc-900 border border-zinc-700 text-zinc-200 focus:outline-none focus:ring-1 focus:ring-zinc-500"
+            >
+              <option value="all">Entire series</option>
+              {seasons.map(s => (
+                <option key={s.seasonNumber} value={s.seasonNumber}>
+                  {s.name ?? `Season ${s.seasonNumber}`}
+                  {s.episodeCount != null ? ` (${s.episodeCount} eps)` : ''}
+                </option>
+              ))}
+            </select>
+            {scopeSeason !== 'all' && (
+              <select
+                value={scopeEpisode === 'all' ? 'all' : String(scopeEpisode)}
+                onChange={e => handleEpisodeChange(e.target.value)}
+                disabled={scopeEpisodesLoading}
+                className="rounded px-2 py-1 text-xs bg-zinc-900 border border-zinc-700 text-zinc-200 focus:outline-none focus:ring-1 focus:ring-zinc-500 disabled:opacity-50"
+              >
+                <option value="all">All episodes (season pack)</option>
+                {scopeEpisodes.map(ep => (
+                  <option key={ep.episodeNumber} value={ep.episodeNumber}>
+                    E{String(ep.episodeNumber).padStart(2, '0')}{ep.name ? ` — ${ep.name}` : ''}
+                  </option>
+                ))}
+              </select>
+            )}
+            <span className="text-[10px] text-zinc-600 shrink-0">
+              {scopeEpisodesLoading ? 'Loading episodes…' : 'Results are scoped to this selection.'}
+            </span>
+          </div>
+        )}
 
         {/* Search bar */}
         <div className="px-5 py-3 border-b border-zinc-800 shrink-0">
@@ -524,5 +658,6 @@ export function TorrentPickModal({
 
       </div>
     </div>
+    </ModalPortal>
   )
 }

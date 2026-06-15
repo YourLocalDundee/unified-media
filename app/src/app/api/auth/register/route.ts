@@ -17,6 +17,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getDb } from '@/lib/db/index'
 import { validatePassword, hashPassword } from '@/lib/password'
 import { checkRateLimit } from '@/lib/rate-limit'
+import { getClientIp } from '@/lib/client-ip'
 import { sendEmail, buildVerificationEmail } from '@/lib/email'
 import { createSession, logEvent } from '@/lib/dal'
 import { cookies } from 'next/headers'
@@ -54,9 +55,33 @@ function makeUserId(): string {
 
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000
 
-function getClientIp(req: NextRequest): string {
-  return req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? '127.0.0.1'
+// better-sqlite3 throws on a UNIQUE constraint with code 'SQLITE_CONSTRAINT_UNIQUE'
+// and a message naming the column, e.g. "UNIQUE constraint failed: users.email".
+// This is the backstop for a race between the pre-insert existence check and the
+// INSERT: two concurrent signups with the same email both pass the SELECT, then one
+// INSERT trips the constraint. Catching it turns that into the same clean duplicate
+// response instead of an uncaught 500 surfacing as a generic "unexpected error".
+function isUniqueViolation(err: unknown, column: 'email' | 'username'): boolean {
+  if (!err || typeof err !== 'object') return false
+  const e = err as { code?: string; message?: string }
+  return e.code === 'SQLITE_CONSTRAINT_UNIQUE'
+    && typeof e.message === 'string'
+    && e.message.includes(`users.${column}`)
 }
+
+// Structured duplicate responses — 409 Conflict + a machine-readable `code` so the
+// frontend can branch (show the "already registered → sign in" UI) rather than
+// pattern-matching a human string.
+const EMAIL_EXISTS_RESPONSE = () =>
+  NextResponse.json(
+    { error: 'An account with that email already exists.', code: 'EMAIL_EXISTS' },
+    { status: 409 },
+  )
+const USERNAME_TAKEN_RESPONSE = () =>
+  NextResponse.json(
+    { error: 'Username already taken.', code: 'USERNAME_TAKEN' },
+    { status: 409 },
+  )
 
 export async function POST(req: NextRequest) {
   if (!verifyOrigin(req)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
@@ -90,67 +115,103 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Passwords do not match.' }, { status: 400 })
   }
 
-  const db = getDb()
-  if (db.prepare('SELECT id FROM users WHERE LOWER(username) = LOWER(?)').get(username)) {
-    return NextResponse.json({ error: 'Username already taken.' }, { status: 400 })
+  // Everything past validation is wrapped so that any genuinely unexpected failure
+  // is logged with full detail server-side and returns a *safe, generic, JSON* 500.
+  // Without this, an uncaught throw produces Next's default non-JSON 500 page, which
+  // the client's `res.json()` can't parse — surfacing as the opaque catch-all
+  // "An unexpected error occurred." Known cases (duplicate email/username) are
+  // returned explicitly below and never reach this fallback.
+  try {
+    const db = getDb()
+
+    // Primary, friendly path: pre-insert existence checks (case-insensitive).
+    if (db.prepare('SELECT id FROM users WHERE LOWER(username) = LOWER(?)').get(username)) {
+      return USERNAME_TAKEN_RESPONSE()
+    }
+    if (db.prepare('SELECT id FROM users WHERE LOWER(email) = LOWER(?)').get(email)) {
+      return EMAIL_EXISTS_RESPONSE()
+    }
+
+    const now = Date.now()
+    const hash = await hashPassword(password)
+
+    // When EMAIL_VERIFICATION_REQUIRED is not 'true', skip the pending row and
+    // create the account immediately. This is the default for self-hosted installs
+    // where SMTP is not configured and users should be able to sign up instantly.
+    const verificationRequired = process.env.EMAIL_VERIFICATION_REQUIRED === 'true'
+
+    if (!verificationRequired) {
+      const userId = makeUserId()
+      try {
+        db.prepare(
+          `INSERT INTO users (id, username, email, password_hash, role, first_name, last_name, bio, location, created_at, updated_at, is_active)
+           VALUES (?, ?, ?, ?, 'user', ?, ?, ?, ?, ?, ?, 1)`
+        ).run(userId, username, email.toLowerCase(), hash,
+          firstName?.trim() || null, lastName?.trim() || null,
+          bio?.trim() || null, location?.trim() || null, now, now)
+      } catch (err) {
+        // Race backstop: the UNIQUE constraint fired despite the checks above.
+        if (isUniqueViolation(err, 'email')) return EMAIL_EXISTS_RESPONSE()
+        if (isUniqueViolation(err, 'username')) return USERNAME_TAKEN_RESPONSE()
+        throw err // truly unexpected — handled by the outer catch
+      }
+
+      await logEvent('user_created', { username, email }, { userId, username, ip })
+
+      const sessionId = await createSession(userId, ip, req.headers.get('user-agent') ?? undefined)
+      const cookieStore = await cookies()
+      cookieStore.set('unified-session', sessionId, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax',
+        path: '/',
+        maxAge: SESSION_TTL_MS / 1000,
+      })
+
+      return NextResponse.json({ username, role: 'user' })
+    }
+
+    // Purge any existing pending row for this email (e.g. user re-registered after
+    // losing the code) AND stale expired rows for any email to prevent table bloat.
+    // There is no background cleanup job — expiry enforcement is opportunistic here.
+    db.prepare('DELETE FROM pending_registrations WHERE LOWER(email) = ? OR expires_at < ?').run(email.toLowerCase(), now)
+
+    const pendingId = makeId(32)
+    const code = makeCode()
+
+    try {
+      db.prepare(
+        `INSERT INTO pending_registrations (id, email, username, password_hash, code, first_name, last_name, bio, location, attempts, expires_at, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`
+      ).run(
+        pendingId, email.toLowerCase(), username, hash, code,
+        firstName?.trim() || null, lastName?.trim() || null,
+        bio?.trim() || null, location?.trim() || null,
+        now + 10 * 60 * 1000, now
+      )
+    } catch (err) {
+      // pending_registrations has no UNIQUE(email), but a concurrent signup may have
+      // created the real users row between our check and here — surface it cleanly.
+      if (isUniqueViolation(err, 'email')) return EMAIL_EXISTS_RESPONSE()
+      if (isUniqueViolation(err, 'username')) return USERNAME_TAKEN_RESPONSE()
+      throw err
+    }
+
+    const emailPayload = buildVerificationEmail(code, username)
+    emailPayload.to = email
+    await sendEmail(emailPayload)
+
+    return NextResponse.json({ pendingId })
+  } catch (err) {
+    // Server-side only: log the real exception (stack) for diagnosis. The client
+    // gets a safe generic message — this branch is reserved for *unknown* errors;
+    // all known cases returned specific, actionable responses above.
+    process.stderr.write(
+      `[register] unexpected error for username="${username}": ${err instanceof Error ? (err.stack ?? err.message) : String(err)}\n`,
+    )
+    return NextResponse.json(
+      { error: 'An unexpected error occurred. Please try again.' },
+      { status: 500 },
+    )
   }
-  if (db.prepare('SELECT id FROM users WHERE LOWER(email) = LOWER(?)').get(email)) {
-    return NextResponse.json({ error: 'An account with that email already exists.' }, { status: 400 })
-  }
-
-  const now = Date.now()
-  const hash = await hashPassword(password)
-
-  // When EMAIL_VERIFICATION_REQUIRED is not 'true', skip the pending row and
-  // create the account immediately. This is the default for self-hosted installs
-  // where SMTP is not configured and users should be able to sign up instantly.
-  const verificationRequired = process.env.EMAIL_VERIFICATION_REQUIRED === 'true'
-
-  if (!verificationRequired) {
-    const userId = makeUserId()
-    db.prepare(
-      `INSERT INTO users (id, username, email, password_hash, role, first_name, last_name, bio, location, created_at, updated_at, is_active)
-       VALUES (?, ?, ?, ?, 'user', ?, ?, ?, ?, ?, ?, 1)`
-    ).run(userId, username, email.toLowerCase(), hash,
-      firstName?.trim() || null, lastName?.trim() || null,
-      bio?.trim() || null, location?.trim() || null, now, now)
-
-    await logEvent('user_created', { username, email }, { userId, username, ip })
-
-    const sessionId = await createSession(userId, ip, req.headers.get('user-agent') ?? undefined)
-    const cookieStore = await cookies()
-    cookieStore.set('unified-session', sessionId, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
-      path: '/',
-      maxAge: SESSION_TTL_MS / 1000,
-    })
-
-    return NextResponse.json({ username, role: 'user' })
-  }
-
-  // Purge any existing pending row for this email (e.g. user re-registered after
-  // losing the code) AND stale expired rows for any email to prevent table bloat.
-  // There is no background cleanup job — expiry enforcement is opportunistic here.
-  db.prepare('DELETE FROM pending_registrations WHERE LOWER(email) = ? OR expires_at < ?').run(email.toLowerCase(), now)
-
-  const pendingId = makeId(32)
-  const code = makeCode()
-
-  db.prepare(
-    `INSERT INTO pending_registrations (id, email, username, password_hash, code, first_name, last_name, bio, location, attempts, expires_at, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`
-  ).run(
-    pendingId, email.toLowerCase(), username, hash, code,
-    firstName?.trim() || null, lastName?.trim() || null,
-    bio?.trim() || null, location?.trim() || null,
-    now + 10 * 60 * 1000, now
-  )
-
-  const emailPayload = buildVerificationEmail(code, username)
-  emailPayload.to = email
-  await sendEmail(emailPayload)
-
-  return NextResponse.json({ pendingId })
 }

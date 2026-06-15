@@ -25,6 +25,9 @@ app-backup-*/
 .vscode/
 .idea/
 
+# Claude Code local worktree scratch (git worktree metadata, not source)
+.claude/
+
 # Logs
 *.log
 npm-debug.log*

@@ -1,6 +1,9 @@
 # Independence Build — Implementation Status
 
-*Last updated: 2026-05-30*
+*Last updated: 2026-05-30. **Superseded for current state by the 2026-06-13 full audit** — see
+[`audit-2026-06-13/00-SUMMARY.md`](audit-2026-06-13/00-SUMMARY.md). This file is the build-completion snapshot;
+the audit lists what is broken / no-op / insecure despite being marked "Complete" here (notably watch history,
+proxy auth, CSRF, auto-delete safety, and ~27 dead modules).*
 
 ## Completion Summary
 

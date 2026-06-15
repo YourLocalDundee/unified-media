@@ -17,6 +17,7 @@
  */
 
 import { useState, useEffect, useCallback } from 'react'
+import { ModalPortal } from '@/components/ui/ModalPortal'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -309,7 +310,8 @@ export function SeriesScopeModal({ tmdbId, title, onConfirm, onClose }: Props) {
   // ---------------------------------------------------------------------------
 
   return (
-    // Backdrop
+    <ModalPortal>
+    {/* Backdrop */}
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
       onClick={e => { if (e.target === e.currentTarget) onClose() }}
@@ -523,5 +525,6 @@ export function SeriesScopeModal({ tmdbId, title, onConfirm, onClose }: Props) {
         </div>
       </div>
     </div>
+    </ModalPortal>
   )
 }

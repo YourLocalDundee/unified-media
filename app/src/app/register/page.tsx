@@ -54,6 +54,10 @@ function StepOne({ onNext, onDone, verificationRequired }: {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [fieldErrors, setFieldErrors] = useState<string[]>([])
+  // Distinct from `error`: a duplicate-email conflict gets a dedicated actionable
+  // callout (sign-in link + reset stub) rather than a plain red string.
+  const [emailExists, setEmailExists] = useState(false)
+  const [showResetNote, setShowResetNote] = useState(false)
   const [usernameStatus, setUsernameStatus] = useState<'idle' | 'checking' | 'available' | 'taken'>('idle')
   const [strength, setStrength] = useState(-1)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -101,15 +105,17 @@ function StepOne({ onNext, onDone, verificationRequired }: {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    setLoading(true); setError(''); setFieldErrors([])
+    setLoading(true); setError(''); setFieldErrors([]); setEmailExists(false); setShowResetNote(false)
     try {
       const res = await fetch('/api/auth/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username, email, password, confirmPassword, firstName, lastName, bio, location }),
       })
-      const data = await res.json() as { error?: string; errors?: string[]; pendingId?: string; username?: string }
+      const data = await res.json() as { error?: string; errors?: string[]; code?: string; pendingId?: string; username?: string }
       if (!res.ok) {
+        // Duplicate email gets a dedicated, actionable callout (rendered below).
+        if (data.code === 'EMAIL_EXISTS') { setEmailExists(true); return }
         if (data.errors) setFieldErrors(data.errors)
         else setError(data.error ?? 'Registration failed.')
         return
@@ -247,6 +253,31 @@ function StepOne({ onNext, onDone, verificationRequired }: {
             placeholder="A short bio…" maxLength={256} />
         </div>
       </div>
+
+      {emailExists && (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-400/10 px-3 py-3 text-sm">
+          <p className="font-medium text-amber-300">This email is already registered.</p>
+          <p className="mt-1 text-amber-200/80">
+            You already have an account.{' '}
+            <a href="/login" className="font-medium underline hover:text-amber-100">Sign in instead</a>.
+          </p>
+          <p className="mt-1.5 text-xs text-amber-200/70">
+            Forgot your password?{' '}
+            <button
+              type="button"
+              onClick={() => setShowResetNote(true)}
+              className="underline hover:text-amber-100"
+            >
+              Reset password
+            </button>
+            {showResetNote && (
+              <span className="mt-1 block text-amber-200/60">
+                Password reset isn’t available yet — please contact the administrator to recover this account.
+              </span>
+            )}
+          </p>
+        </div>
+      )}
 
       {(error || fieldErrors.length > 0) && (
         <div className="rounded-lg bg-red-400/10 px-3 py-2 text-sm text-red-400">

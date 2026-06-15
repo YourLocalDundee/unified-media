@@ -1,11 +1,39 @@
 # Feature Status
 
-Audit date: 2026-06-04. Last updated: 2026-06-04 (post v0.9.1 build). Verified against `/home/minijoe/dev/unified-frontend/app/src/`.
+Audit date: 2026-06-04. Last updated: 2026-06-13 (full read-only audit correction appended below; see `analysis/audit-2026-06-13/`). Verified against `/home/minijoe/dev/unified-frontend/app/src/`.
 
 Legend:
 - `[x]` Done — file exists and implements the feature
 - `[ ]` Not done — mentioned in CLAUDE.md backlog but not in source
 - `[~]` Partial — started but incomplete
+- `[!]` Marked done below but the 2026-06-13 audit found it broken / no-op / insecure
+
+---
+
+## ⚠️ Audit Correction (2026-06-13) — "done" items that are broken / no-op / insecure
+
+The 21-agent audit (`analysis/audit-2026-06-13/`, summary in `00-SUMMARY.md`) found that several items marked `[x]`
+in the phases below are not actually functional or are insecure. Re-flag these as `[!]` until fixed.
+
+- [!] **Watch history** (`/history`) — page reads `watch_events`, which **nothing writes** (player writes
+  `media_watch_state`). Permanently empty; admin watch stats share the dead table. (A3-01, A20-03)
+- [!] **qBittorrent proxy** (`/api/qbit/[...path]`) — **no `requireAuth()`**; unauthenticated full qBit control incl.
+  delete-with-files and `setPreferences`. (A7-01, A14-C1)
+- [!] **Jellyfin routes** (`stream`, `playback`, `sessions/*`, `subtitles/*`, `image`, `series/*`, `seasons/*`) — **no
+  `requireAuth()`**; open key-injecting relay. Only `continue-watching` is gated. (A4, A13-01)
+- [!] **CSRF protection** (`src/lib/csrf.ts`, Phase 1) — `verifyOrigin` is on only ~12 of 51 mutating routes and is
+  bypassable (`startsWith` host check). Effectively absent. (A6-01, A9-01, A1-002)
+- [!] **Display settings page** — every control except Theme is a no-op (no reader exists). (A08-H1)
+- [!] **Playback settings** — 9 of 11 prefs are no-ops; the player reads only audio/subtitle language. (A08-H2)
+- [!] **Torrent → Interface settings tab** — writes prefs the live `/downloads` page never reads. (A08-H3)
+- [!] **Two-mode requests / interactive picks** — interactive picks are auto-approved, contradicting CLAUDE.md §15. (A7-03)
+- [!] **Party "join by code"** (`JoinByCodeModal`) — component never mounted; only the `?party=` link works. (A5-01)
+- [!] **Automation dedup** — `monitored_items` has no unique index; "already exists" guards are dead → duplicate grabs. (A11-C2)
+- [!] **auto-delete safety** — can delete user-owned media sharing a title with an expiring quick request. (A11-C1)
+- [~] **Dead components** — ~13 of 18 `components/media/*` (detail-panel + episode-carousel chains, `SeasonSelector`,
+  shadowed `RequestButton`) and the `downloads/components/*` alt UI are unmounted. See `17-resilience-deadcode.md`.
+
+The phase checklist below is left as originally written for history; trust the flags above over the `[x]` marks.
 
 ---
 
