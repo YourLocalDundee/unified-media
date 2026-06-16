@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAdmin } from '@/lib/dal'
+import { verifyOrigin } from '@/lib/csrf'
 import { getRequestById } from '@/lib/requests/monitor'
 import { getAllItems, recordGrab, updateItem } from '@/lib/automation/monitor'
 import { grabItem } from '@/lib/automation/grabber'
@@ -11,6 +12,7 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  if (!verifyOrigin(req)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   await requireAdmin()
   const { id: idStr } = await params
   const id = parseInt(idStr, 10)
@@ -33,7 +35,14 @@ export async function POST(
   try { body = await req.json() } catch { /* empty body = normal re-search */ }
 
   if (body.magnetUrl) {
-    await getClient().addTorrent({ urls: body.magnetUrl, category: item.type })
+    // A6-12: validate the override URL before handing it to the download client. Even though this
+    // path is admin-gated, an unchecked `urls` value lets arbitrary schemes reach qBit. Accept only
+    // magnet links and http(s) .torrent URLs.
+    const url = body.magnetUrl.trim()
+    if (!/^(magnet:\?|https?:\/\/)/i.test(url)) {
+      return NextResponse.json({ error: 'Override URL must be a magnet link or http(s) URL' }, { status: 400 })
+    }
+    await getClient().addTorrent({ urls: url, category: item.type })
     recordGrab({
       item_id: item.id,
       indexer: body.indexerName ?? 'manual',
@@ -44,6 +53,7 @@ export async function POST(
     return NextResponse.json({ status: 'grabbed' })
   }
 
-  const status = await grabItem(item)
+  // force: explicit admin re-search; the item is already 'approved'/'grabbed', not 'wanted' (D3).
+  const status = await grabItem(item, { force: true })
   return NextResponse.json({ status })
 }

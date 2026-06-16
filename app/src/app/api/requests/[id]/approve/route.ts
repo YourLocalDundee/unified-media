@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAdmin } from '@/lib/dal'
+import { verifyOrigin } from '@/lib/csrf'
 import { checkRateLimit } from '@/lib/rate-limit'
 import { getClientIp } from '@/lib/client-ip'
 import { getRequestById, updateRequestStatus } from '@/lib/requests/monitor'
@@ -69,6 +70,18 @@ function firePreferredGrab(
         monitorItem = existing
       }
 
+      // D3: atomically claim the row ('wanted'→'grabbing') before adding the torrent so this
+      // non-awaited preferred grab cannot race the 15-min cron grabbing the same row. If the
+      // cron already claimed/grabbed it (changes===0), bail and let the cron's grab stand.
+      const { getDb } = await import('@/lib/db/index')
+      const claim = getDb()
+        .prepare("UPDATE monitored_items SET status = 'grabbing', updated_at = ? WHERE id = ? AND status = 'wanted'")
+        .run(Date.now(), monitorItem.id)
+      if (claim.changes === 0) {
+        console.log(`[approve] Preferred grab for "${picked.releaseTitle}" skipped — row already claimed`)
+        return
+      }
+
       const url = picked.magnetUrl || picked.downloadUrl
       await getClient().addTorrent({ urls: url, category: mediaType === 'movie' ? 'movie' : 'tv' })
 
@@ -100,6 +113,13 @@ function firePreferredGrab(
       console.log(`[approve] Preferred grab for "${picked.releaseTitle}": grabbed`)
     } catch (err) {
       console.warn('[approve] Preferred grab failed (cron will retry):', err)
+      // D3: release a stuck 'grabbing' claim back to 'wanted' so the cron retries.
+      try {
+        const { getDb } = await import('@/lib/db/index')
+        getDb()
+          .prepare("UPDATE monitored_items SET status = 'wanted', updated_at = ? WHERE tmdb_id = ? AND type = ? AND status = 'grabbing'")
+          .run(Date.now(), tmdbId, mediaType === 'movie' ? 'movie' : 'tv')
+      } catch { /* best-effort release */ }
     }
   })()
 }
@@ -108,6 +128,7 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  if (!verifyOrigin(req)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   await requireAdmin()
 
   const ip = getClientIp(req)
@@ -134,6 +155,17 @@ export async function POST(
   const request = getRequestById(id)
   if (!request) {
     return NextResponse.json({ error: 'Request not found' }, { status: 404 })
+  }
+
+  // A6-03: only a pending request can be approved. Re-approving an already-approved/available/
+  // declined/expired row would re-create the monitored item, reset status to 'approved' (freeing
+  // an 'available' quick request from the auto-delete query → slot leak), and fire a duplicate
+  // grab. Re-grabbing an already-approved item is what POST /api/requests/[id]/grab is for.
+  if (request.status !== 'pending') {
+    return NextResponse.json(
+      { error: `Request is already ${request.status}; only pending requests can be approved.` },
+      { status: 409 }
+    )
   }
 
   // Read scope fields from the request row — stored as raw DB columns
@@ -170,6 +202,14 @@ export async function POST(
   }
 
   updateRequestStatus(id, 'approved')
+
+  // A20-01: a quick request approved here (e.g. a quick+interactive pick that skipped
+  // tryAutoApprove and landed in the admin queue) must also get auto_approved=1. availability.ts
+  // keys auto_delete_at on request_type='quick', but runAutoDelete keys on auto_approved=1 — without
+  // this, the 48h timer is set but the file is never deleted and the quick slot leaks.
+  if (request.request_type === 'quick') {
+    getDb().prepare('UPDATE media_requests SET auto_approved = 1 WHERE id = ?').run(id)
+  }
 
   // Check if the user pre-selected a release in the picker modal
   const row = getDb()
