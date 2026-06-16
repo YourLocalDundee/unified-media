@@ -51,7 +51,8 @@ export default function MediaCard({
             fill
             sizes={sizes}
             className="object-cover"
-            unoptimized
+            // A02-006/A15-G: optimization enabled — every imageUrl callers pass
+            // resolves to image.tmdb.org, which is covered by next.config images.remotePatterns.
             onError={() => setImgError(true)}
           />
         ) : (

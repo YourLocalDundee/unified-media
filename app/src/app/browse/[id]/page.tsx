@@ -111,6 +111,7 @@ export default async function BrowseDetailPage({ params }: Props) {
       {/* Backdrop */}
       {backdropUrl && (
         <div className="absolute inset-0 -z-10">
+          {/* A02-006/A15-G: TMDB host covered by remotePatterns — optimization on. */}
           <Image
             fill
             src={backdropUrl}
@@ -118,7 +119,6 @@ export default async function BrowseDetailPage({ params }: Props) {
             style={{ objectFit: 'cover' }}
             className="opacity-20"
             priority
-            unoptimized
           />
           <div className="absolute inset-0 bg-gradient-to-t from-background via-background/80 to-transparent" />
         </div>
@@ -137,7 +137,6 @@ export default async function BrowseDetailPage({ params }: Props) {
                   fill
                   style={{ objectFit: 'cover' }}
                   priority
-                  unoptimized
                 />
               </div>
             ) : (

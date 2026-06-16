@@ -43,7 +43,8 @@ function CastCard({ name, character, profilePath }: { name: string; character: s
     <div className="flex flex-col overflow-hidden rounded-lg bg-zinc-900 ring-1 ring-white/5">
       <div className="relative aspect-[2/3] w-full bg-zinc-800">
         {imgUrl ? (
-          <Image src={imgUrl} alt={name} fill sizes="100px" className="object-cover" unoptimized />
+          // A02-006/A15-G: TMDB host covered by remotePatterns — optimization on.
+          <Image src={imgUrl} alt={name} fill sizes="100px" className="object-cover" />
         ) : (
           <div className="flex h-full w-full items-center justify-center text-zinc-600 text-2xl font-bold select-none">
             {name.charAt(0)}
@@ -104,6 +105,7 @@ export default async function DiscoverDetailPage({ params }: PageProps) {
       {/* Backdrop */}
       {backdropUrl && (
         <div className="relative h-64 sm:h-80 lg:h-96 w-full overflow-hidden">
+          {/* A02-006/A15-G: TMDB host covered by remotePatterns — optimization on. */}
           <Image
             src={backdropUrl}
             alt={title}
@@ -111,7 +113,6 @@ export default async function DiscoverDetailPage({ params }: PageProps) {
             priority
             sizes="100vw"
             className="object-cover object-top"
-            unoptimized
           />
           <div className="absolute inset-0 bg-gradient-to-t from-zinc-950 via-zinc-950/60 to-transparent" />
         </div>
@@ -131,7 +132,7 @@ export default async function DiscoverDetailPage({ params }: PageProps) {
           {posterUrl && (
             <div className="relative w-36 sm:w-48 flex-shrink-0 self-start">
               <div className="relative aspect-[2/3] w-full overflow-hidden rounded-xl shadow-2xl ring-1 ring-white/10">
-                <Image src={posterUrl} alt={title} fill sizes="(max-width: 640px) 144px, 192px" className="object-cover" unoptimized />
+                <Image src={posterUrl} alt={title} fill sizes="(max-width: 640px) 144px, 192px" className="object-cover" />
               </div>
             </div>
           )}
@@ -240,7 +241,7 @@ export default async function DiscoverDetailPage({ params }: PageProps) {
                   <div key={s.id} className="flex flex-col overflow-hidden rounded-lg bg-zinc-900 ring-1 ring-white/5">
                     <div className="relative aspect-[2/3] w-full bg-zinc-800">
                       {sPosterUrl ? (
-                        <Image src={sPosterUrl} alt={s.name ?? `Season ${s.seasonNumber}`} fill sizes="150px" className="object-cover" unoptimized />
+                        <Image src={sPosterUrl} alt={s.name ?? `Season ${s.seasonNumber}`} fill sizes="150px" className="object-cover" />
                       ) : (
                         <div className="flex h-full w-full items-center justify-center text-zinc-600 text-xs">No Image</div>
                       )}

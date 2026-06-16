@@ -293,13 +293,21 @@ function AddTorrentForm({ onAdded }: { onAdded?: () => void }) {
   const [open, setOpen] = useState(false)
   const [url, setUrl] = useState('')
   const [category, setCategory] = useState('')
+  const [submitError, setSubmitError] = useState<string | null>(null)
   const { addTorrent, isPending } = useAddTorrent()
 
   const handleSubmit = useCallback(
     async (e: React.FormEvent) => {
       e.preventDefault()
       if (!url.trim()) return
-      await addTorrent(url.trim(), category.trim() || undefined)
+      setSubmitError(null)
+      try {
+        await addTorrent(url.trim(), category.trim() || undefined)
+      } catch {
+        // A7-04: a failed add must NOT clear the inputs or close the form.
+        setSubmitError('Could not add torrent. Check the link and try again.')
+        return
+      }
       setUrl('')
       setCategory('')
       setOpen(false)
@@ -381,6 +389,15 @@ function AddTorrentForm({ onAdded }: { onAdded?: () => void }) {
               </button>
             </div>
           </div>
+          {/* A7-04 / A16: surface a failed add inline; aria-live announces it. */}
+          {submitError && (
+            <p
+              role="alert"
+              className="mt-2 text-xs font-medium text-red-600 dark:text-red-400"
+            >
+              {submitError}
+            </p>
+          )}
         </form>
       )}
     </div>
@@ -597,6 +614,9 @@ export default function DownloadsPage() {
   const [activeTab, setActiveTab] = useState<FilterTab>('all')
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [showSettings, setShowSettings] = useState(false)
+  // A7-04: surfaces a failed pause/resume/delete action (the action hooks now
+  // throw on a non-2xx response). Announced via an aria-live region below.
+  const [actionError, setActionError] = useState<string | null>(null)
 
   // Speed history for the graph — capped at 60 samples (~2 min at 2s poll rate)
   const [speedHistory, setSpeedHistory] = useState<{ dl: number; ul: number }[]>([])
@@ -670,33 +690,46 @@ export default function DownloadsPage() {
 
   const clearSelection = useCallback(() => setSelected(new Set()), [])
 
+  // A7-04: each action now reports a failure instead of silently no-oping.
   const handlePause = useCallback(
-    (hash: string) => pauseTorrents([hash]),
+    (hash: string) => {
+      setActionError(null)
+      pauseTorrents([hash]).catch(() => setActionError('Failed to pause torrent.'))
+    },
     [pauseTorrents]
   )
   const handleResume = useCallback(
-    (hash: string) => resumeTorrents([hash]),
+    (hash: string) => {
+      setActionError(null)
+      resumeTorrents([hash]).catch(() => setActionError('Failed to resume torrent.'))
+    },
     [resumeTorrents]
   )
   const handleDelete = useCallback(
-    (hash: string) => deleteTorrents([hash], false),
+    (hash: string) => {
+      setActionError(null)
+      deleteTorrents([hash], false).catch(() => setActionError('Failed to delete torrent.'))
+    },
     [deleteTorrents]
   )
 
   const handleBulkPause = useCallback(() => {
-    pauseTorrents(Array.from(selected))
+    setActionError(null)
+    pauseTorrents(Array.from(selected)).catch(() => setActionError('Failed to pause selected torrents.'))
     clearSelection()
   }, [selected, pauseTorrents, clearSelection])
 
   const handleBulkResume = useCallback(() => {
-    resumeTorrents(Array.from(selected))
+    setActionError(null)
+    resumeTorrents(Array.from(selected)).catch(() => setActionError('Failed to resume selected torrents.'))
     clearSelection()
   }, [selected, resumeTorrents, clearSelection])
 
   const handleBulkDelete = useCallback(() => {
     const count = selected.size
     if (!window.confirm(`Delete ${count} torrent${count !== 1 ? 's' : ''}?`)) return
-    deleteTorrents(Array.from(selected), false)
+    setActionError(null)
+    deleteTorrents(Array.from(selected), false).catch(() => setActionError('Failed to delete selected torrents.'))
     clearSelection()
   }, [selected, deleteTorrents, clearSelection])
 
@@ -737,8 +770,8 @@ export default function DownloadsPage() {
 
             {/* Stats bar */}
             <div className="flex flex-wrap items-center gap-4 text-sm">
-              {/* Connection status */}
-              <span className="flex items-center gap-1.5">
+              {/* Connection status (A16: polite live region for status changes) */}
+              <span className="flex items-center gap-1.5" aria-live="polite">
                 <span
                   className={`h-2 w-2 rounded-full ${
                     isConnected
@@ -795,6 +828,25 @@ export default function DownloadsPage() {
       </div>
 
       <div className="mx-auto w-full max-w-7xl flex-1 px-4 py-6 sm:px-6">
+        {/* A7-04 / A16: action errors are announced assertively to screen readers. */}
+        <div aria-live="assertive" className="sr-only">
+          {actionError ?? ''}
+        </div>
+        {/* A7-04: failed pause/resume/delete banner (dismissible). */}
+        {actionError && (
+          <div className="mb-4 flex items-center justify-between rounded-lg border border-red-200 bg-red-50 px-4 py-3 dark:border-red-800 dark:bg-red-900/20">
+            <span className="text-sm font-medium text-red-700 dark:text-red-400">
+              {actionError}
+            </span>
+            <button
+              onClick={() => setActionError(null)}
+              className="rounded-md px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-100 dark:text-red-400 dark:hover:bg-red-900/40 focus:outline-none focus:ring-2 focus:ring-red-500"
+              aria-label="Dismiss error"
+            >
+              ✕
+            </button>
+          </div>
+        )}
         {/* Disconnected banner */}
         {error && (
           <div className="mb-4 flex items-center justify-between rounded-lg border border-red-200 bg-red-50 px-4 py-3 dark:border-red-800 dark:bg-red-900/20">

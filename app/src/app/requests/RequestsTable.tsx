@@ -233,24 +233,40 @@ function DownloadProgress({ requestId }: { requestId: number }) {
   const [data, setData] = useState<ProgressData | null>(null)
 
   useEffect(() => {
+    // A6-18: self-scheduling poll loop instead of a fixed setInterval so we can
+    // (1) STOP once the item reaches a terminal state (complete/imported) and
+    // (2) apply a modest backoff that grows the interval up to a cap while the
+    // download is still in progress, easing load on the qBit proxy.
     let cancelled = false
+    let timer: ReturnType<typeof setTimeout> | null = null
+
+    const BASE_INTERVAL = 5000
+    const MAX_INTERVAL = 30000
+    let interval = BASE_INTERVAL
 
     async function poll() {
+      let terminal = false
       try {
         const res = await fetch(`/api/requests/${requestId}/progress`)
-        if (!res.ok) return
-        const json: ProgressData = await res.json()
-        if (!cancelled) setData(json)
+        if (res.ok) {
+          const json: ProgressData = await res.json()
+          if (!cancelled) setData(json)
+          // Stop polling once the download is done/imported — nothing changes after.
+          terminal = isComplete(json.progress, json.state)
+        }
       } catch {
-        // network error — silently ignore, will retry on next interval
+        // network error — silently ignore, will retry on the next tick
       }
+      if (cancelled || terminal) return
+      // A6-18: gentle backoff (1.5x per tick, capped) to reduce polling pressure.
+      interval = Math.min(Math.round(interval * 1.5), MAX_INTERVAL)
+      timer = setTimeout(poll, interval)
     }
 
     poll()
-    const interval = setInterval(poll, 5000)
     return () => {
       cancelled = true
-      clearInterval(interval)
+      if (timer) clearTimeout(timer)
     }
   }, [requestId])
 
@@ -342,10 +358,12 @@ function GrabResultsPanel({ requestId, status }: GrabResultsPanelProps) {
     }
   }, [requestId])
 
-  // Load on first render of the panel
-  if (data === undefined && !loading) {
-    load()
-  }
+  // A6-18: load on mount via an effect instead of calling load() in the render
+  // body (which fired a fetch + setState during render). Re-runs if the panel is
+  // re-keyed to a different request.
+  useEffect(() => {
+    void load()
+  }, [load])
 
   async function handleResearch() {
     setResearchBusy(true)
