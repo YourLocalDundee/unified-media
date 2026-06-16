@@ -14,6 +14,16 @@ interface WatchRow {
 
 export const dynamic = 'force-dynamic'
 
+// A21/A9-04: neutralize CSV formula injection. A cell whose first char is = + - @
+// (or a leading tab/CR) is run as a formula by Excel/Sheets. Prefix with a single
+// quote so it stays literal text. Applied before JSON.stringify (which only handles
+// quoting/commas, not formula prefixes — a JSON-quoted "=cmd" is still a formula once
+// the spreadsheet strips the surrounding quotes).
+function csvSafe(value: unknown): string {
+  const str = String(value)
+  return /^[=+\-@\t\r]/.test(str) ? "'" + str : str
+}
+
 export async function GET() {
   await requireAdmin()
   const rows = getDb().prepare(
@@ -25,11 +35,11 @@ export async function GET() {
   ).all() as WatchRow[]
 
   const header = 'username,title,type,series,season,episode,progress_pct,watched_sec,duration_sec,completed,started_at\n'
-  // Each cell is JSON.stringify'd to handle commas and quotes inside strings safely.
+  // Each cell is formula-neutralized then JSON.stringify'd to handle commas/quotes safely.
   const body = rows.map(r =>
     [r.username, r.item_title, r.item_type, r.series_title ?? '', r.season_num ?? '', r.episode_num ?? '',
      r.progress_pct ?? '', r.watched_sec ?? '', r.duration_sec ?? '', r.completed,
-     new Date(r.started_at).toISOString()].map(v => JSON.stringify(v)).join(',')
+     new Date(r.started_at).toISOString()].map(v => JSON.stringify(csvSafe(v))).join(',')
   ).join('\n')
 
   return new NextResponse(header + body, {

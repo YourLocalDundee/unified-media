@@ -20,15 +20,25 @@ export async function GET(req: NextRequest) {
     return NextResponse.json(null)
   }
 
+  // A7-07: cap the input length before any processing. A release name is at most a few
+  // hundred chars; a longer value is junk and only makes the LIKE scan more expensive.
+  if (name.length > 300) {
+    return NextResponse.json(null)
+  }
+
   const cleaned = cleanName(name)
   if (!cleaned) {
     return NextResponse.json(null)
   }
 
+  // A7-07: escape LIKE wildcards so a title containing % or _ can't widen the match to
+  // the whole table (`%` matches everything). The ESCAPE clause makes \ the escape char.
+  const likePattern = `%${cleaned.replace(/[\\%_]/g, '\\$&')}%`
+
   const db = getDb()
   const row = db.prepare(
-    `SELECT id, title, type, year FROM media_items WHERE LOWER(title) LIKE LOWER(?) LIMIT 1`
-  ).get(`%${cleaned}%`) as { id: string; title: string; type: string; year: number | null } | undefined
+    `SELECT id, title, type, year FROM media_items WHERE LOWER(title) LIKE LOWER(?) ESCAPE '\\' LIMIT 1`
+  ).get(likePattern) as { id: string; title: string; type: string; year: number | null } | undefined
 
   if (!row) {
     return NextResponse.json(null)

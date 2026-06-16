@@ -8,10 +8,18 @@ import { getDb } from '@/lib/db/index'
 
 export const dynamic = 'force-dynamic'
 
-// Escape a CSV field: wrap in quotes and double any internal quotes.
+// A21/A9-04: neutralize CSV formula injection. A cell whose first char is one of
+// = + - @ (or a leading tab/CR) is interpreted as a formula by Excel/Sheets/LibreOffice.
+// Prefixing with a single quote forces the spreadsheet to treat it as literal text.
+function neutralizeFormula(str: string): string {
+  return /^[=+\-@\t\r]/.test(str) ? "'" + str : str
+}
+
+// Escape a CSV field: neutralize formula prefixes, then wrap in quotes and double
+// any internal quotes.
 function csvField(value: string | number | null | undefined): string {
   if (value === null || value === undefined) return ''
-  const str = String(value)
+  const str = neutralizeFormula(String(value))
   if (str.includes(',') || str.includes('"') || str.includes('\n')) {
     return '"' + str.replace(/"/g, '""') + '"'
   }

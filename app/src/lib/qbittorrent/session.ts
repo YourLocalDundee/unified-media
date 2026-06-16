@@ -97,6 +97,10 @@ export async function qbitFetch<T = unknown>(
       cache: 'no-store',
     })
     if (!retryRes.ok) {
+      // A7-11: the freshly-acquired SID is still being rejected. Clear it so the NEXT
+      // request re-authenticates from scratch instead of reusing this bad cached SID,
+      // hitting 403, and re-logging-in on every single call (a login storm).
+      clearSession()
       throw new Error(`qBittorrent ${method} ${path}: ${retryRes.status}`)
     }
     const ct = retryRes.headers.get('content-type') ?? ''
