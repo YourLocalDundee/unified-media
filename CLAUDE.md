@@ -14,6 +14,17 @@ clean (`type-check` + `build` pass, `npm audit` 0 vulns). ~379 findings; the 19 
 issues. **Full detail and per-domain reports live in [`analysis/audit-2026-06-13/00-SUMMARY.md`](analysis/audit-2026-06-13/00-SUMMARY.md)
 plus `analysis/audit-2026-06-13/01..21-*.md`.** Fix the P0 block before shipping further features.
 
+> **Remediation status — 2026-06-15.** Reconciled live tracker at
+> [`analysis/open-issues.md`](analysis/open-issues.md) (read that for the current state; this block is
+> the original audit). Closed since the audit: **D2** (monitored_items dedup — scope-aware unique
+> index + fetch-or-create), **D1** (auto-delete ownership/recency guards), **S4** (indexer `api_key`
+> no longer sent to the browser), and the requests-route + indexer-route halves of **S1/S2** (auth on
+> the qbit/torznab/4 jellyfin-metadata routes; `verifyOrigin` on the requests + indexer mutations),
+> plus A6-03/A6-08/A6-10/A6-12/A7-03. Still open P0: the rest of **S2** (CSRF on admin/automation/
+> subtitle/profile mutations), `proxy.ts` validating sessions, and **S3** (force-pw-change — verify).
+> Note: `stream`/`playback`/`subtitles`/`sessions/*` jellyfin routes were already gated via
+> `getSession()`; the bullet below overstated S1.
+
 ### Critical (deduped)
 
 **Security**

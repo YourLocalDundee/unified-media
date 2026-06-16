@@ -15,6 +15,12 @@ Legend:
 The 21-agent audit (`analysis/audit-2026-06-13/`, summary in `00-SUMMARY.md`) found that several items marked `[x]`
 in the phases below are not actually functional or are insecure. Re-flag these as `[!]` until fixed.
 
+> **Some of these are now fixed (2026-06-15).** The qBittorrent-proxy auth, automation dedup, auto-delete
+> safety, and interactive-pick behavior below have been remediated; watch history is also writing now.
+> See [`analysis/open-issues.md`](analysis/open-issues.md) for the reconciled current state — trust that
+> over the `[!]` flags here. (Also stale: the "Watch party sync — Not done" backlog line; party play
+> shipped in v0.9.5, see CLAUDE.md §16 and `PARTY_PLAY_AUDIT.md`.)
+
 - [!] **Watch history** (`/history`) — page reads `watch_events`, which **nothing writes** (player writes
   `media_watch_state`). Permanently empty; admin watch stats share the dead table. (A3-01, A20-03)
 - [!] **qBittorrent proxy** (`/api/qbit/[...path]`) — **no `requireAuth()`**; unauthenticated full qBit control incl.

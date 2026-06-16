@@ -1,5 +1,14 @@
 # Audit 06 — Requests Lifecycle (Overseerr-style)
 
+> **Remediation status — 2026-06-15** (see [`../open-issues.md`](../open-issues.md)).
+> Fixed: **A6-01** `verifyOrigin` on all 5 mutating requests routes · **A6-02** scope-aware
+> `UNIQUE(tmdb_id,type,scope_key)` index + `createItem` fetch-or-create (migration backfills/merges
+> existing dupes) · **A6-03** approve rejects non-pending (409) · **A6-08** year guard → 422 + `code` ·
+> **A6-10** deterministic item resolution (`ORDER BY id`) · **A6-12** grab-override URL validation ·
+> **A6-06/A7-03** interactive picks now queue for admin (no request-time grab). Still open:
+> A6-04/A6-05 (cross-user dedup + ownership-aware request button), A6-07 (fold into the fetch-or-create
+> cleanup), A6-09/A6-11/A6-13, and the LOW items.
+
 Scope: native request system that replaces Seerr requests. Pages `src/app/requests/*`, API
 `src/app/api/requests/**`, components `RequestButton` / `RequestOptions` / `SeriesScopeModal`,
 lib `src/lib/requests/{auto-approve,monitor,types}.ts`. Notifications/SMTP skipped per rules.

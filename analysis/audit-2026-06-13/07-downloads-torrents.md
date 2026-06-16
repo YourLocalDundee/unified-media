@@ -1,5 +1,11 @@
 # Audit 07 — Downloads & Torrent Management
 
+> **Remediation status — 2026-06-15** (see [`../open-issues.md`](../open-issues.md)).
+> Fixed: **A7-01** `requireAuth` on the qbit proxy (GET+POST) + `verifyOrigin` on POST · **A7-03**
+> interactive quick picks now go to the admin queue per CLAUDE.md §15 (code matches docs) · **A7-06**
+> `requireAuth` on `/api/torznab/search`. Still open: A7-02 (transmission/deluge stubs fail opaquely),
+> A7-04 (action hooks swallow errors), A7-05 (no delete-with-data path), A7-07..A7-18 (see below).
+
 Scope: `/downloads` page + components, `/api/qbit/[...path]`, `/api/torrent-search`,
 `/api/torznab/search`, `/api/media/match-torrent`, `TorrentPickModal`, the download-client
 abstraction (`src/lib/download-client/*`), and `src/lib/qbittorrent/*`.
