@@ -2,6 +2,7 @@
 // (query param) because Jellyfin's episode endpoint needs the series context to
 // look up the correct library item.
 import { NextRequest, NextResponse } from 'next/server'
+import { getSession } from '@/lib/dal'
 import { getEpisodes } from '@/lib/jellyfin/api'
 
 export const dynamic = 'force-dynamic'
@@ -10,6 +11,10 @@ export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ seasonId: string }> }
 ) {
+  // S1: credentialed Jellyfin proxy — require a session (matches stream/playback/subtitles).
+  const session = await getSession()
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
   const { seasonId } = await params
   const { searchParams } = new URL(req.url)
   const seriesId = searchParams.get('seriesId') ?? ''

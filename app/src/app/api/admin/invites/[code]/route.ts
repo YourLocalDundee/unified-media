@@ -4,8 +4,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAdmin, logEvent } from '@/lib/dal'
 import { getDb } from '@/lib/db/index'
+import { verifyOrigin } from '@/lib/csrf'
 
-export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ code: string }> }) {
+export async function DELETE(req: NextRequest, { params }: { params: Promise<{ code: string }> }) {
+  if (!verifyOrigin(req)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 }) // S2: CSRF
   const session = await requireAdmin()
   const { code } = await params
   // Normalize to uppercase in case the URL carries a mixed-case code (e.g. from copy-paste).

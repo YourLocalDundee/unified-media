@@ -10,7 +10,8 @@ interface Indexer {
   id: number
   name: string
   torznab_url: string
-  api_key: string
+  // S4: the API redacts the secret api_key and returns only whether one is set.
+  has_api_key: boolean
   enabled: number
   last_health_check: number | null
   health_status: string | null
@@ -220,7 +221,9 @@ export default function AdminIndexersPage() {
 
   function openEditModal(indexer: Indexer) {
     setEditingId(indexer.id)
-    setForm({ name: indexer.name, torznab_url: indexer.torznab_url, api_key: indexer.api_key })
+    // S4: the secret is never sent to the browser, so the field starts empty. Submitting it empty
+    // leaves the stored key unchanged (server-side); typing a value rotates it.
+    setForm({ name: indexer.name, torznab_url: indexer.torznab_url, api_key: '' })
     setFormErrors({})
     setModalOpen(true)
   }
@@ -520,7 +523,7 @@ export default function AdminIndexersPage() {
                 <input
                   value={form.api_key}
                   onChange={e => setForm(f => ({ ...f, api_key: e.target.value }))}
-                  placeholder="leave blank if not required"
+                  placeholder={editingId ? 'leave blank to keep current key' : 'leave blank if not required'}
                   className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
                 />
               </div>

@@ -11,6 +11,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireAdmin } from '@/lib/dal'
 import { getItemById, updateItem, deleteItem } from '@/lib/automation/monitor'
 import type { ItemStatus } from '@/lib/automation/types'
+import { verifyOrigin } from '@/lib/csrf'
 
 export const dynamic = 'force-dynamic'
 
@@ -39,6 +40,7 @@ export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  if (!verifyOrigin(req)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 }) // S2: CSRF
   await requireAdmin()
 
   const { id: idStr } = await params
@@ -54,7 +56,7 @@ export async function PATCH(
   }
 
   // Body is typed loosely here — updateItem's ITEM_ALLOWED_FIELDS set is the real safety net
-  const body = await req.json() as Partial<{
+  let body: Partial<{
     title: string
     tmdb_id: number | null
     tvdb_id: number | null
@@ -64,15 +66,18 @@ export async function PATCH(
     monitored: number
     status: ItemStatus
   }>
+  try { body = await req.json() }
+  catch { return NextResponse.json({ error: 'Invalid request' }, { status: 400 }) } // A19: parse guard
 
   const updated = updateItem(id, body)
   return NextResponse.json(updated)
 }
 
 export async function DELETE(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  if (!verifyOrigin(req)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 }) // S2: CSRF
   await requireAdmin()
 
   const { id: idStr } = await params

@@ -7,6 +7,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAdmin, logEvent } from '@/lib/dal'
 import { getDb } from '@/lib/db/index'
+import { verifyOrigin } from '@/lib/csrf'
 
 const UPPER = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
 function generateCode(): string {
@@ -27,8 +28,11 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
+  if (!verifyOrigin(req)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 }) // S2: CSRF
   const session = await requireAdmin()
-  const body = await req.json() as { label?: string; maxUses?: number; expiresAt?: number | null }
+  let body: { label?: string; maxUses?: number; expiresAt?: number | null }
+  try { body = await req.json() as typeof body }
+  catch { return NextResponse.json({ error: 'Invalid request' }, { status: 400 }) } // A19: parse guard
   const code = generateCode()
   const now = Date.now()
   getDb().prepare(

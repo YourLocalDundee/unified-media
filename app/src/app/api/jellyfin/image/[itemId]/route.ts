@@ -4,12 +4,18 @@
 // (192.168.0.50:8096) which is not reachable from the client's browser on
 // external networks. The response is cached for 1 hour at the CDN/Next.js layer.
 import { NextRequest } from 'next/server'
+import { getSession } from '@/lib/dal'
 import { JELLYFIN_URL, JELLYFIN_API_KEY } from '@/lib/jellyfin/client'
 
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ itemId: string }> }
 ) {
+  // S1: credentialed Jellyfin proxy — require a session so it can't be used as an open artwork
+  // relay to probe arbitrary item ids with the server key.
+  const session = await getSession()
+  if (!session) return new Response('Unauthorized', { status: 401 })
+
   const { itemId } = await params
   const { searchParams } = new URL(req.url)
   const type = searchParams.get('type') ?? 'Primary'

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth } from '@/lib/dal'
 import { upsertWatchState, recordWatchEvent } from '@/lib/media-server/library'
+import { verifyOrigin } from '@/lib/csrf'
 
 export const dynamic = 'force-dynamic'
 
@@ -11,9 +12,12 @@ interface ProgressBody {
 }
 
 export async function POST(req: NextRequest) {
+  if (!verifyOrigin(req)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 }) // S2: CSRF
   const session = await requireAuth()
 
-  const body = await req.json() as ProgressBody
+  let body: ProgressBody
+  try { body = await req.json() as ProgressBody }
+  catch { return NextResponse.json({ error: 'Invalid request' }, { status: 400 }) } // A19: parse guard
   const { mediaId, positionTicks, played = false } = body
 
   if (!mediaId || positionTicks === undefined) {

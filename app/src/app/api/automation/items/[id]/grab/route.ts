@@ -12,13 +12,15 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireAdmin } from '@/lib/dal'
 import { getItemById } from '@/lib/automation/monitor'
 import { grabItem } from '@/lib/automation/grabber'
+import { verifyOrigin } from '@/lib/csrf'
 
 export const dynamic = 'force-dynamic'
 
 export async function POST(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  if (!verifyOrigin(req)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 }) // S2: CSRF
   await requireAdmin()
 
   const { id: idStr } = await params
@@ -32,7 +34,8 @@ export async function POST(
     return NextResponse.json({ error: 'Item not found' }, { status: 404 })
   }
 
-  // grabItem handles its own error catching; result is always one of the three string literals
-  const result = await grabItem(item)
+  // grabItem handles its own error catching; result is always one of the three string literals.
+  // force: bypass the D3 'wanted'-claim — this is an explicit admin grab that must work on any status.
+  const result = await grabItem(item, { force: true })
   return NextResponse.json({ result })
 }

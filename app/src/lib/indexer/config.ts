@@ -4,6 +4,17 @@
 import { getDb } from '@/lib/db/index'
 import type { Indexer } from './types'
 
+// S4: the `api_key` is a private-tracker passkey and must never reach the browser. Server-side
+// callers (the search fan-out in index.ts, the test/activate routes) read the un-redacted getters
+// below; anything returned to a client must go through redactIndexer first. The admin UI only needs
+// to know whether a key is set (has_api_key), not its value.
+export type RedactedIndexer = Omit<Indexer, 'api_key'> & { has_api_key: boolean }
+
+export function redactIndexer(indexer: Indexer): RedactedIndexer {
+  const { api_key, ...rest } = indexer
+  return { ...rest, has_api_key: typeof api_key === 'string' && api_key.length > 0 }
+}
+
 export function getAllIndexers(): Indexer[] {
   return getDb()
     .prepare('SELECT * FROM indexers ORDER BY name')

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAdmin } from '@/lib/dal'
-import { getIndexerById, updateIndexer, deleteIndexer } from '@/lib/indexer/config'
+import { verifyOrigin } from '@/lib/csrf'
+import { getIndexerById, updateIndexer, deleteIndexer, redactIndexer } from '@/lib/indexer/config'
 
 export const dynamic = 'force-dynamic'
 
@@ -21,13 +22,15 @@ export async function GET(
     return NextResponse.json({ error: 'Indexer not found' }, { status: 404 })
   }
 
-  return NextResponse.json(indexer)
+  // S4: never return api_key to the browser.
+  return NextResponse.json(redactIndexer(indexer))
 }
 
 export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  if (!verifyOrigin(req)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   await requireAdmin()
 
   const { id: idStr } = await params
@@ -36,7 +39,7 @@ export async function PATCH(
     return NextResponse.json({ error: 'Invalid id' }, { status: 400 })
   }
 
-  const body = await req.json() as Partial<{
+  let body: Partial<{
     name: string
     torznab_url: string
     api_key: string
@@ -48,19 +51,29 @@ export async function PATCH(
     search_type: string
     pending_credentials: string
   }>
+  try { body = await req.json() }
+  catch { return NextResponse.json({ error: 'Invalid request' }, { status: 400 }) } // A19: parse guard
+
+  // S4: because GET no longer returns api_key, the admin edit form submits it empty unless the user
+  // typed a new one. Treat an empty/whitespace api_key as "leave unchanged" so saving an edit does
+  // not wipe the stored passkey. A real rotation sends a non-empty value.
+  if (typeof body.api_key === 'string' && body.api_key.trim() === '') {
+    delete body.api_key
+  }
 
   const updated = updateIndexer(id, body)
   if (!updated) {
     return NextResponse.json({ error: 'Indexer not found' }, { status: 404 })
   }
 
-  return NextResponse.json(updated)
+  return NextResponse.json(redactIndexer(updated))
 }
 
 export async function DELETE(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  if (!verifyOrigin(req)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   await requireAdmin()
 
   const { id: idStr } = await params

@@ -8,10 +8,12 @@ import { requireAdmin, logEvent } from '@/lib/dal'
 import { checkRateLimit } from '@/lib/rate-limit'
 import { getClientIp } from '@/lib/client-ip'
 import { getDb } from '@/lib/db/index'
+import { verifyOrigin } from '@/lib/csrf'
 
 interface UserRow { role: string; username: string }
 
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  if (!verifyOrigin(req)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 }) // S2: CSRF
   const session = await requireAdmin()
 
   const ip = getClientIp(req)
@@ -37,6 +39,7 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
 }
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  if (!verifyOrigin(req)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 }) // S2: CSRF
   const session = await requireAdmin()
 
   const ip = getClientIp(req)

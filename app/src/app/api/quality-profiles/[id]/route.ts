@@ -3,6 +3,7 @@ import { requireAdmin } from '@/lib/dal'
 import { getDb } from '@/lib/db/index'
 import { getProfileFull } from '@/lib/automation/quality'
 import type { CustomFormatSpec } from '@/lib/automation/quality'
+import { verifyOrigin } from '@/lib/csrf'
 
 export const dynamic = 'force-dynamic'
 
@@ -21,10 +22,11 @@ export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  if (!verifyOrigin(req)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 }) // S2: CSRF
   await requireAdmin()
   const { id } = await params
   const profileId = parseInt(id, 10)
-  const body = await req.json() as {
+  let body: {
     name?: string
     upgrade_allowed?: boolean
     cutoff_quality_id?: number | null
@@ -34,6 +36,8 @@ export async function PATCH(
     formats?: Array<{ format_id: number; score: number }>
     new_format?: { name: string; specs: CustomFormatSpec[] }
   }
+  try { body = await req.json() }
+  catch { return NextResponse.json({ error: 'Invalid request' }, { status: 400 }) } // A19: parse guard
 
   const db = getDb()
 
@@ -79,9 +83,10 @@ export async function PATCH(
 }
 
 export async function DELETE(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  if (!verifyOrigin(req)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 }) // S2: CSRF
   await requireAdmin()
   const { id } = await params
   const profileId = parseInt(id, 10)
