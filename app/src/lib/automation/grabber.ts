@@ -20,6 +20,7 @@ import { getProfileById, recordGrab, updateItem } from './monitor'
 import { recordGrabResults, type ScoredCandidate } from './grab-results'
 import type { MonitoredItem, QualityProfile, QualityCondition } from './types'
 import type { TorznabResult } from '@/lib/indexer/types'
+import { getDb } from '@/lib/db/index'
 
 // ---------------------------------------------------------------------------
 // buildSearchParams
@@ -214,12 +215,42 @@ export async function findSeasonPack(
  *
  * options.language: ISO 639-1 code or 'any' (default). Passed through to
  * findBestRelease as a hard constraint for auto-pick paths.
+ *
+ * options.force: when true, skip the atomic 'wanted'→'grabbing' claim (D3) and grab
+ * regardless of current status. Used by the admin "Grab Now" / re-search routes that
+ * are explicit manual actions and must work on already-grabbed items. The default
+ * (false) path is taken by the cron and the non-awaited approve/auto-approve grabs:
+ * the first caller to flip the row to 'grabbing' wins, the rest see changes===0 and
+ * bail, closing the double-grab race (the cron's getWantedItems only sees 'wanted').
  */
 export async function grabItem(
   item: MonitoredItem,
-  options: { language?: string } = {},
+  options: { language?: string; force?: boolean } = {},
 ): Promise<'grabbed' | 'not_found' | 'error'> {
-  const { language = 'any' } = options
+  const { language = 'any', force = false } = options
+
+  // D3: atomically claim the row before doing any work. If another grab (cron or the
+  // fire-and-forget approve grab) already claimed it, changes===0 and we skip — never
+  // grab the same wanted row twice. Manual force-grabs bypass the claim.
+  let claimed = false
+  if (!force) {
+    const claim = getDb()
+      .prepare("UPDATE monitored_items SET status = 'grabbing', updated_at = ? WHERE id = ? AND status = 'wanted'")
+      .run(Date.now(), item.id)
+    if (claim.changes === 0) return 'not_found'
+    claimed = true
+  }
+
+  // D3: release the 'grabbing' claim back to 'wanted' on any non-grab outcome so the
+  // cron retries it next tick. Only reverts a row we actually claimed and only if it's
+  // still 'grabbing' (a concurrent transition must not be clobbered).
+  const releaseClaim = (): void => {
+    if (!claimed) return
+    getDb()
+      .prepare("UPDATE monitored_items SET status = 'wanted', updated_at = ? WHERE id = ? AND status = 'grabbing'")
+      .run(Date.now(), item.id)
+  }
+
   try {
     // 1. Resolve quality profile; fall back to an "Any" profile if missing so a deleted
     //    profile doesn't permanently block an item from being grabbed
@@ -247,6 +278,7 @@ export async function grabItem(
           process.stderr.write(
             `[grabber] "${item.title}" has scope_type='episodes' but scope_episodes is empty or null — skipping indexer query\n`,
           )
+          releaseClaim()
           return 'not_found'
         }
       }
@@ -259,6 +291,7 @@ export async function grabItem(
           process.stderr.write(
             `[grabber] "${item.title}" has scope_type='seasons' but scope_seasons is empty or null — skipping indexer query\n`,
           )
+          releaseClaim()
           return 'not_found'
         }
       }
@@ -273,6 +306,7 @@ export async function grabItem(
     if (scopeFiltered === null) {
       // No results matched the scope pattern — record and bail without grabbing anything
       recordGrabResults(item.id, rawResults.map(r => ({ result: r, score: -1, selected: false })), null)
+      releaseClaim()
       return 'not_found'
     }
     const results = scopeFiltered
@@ -298,7 +332,7 @@ export async function grabItem(
 
     recordGrabResults(item.id, scored, result?.infoHash ?? null)
 
-    if (!result) return 'not_found'
+    if (!result) { releaseClaim(); return 'not_found' }
 
     // 6. Prefer magnet link over .torrent URL — magnets don't require an extra HTTP fetch
     //    and work even when the indexer's download endpoint is behind auth
@@ -322,6 +356,7 @@ export async function grabItem(
   } catch (err) {
     // Errors are non-fatal to the cron loop — log and continue to next item
     process.stderr.write(`[grabber] Error grabbing "${item.title}": ${err}\n`)
+    releaseClaim()
     return 'error'
   }
 }

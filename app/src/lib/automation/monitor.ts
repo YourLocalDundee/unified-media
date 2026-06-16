@@ -13,6 +13,7 @@
  */
 
 import { getDb } from '@/lib/db/index'
+import { computeScopeKey } from './scope-key'
 import type {
   GrabHistory,
   ImportStatus,
@@ -94,35 +95,57 @@ export function createItem(data: {
   const db = getDb()
   const now = Date.now()
 
+  const scopeType = data.scope_type ?? (data.type === 'movie' ? 'movie' : 'full')
+  const scopeSeasons = data.scope_seasons ?? null
+  const scopeEpisodes = data.scope_episodes ?? null
+  const scopeKey = computeScopeKey(data.type, scopeType, scopeSeasons, scopeEpisodes)
+
+  const params = {
+    type: data.type,
+    title: data.title,
+    tmdb_id: data.tmdb_id ?? null,
+    tvdb_id: data.tvdb_id ?? null,
+    year: data.year ?? null,
+    // profile id=1 is the default "Any" profile seeded at DB init
+    quality_profile_id: data.quality_profile_id ?? 1,
+    root_path: data.root_path ?? '',
+    scope_type: scopeType,
+    scope_seasons: scopeSeasons != null ? JSON.stringify(scopeSeasons) : null,
+    scope_episodes: scopeEpisodes != null ? JSON.stringify(scopeEpisodes) : null,
+    scope_key: scopeKey,
+    monitor_future: data.monitor_future ? 1 : 0,
+    language: data.language ?? 'any',
+    created_at: now,
+    updated_at: now,
+  }
+
+  // A6-02: fetch-or-create. The UNIQUE(tmdb_id,type,scope_key) index turns a duplicate insert into
+  // a no-op (ON CONFLICT DO NOTHING); we then return the pre-existing row so every caller resolves
+  // to the same monitored item. Previously a plain INSERT spawned duplicate rows and the dead
+  // "already exists" try/catch guards at the call sites never fired (the string was never thrown),
+  // so status transitions and grab-results split across arbitrary rows.
+  // New items always start monitored=1, status='wanted' so the next scheduler tick picks them up.
   const result = db
     .prepare(
       `INSERT INTO monitored_items
         (type, title, tmdb_id, tvdb_id, year, quality_profile_id, root_path,
-         monitored, status, scope_type, scope_seasons, scope_episodes, monitor_future,
+         monitored, status, scope_type, scope_seasons, scope_episodes, scope_key, monitor_future,
          language, created_at, updated_at)
        VALUES
         (@type, @title, @tmdb_id, @tvdb_id, @year, @quality_profile_id, @root_path,
-         1, 'wanted', @scope_type, @scope_seasons, @scope_episodes, @monitor_future,
-         @language, @created_at, @updated_at)`
-      // New items always start monitored=1, status='wanted' so the next scheduler tick picks them up
+         1, 'wanted', @scope_type, @scope_seasons, @scope_episodes, @scope_key, @monitor_future,
+         @language, @created_at, @updated_at)
+       ON CONFLICT(tmdb_id, type, scope_key) DO NOTHING`
     )
-    .run({
-      type: data.type,
-      title: data.title,
-      tmdb_id: data.tmdb_id ?? null,
-      tvdb_id: data.tvdb_id ?? null,
-      year: data.year ?? null,
-      // profile id=1 is the default "Any" profile seeded at DB init
-      quality_profile_id: data.quality_profile_id ?? 1,
-      root_path: data.root_path ?? '',
-      scope_type: data.scope_type ?? (data.type === 'movie' ? 'movie' : 'full'),
-      scope_seasons: data.scope_seasons != null ? JSON.stringify(data.scope_seasons) : null,
-      scope_episodes: data.scope_episodes != null ? JSON.stringify(data.scope_episodes) : null,
-      monitor_future: data.monitor_future ? 1 : 0,
-      language: data.language ?? 'any',
-      created_at: now,
-      updated_at: now,
-    })
+    .run(params)
+
+  if (result.changes === 0) {
+    // Conflict: a row with this (tmdb_id, type, scope_key) already exists — return it unchanged.
+    const existing = db
+      .prepare('SELECT * FROM monitored_items WHERE tmdb_id = ? AND type = ? AND scope_key = ?')
+      .get(params.tmdb_id, params.type, params.scope_key) as MonitoredItem | undefined
+    if (existing) return existing
+  }
 
   return getItemById(result.lastInsertRowid as number)!
 }

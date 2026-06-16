@@ -10,8 +10,10 @@
  */
 
 export type MediaType = 'movie' | 'tv'
-// 'grabbed' means sent to download client; 'imported' means confirmed in media_items table
-export type ItemStatus = 'wanted' | 'grabbed' | 'imported' | 'ignored'
+// 'grabbing' is a transient atomic-claim state (D3) preventing the immediate-grab path and the
+// 15-min cron from grabbing the same row twice; 'grabbed' means sent to download client;
+// 'imported' means confirmed in media_items table
+export type ItemStatus = 'wanted' | 'grabbing' | 'grabbed' | 'imported' | 'ignored'
 // import_status lives on grab_history, not monitored_items; updated by availability.ts
 export type ImportStatus = 'pending' | 'imported' | 'failed'
 
@@ -37,6 +39,9 @@ export interface MonitoredItem {
   scope_seasons: string | null
   // JSON-encoded Array<{s,e}> — episodes to grab when scope_type='episodes'
   scope_episodes: string | null
+  // A6-02 — deterministic dedup discriminator; part of the UNIQUE(tmdb_id,type,scope_key) index.
+  // Computed by computeScopeKey() from type + scope_*; never null.
+  scope_key: string
   // 1 = continue monitoring and grabbing new episodes as they release
   monitor_future: number | null  // 0 | 1
   // ISO 639-1 language code, or 'any' for no constraint. Passed to grabItem so the
