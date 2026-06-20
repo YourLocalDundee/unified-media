@@ -172,6 +172,8 @@ export interface QualityProfileFull {
   formats: Array<{ format_id: number; name: string; specs: string; score: number }>
   // Parsed quality conditions (resolution/source/codec filters)
   conditions: import('./types').QualityCondition[]
+  // NULL = admin-shared profile visible to all users; non-null = private to that user.
+  user_id: string | null
 }
 
 export function getProfileFull(profileId: number): QualityProfileFull | null {
@@ -204,12 +206,19 @@ export function getProfileFull(profileId: number): QualityProfileFull | null {
     language: (profile.language as string) ?? 'any',
     formats,
     conditions,
+    user_id: (profile.user_id as string | null) ?? null,
   }
 }
 
-export function getAllProfiles(): QualityProfileFull[] {
+// Returns shared profiles (user_id IS NULL) plus any private profiles owned by userId.
+// Pass userId=null (or omit) to get only shared profiles (e.g. for admin pages).
+export function getAllProfiles(userId?: string | null): QualityProfileFull[] {
   const db = getDb()
-  const rows = db.prepare('SELECT id FROM quality_profiles ORDER BY id').all() as { id: number }[]
+  const rows = userId
+    ? db.prepare('SELECT id FROM quality_profiles WHERE user_id IS NULL OR user_id = ? ORDER BY user_id NULLS FIRST, id')
+        .all(userId) as { id: number }[]
+    : db.prepare('SELECT id FROM quality_profiles WHERE user_id IS NULL ORDER BY id')
+        .all() as { id: number }[]
   return rows.map(r => getProfileFull(r.id)).filter(Boolean) as QualityProfileFull[]
 }
 

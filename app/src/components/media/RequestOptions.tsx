@@ -75,13 +75,19 @@ export function RequestOptions({
   const [retention, setRetention] = useState<'quick' | 'longterm'>(isOldContent ? 'quick' : 'longterm')
   const [language, setLanguage] = useState('any')
   const [qualityProfileId, setQualityProfileId] = useState<number | null>(null)
-  const [profiles, setProfiles] = useState<Array<{ id: number; name: string }>>([])
+  const [profiles, setProfiles] = useState<Array<{ id: number; name: string; user_id: string | null }>>([])
 
   useEffect(() => {
     fetch('/api/automation/profiles')
       .then(r => r.ok ? r.json() : Promise.reject())
-      .then((data: Array<{ id: number; name: string }>) => setProfiles(data))
-      .catch(() => {/* non-fatal: profile selector stays hidden */})
+      .then((data: { profiles: Array<{ id: number; name: string; user_id: string | null }>; defaultProfileId: number | null }) => {
+        setProfiles(data.profiles)
+        // Pre-select the user's saved default if they haven't changed the picker yet
+        if (data.defaultProfileId != null) {
+          setQualityProfileId(data.defaultProfileId)
+        }
+      })
+      .catch(() => {/* non-fatal */})
   }, [])
 
   const BADGE = compact ? BADGE_COMPACT : BADGE_NORMAL
@@ -289,10 +295,21 @@ export function RequestOptions({
               onChange={e => setQualityProfileId(e.target.value ? Number(e.target.value) : null)}
               className="rounded px-1.5 py-0.5 text-[10px] bg-zinc-900 border border-zinc-700 text-zinc-300 focus:outline-none"
             >
-              <option value="">Default</option>
-              {profiles.map(p => (
-                <option key={p.id} value={p.id}>{p.name}</option>
-              ))}
+              <option value="">Any (default)</option>
+              {profiles.some(p => p.user_id === null) && (
+                <optgroup label="Shared">
+                  {profiles.filter(p => p.user_id === null).map(p => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </optgroup>
+              )}
+              {profiles.some(p => p.user_id !== null) && (
+                <optgroup label="My Profiles">
+                  {profiles.filter(p => p.user_id !== null).map(p => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </optgroup>
+              )}
             </select>
           </div>
         )}

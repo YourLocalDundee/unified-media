@@ -592,6 +592,11 @@ export function runMigrations(db: Database.Database): void {
     // NULL means "use the default profile" (ID 1 — 'Any'). Rows created before this migration
     // stay NULL and the existing behaviour (quality_profile_id: 1) is preserved.
     'ALTER TABLE media_requests ADD COLUMN quality_profile_id INTEGER',
+    // quality_profiles — user-owned profiles. NULL = admin-shared (visible to all users).
+    // Non-null = private to that user_id. Existing profiles keep NULL (shared).
+    'ALTER TABLE quality_profiles ADD COLUMN user_id TEXT',
+    // users — preferred quality profile for auto-grab requests. NULL = no preference (uses "Any").
+    'ALTER TABLE users ADD COLUMN default_quality_profile_id INTEGER',
   ]
   for (const sql of addCols) {
     try { db.exec(sql) } catch { /* column already exists — safe to ignore */ }

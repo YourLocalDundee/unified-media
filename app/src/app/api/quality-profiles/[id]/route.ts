@@ -1,9 +1,29 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { requireAdmin } from '@/lib/dal'
+import { requireAdmin, requireAuth } from '@/lib/dal'
 import { getDb } from '@/lib/db/index'
 import { getProfileFull } from '@/lib/automation/quality'
 import type { CustomFormatSpec } from '@/lib/automation/quality'
 import { verifyOrigin } from '@/lib/csrf'
+
+// Shared (user_id IS NULL) profiles require admin; user-owned profiles only require ownership.
+async function authoriseProfileEdit(profileId: number) {
+  const row = getDb()
+    .prepare('SELECT user_id FROM quality_profiles WHERE id = ?')
+    .get(profileId) as { user_id: string | null } | undefined
+  if (!row) return { ok: false, status: 404, error: 'Not found' } as const
+  if (row.user_id === null) {
+    // Shared profile — admin only
+    try { await requireAdmin() } catch { return { ok: false, status: 403, error: 'Admin required for shared profiles' } as const }
+  } else {
+    // User-owned — just needs a valid session and ownership
+    const session = await requireAuth().catch(() => null)
+    if (!session) return { ok: false, status: 401, error: 'Unauthorised' } as const
+    if (session.userId !== row.user_id && session.role !== 'admin') {
+      return { ok: false, status: 403, error: 'Forbidden' } as const
+    }
+  }
+  return { ok: true } as const
+}
 
 export const dynamic = 'force-dynamic'
 
@@ -22,10 +42,11 @@ export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  if (!verifyOrigin(req)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 }) // S2: CSRF
-  await requireAdmin()
+  if (!verifyOrigin(req)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   const { id } = await params
   const profileId = parseInt(id, 10)
+  const auth = await authoriseProfileEdit(profileId)
+  if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status })
   let body: {
     name?: string
     upgrade_allowed?: boolean
@@ -89,10 +110,11 @@ export async function DELETE(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  if (!verifyOrigin(req)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 }) // S2: CSRF
-  await requireAdmin()
+  if (!verifyOrigin(req)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   const { id } = await params
   const profileId = parseInt(id, 10)
+  const auth = await authoriseProfileEdit(profileId)
+  if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status })
   const db = getDb()
   db.prepare('DELETE FROM quality_profile_formats WHERE profile_id = ?').run(profileId)
   db.prepare('DELETE FROM quality_profiles WHERE id = ?').run(profileId)
