@@ -78,7 +78,7 @@ export function Sidebar() {
           sidebarOpen ? 'justify-between' : 'justify-center',
         )}
       >
-        {sidebarOpen && <span className="text-lg font-bold text-primary">minime</span>}
+        {sidebarOpen && <span className="text-lg font-bold text-primary">unified media</span>}
         <button onClick={toggleSidebar} className="rounded p-2 hover:bg-accent">
           {sidebarOpen ? <ChevronLeft className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
         </button>
