@@ -21,6 +21,8 @@ interface TMDBMovie {
   release_date: string
   runtime: number
   popularity: number
+  vote_average: number
+  vote_count: number
   poster_path: string | null
   backdrop_path: string | null
   imdb_id: string | null
@@ -34,6 +36,9 @@ interface TMDBTVShow {
   overview: string
   first_air_date: string
   episode_run_time: number[]
+  popularity: number
+  vote_average: number
+  vote_count: number
   poster_path: string | null
   backdrop_path: string | null
   external_ids?: { imdb_id?: string; tvdb_id?: number }
@@ -102,7 +107,9 @@ export interface TMDBSearchResult {
   overview: string
   posterPath: string | null
   backdropPath: string | null
-  rating: number | null
+  rating: number | null       // vote_average
+  popularity: number | null
+  voteCount: number | null
 }
 
 export interface TMDBSearchResponse {
@@ -120,6 +127,8 @@ interface TMDBMovieListItem {
   poster_path: string | null
   backdrop_path: string | null
   vote_average: number
+  vote_count: number
+  popularity: number
 }
 
 interface TMDBTVListItem {
@@ -130,6 +139,8 @@ interface TMDBTVListItem {
   poster_path: string | null
   backdrop_path: string | null
   vote_average: number
+  vote_count: number
+  popularity: number
 }
 
 interface TMDBListResponse<T> {
@@ -155,6 +166,8 @@ function mapMovie(item: TMDBMovieListItem): TMDBSearchResult {
     posterPath: item.poster_path,
     backdropPath: item.backdrop_path,
     rating: item.vote_average ?? null,
+    popularity: item.popularity ?? null,
+    voteCount: item.vote_count ?? null,
   }
 }
 
@@ -168,6 +181,8 @@ function mapTV(item: TMDBTVListItem): TMDBSearchResult {
     posterPath: item.poster_path,
     backdropPath: item.backdrop_path,
     rating: item.vote_average ?? null,
+    popularity: item.popularity ?? null,
+    voteCount: item.vote_count ?? null,
   }
 }
 
@@ -270,12 +285,15 @@ export async function getGenres(type: 'movie' | 'tv'): Promise<TMDBGenre[]> {
   }
 }
 
-// UI-facing sort options; mapped to TMDB /discover sort_by below.
-export type DiscoverSort = 'popularity' | 'rating' | 'newest' | 'oldest' | 'votes'
+// Sort field — direction is supplied separately as DiscoverDir.
+// 'newest' and 'oldest' are kept as aliases (legacy URL params map to date+dir).
+export type DiscoverSort = 'popularity' | 'rating' | 'date' | 'title' | 'votes'
+export type DiscoverDir  = 'asc' | 'desc'
 
 export interface DiscoverOptions {
   genreId?: number
   sortBy?: DiscoverSort
+  sortDir?: DiscoverDir
   year?: number
   minRating?: number
   page?: number
@@ -293,27 +311,30 @@ export async function discoverTMDB(
 ): Promise<TMDBSearchResponse> {
   const token = process.env.TMDB_ACCESS_TOKEN
   if (!token) throw new Error('TMDB_ACCESS_TOKEN not set')
-  const { genreId, sortBy = 'popularity', year, minRating, page = 1 } = opts
+  const { genreId, sortBy = 'popularity', sortDir = 'desc', year, minRating, page = 1 } = opts
 
   const dateField = type === 'movie' ? 'primary_release_date' : 'first_air_date'
-  const sortMap: Record<DiscoverSort, string> = {
-    popularity: 'popularity.desc',
-    rating: 'vote_average.desc',
-    newest: `${dateField}.desc`,
-    oldest: `${dateField}.asc`,
-    votes: 'vote_count.desc',
+  // Map field name + direction to TMDB's sort_by string.
+  // title uses original_title which TMDB /discover supports in both directions.
+  const tmdbSortField: Record<DiscoverSort, string> = {
+    popularity: 'popularity',
+    rating:     'vote_average',
+    date:       dateField,
+    title:      'original_title',
+    votes:      'vote_count',
   }
+  const sortByTmdb = `${tmdbSortField[sortBy]}.${sortDir}`
 
   const qs = new URLSearchParams({
     language: 'en-US',
     page: String(page),
-    sort_by: sortMap[sortBy],
+    sort_by: sortByTmdb,
     include_adult: 'false',
   })
   if (genreId) qs.set('with_genres', String(genreId))
   if (year) qs.set(type === 'movie' ? 'primary_release_year' : 'first_air_date_year', String(year))
-  // Rating sort needs a vote floor so a 1-vote 10.0 doesn't dominate the page.
-  if (sortBy === 'rating') qs.set('vote_count.gte', type === 'movie' ? '100' : '50')
+  // Rating desc needs a vote floor so a 1-vote 10.0 doesn't dominate the page.
+  if (sortBy === 'rating' && sortDir === 'desc') qs.set('vote_count.gte', type === 'movie' ? '100' : '50')
   if (minRating && minRating > 0) qs.set('vote_average.gte', String(minRating))
 
   const endpoint = `/discover/${type}`

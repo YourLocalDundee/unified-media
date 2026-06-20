@@ -22,7 +22,8 @@ import { Suspense } from 'react'
 import type { Metadata } from 'next'
 import { getItemsByTmdbIds } from '@/lib/media-server/library'
 import { searchTMDB, getTrendingContent, getGenres, discoverTMDB } from '@/lib/media-server/tmdb'
-import type { DiscoverSort, TMDBSearchResult } from '@/lib/media-server/tmdb'
+import type { DiscoverSort, DiscoverDir, TMDBSearchResult } from '@/lib/media-server/tmdb'
+import { getDb } from '@/lib/db/index'
 import { requireAuth } from '@/lib/dal'
 import { getUserRequests } from '@/lib/requests/monitor'
 import type { RequestStatus, RequestType } from '@/lib/requests/types'
@@ -41,15 +42,34 @@ export const metadata: Metadata = {
 type ItemType = 'discover' | 'movies' | 'shows'
 type DiscoverType = 'all' | 'movie' | 'tv'
 
-const SORT_OPTIONS: { value: DiscoverSort; label: string }[] = [
+const SORT_FIELDS: { value: DiscoverSort; label: string }[] = [
   { value: 'popularity', label: 'Popularity' },
-  { value: 'rating',     label: 'Top Rated' },
-  { value: 'newest',     label: 'Newest' },
-  { value: 'oldest',     label: 'Oldest' },
-  { value: 'votes',      label: 'Most Voted' },
+  { value: 'rating',     label: 'Rating' },
+  { value: 'date',       label: 'Release Year' },
+  { value: 'title',      label: 'Title' },
+  { value: 'votes',      label: 'Vote Count' },
 ]
-const VALID_SORTS = SORT_OPTIONS.map((s) => s.value)
+const VALID_SORTS: DiscoverSort[] = SORT_FIELDS.map((s) => s.value)
+const VALID_DIRS: DiscoverDir[] = ['asc', 'desc']
+
+// Default direction per field — what feels natural when first switching to a field.
+const DEFAULT_DIR: Record<DiscoverSort, DiscoverDir> = {
+  popularity: 'desc',
+  rating:     'desc',
+  date:       'desc',
+  title:      'asc',
+  votes:      'desc',
+}
+
 const MIN_RATING_OPTIONS = [0, 5, 6, 7, 8, 9]
+
+type WatchedFilter = 'any' | 'watched' | 'in-progress' | 'unwatched'
+const WATCHED_OPTIONS: { value: WatchedFilter; label: string }[] = [
+  { value: 'any',         label: 'Any status' },
+  { value: 'unwatched',   label: 'Unwatched' },
+  { value: 'in-progress', label: 'In progress' },
+  { value: 'watched',     label: 'Watched' },
+]
 
 function discoverTypeFor(itemType: ItemType): DiscoverType {
   return itemType === 'movies' ? 'movie' : itemType === 'shows' ? 'tv' : 'all'
@@ -66,15 +86,17 @@ function interleave(a: TMDBSearchResult[], b: TMDBSearchResult[]): TMDBSearchRes
   return out
 }
 
-// Client-side sort for the name-search path (TMDB /search has no sort_by). 'votes' is a
-// no-op (search results carry no vote count) — fall back to TMDB's relevance order.
-function sortResults(arr: TMDBSearchResult[], sort: DiscoverSort): TMDBSearchResult[] {
+// Client-side sort for the name-search path (TMDB /search has no sort_by).
+function sortResults(arr: TMDBSearchResult[], sort: DiscoverSort, dir: DiscoverDir): TMDBSearchResult[] {
   const c = [...arr]
+  const asc = dir === 'asc'
   switch (sort) {
-    case 'rating': return c.sort((x, y) => (y.rating ?? 0) - (x.rating ?? 0))
-    case 'newest': return c.sort((x, y) => (y.year ?? 0) - (x.year ?? 0))
-    case 'oldest': return c.sort((x, y) => (x.year ?? 0) - (y.year ?? 0))
-    default:       return c
+    case 'popularity': return c.sort((x, y) => asc ? (x.popularity ?? 0) - (y.popularity ?? 0) : (y.popularity ?? 0) - (x.popularity ?? 0))
+    case 'rating':     return c.sort((x, y) => asc ? (x.rating ?? 0) - (y.rating ?? 0) : (y.rating ?? 0) - (x.rating ?? 0))
+    case 'date':       return c.sort((x, y) => asc ? (x.year ?? 0) - (y.year ?? 0) : (y.year ?? 0) - (x.year ?? 0))
+    case 'title':      return c.sort((x, y) => asc ? x.title.localeCompare(y.title) : y.title.localeCompare(x.title))
+    case 'votes':      return c.sort((x, y) => asc ? (x.voteCount ?? 0) - (y.voteCount ?? 0) : (y.voteCount ?? 0) - (x.voteCount ?? 0))
+    default:           return c
   }
 }
 
@@ -88,10 +110,12 @@ interface FilterState {
   itemType: ItemType
   discoverType: DiscoverType
   sort: DiscoverSort
+  sortDir: DiscoverDir
   year?: number
   minRating?: number
   genreId?: number
   count: BrowseCount
+  watchedFilter: WatchedFilter
 }
 
 // Build a /browse query string preserving the chosen subset of the current filters.
@@ -101,9 +125,12 @@ function buildQuery(f: FilterState, overrides: Omit<Partial<FilterState>, 'genre
   p.set('type', s.itemType)
   if (s.query) p.set('q', s.query)
   if (s.sort !== 'popularity') p.set('sort', s.sort)
+  // Only write dir when it differs from the natural default for the chosen field
+  if (s.sortDir !== DEFAULT_DIR[s.sort]) p.set('dir', s.sortDir)
   if (s.year) p.set('year', String(s.year))
   if (s.minRating) p.set('minRating', String(s.minRating))
   if (s.count !== DEFAULT_COUNT) p.set('count', String(s.count))
+  if (s.watchedFilter !== 'any') p.set('watched', s.watchedFilter)
   // genreId override of null explicitly drops it (used when switching type)
   const genre = 'genreId' in overrides ? overrides.genreId : s.genreId
   if (genre) p.set('genre', String(genre))
@@ -111,7 +138,7 @@ function buildQuery(f: FilterState, overrides: Omit<Partial<FilterState>, 'genre
 }
 
 interface BrowsePageProps {
-  searchParams: Promise<{ q?: string; page?: string; type?: string; genre?: string; sort?: string; year?: string; minRating?: string; count?: string }>
+  searchParams: Promise<{ q?: string; page?: string; type?: string; genre?: string; sort?: string; dir?: string; year?: string; minRating?: string; count?: string; watched?: string }>
 }
 
 // ---------------------------------------------------------------------------
@@ -150,6 +177,9 @@ function FilterBar({ f }: { f: FilterState }) {
   for (let y = currentYear; y >= 1950; y--) years.push(y)
   const select = 'rounded-lg bg-zinc-800 px-3 py-2 text-sm text-white outline-none focus:ring-2 focus:ring-white/20 cursor-pointer'
 
+  const isFiltered = f.query || f.year || f.minRating || f.sort !== 'popularity' ||
+    f.sortDir !== DEFAULT_DIR[f.sort] || f.genreId || f.watchedFilter !== 'any'
+
   return (
     <form method="GET" action="/browse" className="flex flex-wrap items-center gap-2">
       <input
@@ -160,9 +190,30 @@ function FilterBar({ f }: { f: FilterState }) {
         className="min-w-0 flex-1 rounded-lg bg-zinc-800 px-4 py-2 text-sm text-white placeholder-zinc-500 outline-none focus:ring-2 focus:ring-white/20"
       />
 
-      <select name="sort" defaultValue={f.sort} className={select} title="Sort">
-        {SORT_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-      </select>
+      {/* Sort field + direction toggle */}
+      <div className="flex items-center gap-1">
+        <select name="sort" defaultValue={f.sort} className={select} title="Sort by">
+          {SORT_FIELDS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+        </select>
+        {/* Direction toggle — submits as a hidden field; clicking flips the value then submits */}
+        <input type="hidden" name="dir" id="dir-input" defaultValue={f.sortDir} />
+        <button
+          type="button"
+          title={f.sortDir === 'desc' ? 'Descending — click for ascending' : 'Ascending — click for descending'}
+          className="flex items-center justify-center rounded-lg bg-zinc-800 px-2 py-2 text-white hover:bg-zinc-700 focus:outline-none focus:ring-2 focus:ring-white/20"
+          onClick={(e) => {
+            const form = (e.currentTarget as HTMLElement).closest('form') as HTMLFormElement
+            const input = form.querySelector('#dir-input') as HTMLInputElement
+            input.value = input.value === 'desc' ? 'asc' : 'desc'
+            form.requestSubmit()
+          }}
+        >
+          {f.sortDir === 'desc'
+            ? <svg className="h-4 w-4" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 12L3 6h10z"/></svg>
+            : <svg className="h-4 w-4" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 4l5 6H3z"/></svg>
+          }
+        </button>
+      </div>
 
       <select name="year" defaultValue={f.year?.toString() ?? ''} className={select} title="Year">
         <option value="">All years</option>
@@ -174,11 +225,15 @@ function FilterBar({ f }: { f: FilterState }) {
         {MIN_RATING_OPTIONS.filter((r) => r > 0).map((r) => <option key={r} value={r}>{r}+ ★</option>)}
       </select>
 
+      <select name="watched" defaultValue={f.watchedFilter} className={select} title="Watch status">
+        {WATCHED_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+      </select>
+
       <select name="count" defaultValue={f.count} className={select} title="Results per page">
         {COUNT_OPTIONS.map((n) => <option key={n} value={n}>{n} / page</option>)}
       </select>
 
-      {/* Preserve the active type + genre across a filter submit. */}
+      {/* Preserve active type + genre across filter submits */}
       <input type="hidden" name="type" value={f.itemType} />
       {f.genreId && <input type="hidden" name="genre" value={f.genreId} />}
 
@@ -186,7 +241,7 @@ function FilterBar({ f }: { f: FilterState }) {
         Apply
       </button>
 
-      {(f.query || f.year || f.minRating || f.sort !== 'popularity' || f.genreId) && (
+      {isFiltered && (
         <a href={`/browse?type=${f.itemType}`} className="rounded-lg bg-zinc-800 px-3 py-2 text-sm text-white hover:bg-zinc-700">
           Clear
         </a>
@@ -253,11 +308,10 @@ async function fetchTMDBPages<T>(
 }
 
 async function fetchDiscover(f: FilterState): Promise<{ results: TMDBSearchResult[]; totalPages: number; totalResults: number }> {
-  const { query, page, discoverType, sort, year, minRating, genreId, count } = f
+  const { query, page, discoverType, sort, sortDir, year, minRating, genreId, count } = f
 
   if (query) {
-    // Name search: TMDB /search has no sort_by; apply filters client-side.
-    // For counts > 20 we fetch multiple pages and apply filters before slicing.
+    // Name search: TMDB /search has no sort_by; apply filters + sort client-side.
     const pagesNeeded = Math.ceil(count / 20)
     const tmdbStart = (page - 1) * pagesNeeded + 1
     const responses = await Promise.all(
@@ -268,7 +322,7 @@ async function fetchDiscover(f: FilterState): Promise<{ results: TMDBSearchResul
     let results = responses.flatMap((r) => r?.results ?? [])
     if (year) results = results.filter((r) => r.year === year)
     if (minRating) results = results.filter((r) => (r.rating ?? 0) >= minRating)
-    results = sortResults(results, sort)
+    results = sortResults(results, sort, sortDir)
     const tmdbTotalPages = responses[0]?.totalPages ?? 1
     const totalResults = responses[0]?.totalResults ?? 0
     return {
@@ -279,7 +333,7 @@ async function fetchDiscover(f: FilterState): Promise<{ results: TMDBSearchResul
   }
 
   if (discoverType === 'all') {
-    const filtersActive = sort !== 'popularity' || !!year || !!minRating
+    const filtersActive = sort !== 'popularity' || sortDir !== 'desc' || !!year || !!minRating
     if (!filtersActive) {
       return fetchTMDBPages(
         (p) => getTrendingContent('trending', p).catch(() => null),
@@ -293,8 +347,8 @@ async function fetchDiscover(f: FilterState): Promise<{ results: TMDBSearchResul
     const pageNums = Array.from({ length: pagesNeeded }, (_, i) => tmdbStart + i)
     const pairs = await Promise.all(
       pageNums.map((p) => Promise.all([
-        discoverTMDB('movie', { sortBy: sort, year, minRating, page: p }).catch(() => null),
-        discoverTMDB('tv',    { sortBy: sort, year, minRating, page: p }).catch(() => null),
+        discoverTMDB('movie', { sortBy: sort, sortDir, year, minRating, page: p }).catch(() => null),
+        discoverTMDB('tv',    { sortBy: sort, sortDir, year, minRating, page: p }).catch(() => null),
       ]))
     )
     const allResults = pairs.flatMap(([m, tv]) => interleave(m?.results ?? [], tv?.results ?? []))
@@ -308,7 +362,7 @@ async function fetchDiscover(f: FilterState): Promise<{ results: TMDBSearchResul
   }
 
   return fetchTMDBPages(
-    (p) => discoverTMDB(discoverType, { genreId, sortBy: sort, year, minRating, page: p }).catch(() => null),
+    (p) => discoverTMDB(discoverType, { genreId, sortBy: sort, sortDir, year, minRating, page: p }).catch(() => null),
     page,
     count,
   )
@@ -321,6 +375,55 @@ async function DiscoverGrid({ f, userId }: { f: FilterState; userId: string }) {
   const tmdbIds = results.map((r) => r.tmdbId)
   const libraryMap = tmdbIds.length > 0 ? getItemsByTmdbIds(tmdbIds) : {}
 
+  // ---------------------------------------------------------------------------
+  // Watched-status filter — per-user, scoped to session userId (never leaks another
+  // user's watch state). Only meaningful for items in the local library; items not
+  // yet scanned have no watch state and are always treated as "unwatched".
+  // ---------------------------------------------------------------------------
+  type WatchRow = { tmdb_id: number; played: number; position_ticks: number }
+  let filteredResults = results
+  if (f.watchedFilter !== 'any' && tmdbIds.length > 0) {
+    // Look up watch state for every result in one parameterized query.
+    // idx_watch_state_user_media (user_id, media_id) covers the join.
+    const placeholders = tmdbIds.map(() => '?').join(',')
+    const watchRows = getDb()
+      .prepare(
+        `SELECT mi.tmdb_id, mws.played, mws.position_ticks
+         FROM media_items mi
+         LEFT JOIN media_watch_state mws
+           ON mws.media_id = mi.id AND mws.user_id = ?
+         WHERE mi.tmdb_id IN (${placeholders})
+           AND mi.type IN ('movie', 'series')`
+      )
+      .all(userId, ...tmdbIds) as WatchRow[]
+
+    // Build a map: tmdbId → { played, position_ticks } (NULL from LEFT JOIN → not in library)
+    const watchMap = new Map<number, { played: number; positionTicks: number }>()
+    for (const row of watchRows) {
+      watchMap.set(row.tmdb_id, {
+        played: row.played ?? 0,
+        positionTicks: row.position_ticks ?? 0,
+      })
+    }
+
+    filteredResults = results.filter((r) => {
+      const ws = watchMap.get(r.tmdbId)
+      if (!ws) {
+        // Not in library — counts as unwatched for filter purposes
+        return f.watchedFilter === 'unwatched'
+      }
+      const isWatched    = ws.played === 1
+      const isInProgress = ws.positionTicks > 0 && ws.played === 0
+      const isUnwatched  = !isWatched && !isInProgress
+      switch (f.watchedFilter) {
+        case 'watched':     return isWatched
+        case 'in-progress': return isInProgress
+        case 'unwatched':   return isUnwatched
+        default:            return true
+      }
+    })
+  }
+
   // Per-user request status (expired excluded so the item is requestable again).
   const userRequests = getUserRequests(userId)
   const requestMap: Record<string, { status: RequestStatus; requestType: RequestType }> = {}
@@ -329,7 +432,7 @@ async function DiscoverGrid({ f, userId }: { f: FilterState; userId: string }) {
     requestMap[`${req.media_type}-${req.tmdb_id}`] = { status: req.status, requestType: req.request_type }
   }
 
-  const items: DiscoverItem[] = results.map((r) => ({
+  const items: DiscoverItem[] = filteredResults.map((r) => ({
     tmdbId: r.tmdbId,
     mediaType: r.mediaType,
     title: r.title,
@@ -398,14 +501,29 @@ export default async function BrowsePage({ searchParams }: BrowsePageProps) {
   const itemType: ItemType = (['movies', 'shows', 'discover'].includes(params.type ?? '')
     ? params.type
     : 'discover') as ItemType
+
+  // Map legacy flat sort values (oldest/newest) to field+dir
   const sortRaw = params.sort ?? 'popularity'
-  const sort: DiscoverSort = (VALID_SORTS as string[]).includes(sortRaw) ? (sortRaw as DiscoverSort) : 'popularity'
+  let sort: DiscoverSort
+  let legacyDir: DiscoverDir | null = null
+  if (sortRaw === 'newest')  { sort = 'date'; legacyDir = 'desc' }
+  else if (sortRaw === 'oldest') { sort = 'date'; legacyDir = 'asc' }
+  else sort = (VALID_SORTS as string[]).includes(sortRaw) ? (sortRaw as DiscoverSort) : 'popularity'
+
+  const dirRaw = params.dir
+  const sortDir: DiscoverDir = legacyDir ??
+    (VALID_DIRS.includes(dirRaw as DiscoverDir) ? (dirRaw as DiscoverDir) : DEFAULT_DIR[sort])
+
   const yearN = params.year ? parseInt(params.year, 10) : NaN
   const minRatingN = params.minRating ? parseInt(params.minRating, 10) : NaN
   const countRaw = params.count ? parseInt(params.count, 10) : DEFAULT_COUNT
   const count: BrowseCount = (COUNT_OPTIONS as readonly number[]).includes(countRaw)
     ? (countRaw as BrowseCount)
     : DEFAULT_COUNT
+  const watchedFilter: WatchedFilter =
+    (['any', 'watched', 'in-progress', 'unwatched'] as WatchedFilter[]).includes(params.watched as WatchedFilter)
+      ? (params.watched as WatchedFilter)
+      : 'any'
 
   const f: FilterState = {
     query: params.q?.trim() || undefined,
@@ -413,10 +531,12 @@ export default async function BrowsePage({ searchParams }: BrowsePageProps) {
     itemType,
     discoverType: discoverTypeFor(itemType),
     sort,
+    sortDir,
     year: Number.isFinite(yearN) ? yearN : undefined,
     minRating: Number.isFinite(minRatingN) && minRatingN > 0 ? minRatingN : undefined,
     genreId: params.genre ? parseInt(params.genre, 10) || undefined : undefined,
     count,
+    watchedFilter,
   }
   // Genre only applies to single-type browsing.
   if (f.discoverType === 'all' || f.query) f.genreId = undefined

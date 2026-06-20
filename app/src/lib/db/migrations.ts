@@ -592,6 +592,11 @@ export function runMigrations(db: Database.Database): void {
     // NULL means "use the default profile" (ID 1 — 'Any'). Rows created before this migration
     // stay NULL and the existing behaviour (quality_profile_id: 1) is preserved.
     'ALTER TABLE media_requests ADD COLUMN quality_profile_id INTEGER',
+    // media_items — TMDB enrichment fields for sort/filter support on browse + library pages.
+    // Populated by enricher.ts; NULL until an enrichment run completes for that item.
+    'ALTER TABLE media_items ADD COLUMN popularity REAL',
+    'ALTER TABLE media_items ADD COLUMN vote_average REAL',
+    'ALTER TABLE media_items ADD COLUMN vote_count INTEGER',
     // quality_profiles — user-owned profiles. NULL = admin-shared (visible to all users).
     // Non-null = private to that user_id. Existing profiles keep NULL (shared).
     'ALTER TABLE quality_profiles ADD COLUMN user_id TEXT',

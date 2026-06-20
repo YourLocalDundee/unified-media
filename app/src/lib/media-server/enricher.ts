@@ -25,6 +25,9 @@ export async function enrichItem(item: MediaItem): Promise<void> {
              poster_path    = @poster_path,
              backdrop_path  = @backdrop_path,
              genres         = @genres,
+             popularity     = @popularity,
+             vote_average   = @vote_average,
+             vote_count     = @vote_count,
              updated_at     = @updated_at
          WHERE id = @id`,
       ).run({
@@ -37,6 +40,9 @@ export async function enrichItem(item: MediaItem): Promise<void> {
         poster_path: tmdbImageUrl(movie.poster_path, 'w342'),
         backdrop_path: tmdbImageUrl(movie.backdrop_path, 'w780'),
         genres: JSON.stringify(movie.genres?.map(g => g.name) ?? []),
+        popularity: movie.popularity ?? null,
+        vote_average: movie.vote_average ?? null,
+        vote_count: movie.vote_count ?? null,
         updated_at: now,
       })
       return
@@ -52,13 +58,16 @@ export async function enrichItem(item: MediaItem): Promise<void> {
 
       db.prepare(
         `UPDATE media_items
-         SET tmdb_id     = @tmdb_id,
-             tvdb_id     = @tvdb_id,
-             overview    = @overview,
-             year        = @year,
-             poster_path = @poster_path,
-             genres      = @genres,
-             updated_at  = @updated_at
+         SET tmdb_id      = @tmdb_id,
+             tvdb_id      = @tvdb_id,
+             overview     = @overview,
+             year         = @year,
+             poster_path  = @poster_path,
+             genres       = @genres,
+             popularity   = @popularity,
+             vote_average = @vote_average,
+             vote_count   = @vote_count,
+             updated_at   = @updated_at
          WHERE id = @id`,
       ).run({
         id: item.id,
@@ -68,6 +77,9 @@ export async function enrichItem(item: MediaItem): Promise<void> {
         year: airYear,
         poster_path: tmdbImageUrl(show.poster_path, 'w342'),
         genres: JSON.stringify((show as unknown as { genres?: { id: number; name: string }[] }).genres?.map(g => g.name) ?? []),
+        popularity: show.popularity ?? null,
+        vote_average: show.vote_average ?? null,
+        vote_count: show.vote_count ?? null,
         updated_at: now,
       })
     }
