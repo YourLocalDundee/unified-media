@@ -15,6 +15,13 @@ interface ScanResult {
   failed: number
 }
 
+interface JobResponse {
+  id: string
+  status: string
+  result?: ScanResult
+  error?: string
+}
+
 const ENV_VARS = [
   {
     name: 'MEDIA_ROOTS',
@@ -58,13 +65,32 @@ export default function MediaServerPage() {
     setScanError('')
     try {
       const res = await fetch('/api/media/scan', { method: 'POST' })
-      if (res.ok) {
-        const data = await res.json() as ScanResult
-        setScanResult(data)
-        void fetchStats()
-      } else {
+      if (!res.ok) {
         setScanError('Scan failed — check server logs for details.')
+        setScanning(false)
+        return
       }
+      const { jobId } = await res.json() as { jobId: string }
+
+      // Poll until the background scan job finishes (max 5 min).
+      for (let i = 0; i < 300; i++) {
+        await new Promise(r => setTimeout(r, 1000))
+        const statusRes = await fetch(`/api/jobs/${jobId}`)
+        if (!statusRes.ok) break
+        const job = await statusRes.json() as JobResponse
+        if (job.status === 'done') {
+          if (job.result) setScanResult(job.result)
+          void fetchStats()
+          setScanning(false)
+          return
+        }
+        if (job.status === 'failed') {
+          setScanError(job.error ?? 'Scan failed — check server logs for details.')
+          setScanning(false)
+          return
+        }
+      }
+      setScanError('Scan timed out — check server logs for details.')
     } catch {
       setScanError('Network error while triggering scan.')
     } finally {

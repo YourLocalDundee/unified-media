@@ -9,6 +9,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAdmin } from '@/lib/dal'
 import { getAllItems, createItem } from '@/lib/automation/monitor'
+import { verifyOrigin } from '@/lib/csrf'
 
 // Opt out of static rendering — this route hits the DB on every request
 export const dynamic = 'force-dynamic'
@@ -20,10 +21,11 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
+  if (!verifyOrigin(req)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 }) // S2: CSRF
   await requireAdmin()
 
   // Accept unknown body shape and validate each field explicitly to avoid trusting client types
-  const body = await req.json() as {
+  let body: {
     type?: unknown
     title?: unknown
     tmdb_id?: unknown
@@ -32,6 +34,8 @@ export async function POST(req: NextRequest) {
     quality_profile_id?: unknown
     root_path?: unknown
   }
+  try { body = await req.json() }
+  catch { return NextResponse.json({ error: 'Invalid request' }, { status: 400 }) } // A19: parse guard
 
   if (body.type !== 'movie' && body.type !== 'tv') {
     return NextResponse.json({ error: 'type must be "movie" or "tv"' }, { status: 400 })

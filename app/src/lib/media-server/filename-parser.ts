@@ -12,7 +12,9 @@ function cleanEpisodeTitle(raw: string): string | null {
 }
 
 export function parseFilename(filename: string): ParsedFilename {
-  const base = filename.replace(/\.[^.]+$/, '')
+  // Cap input length to bound regex backtracking time on adversarial names (A21-04).
+  const safeFilename = filename.length > 512 ? filename.slice(0, 512) : filename
+  const base = safeFilename.replace(/\.[^.]+$/, '')
 
   // S01E02 pattern
   const tvMatch = base.match(/^(.+?)[.\s_-]+[Ss](\d{1,2})[Ee](\d{1,2})/i)

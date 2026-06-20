@@ -20,6 +20,10 @@ import { getProfileById, recordGrab, updateItem } from './monitor'
 import { recordGrabResults, type ScoredCandidate } from './grab-results'
 import type { MonitoredItem, QualityProfile, QualityCondition } from './types'
 import type { TorznabResult } from '@/lib/indexer/types'
+import { getDb } from '@/lib/db/index'
+
+// Strip CR/LF so DB-sourced title strings cannot forge additional log lines (A21-07).
+const sanitizeLog = (s: string) => s.replace(/[\r\n]/g, ' ')
 
 // ---------------------------------------------------------------------------
 // buildSearchParams
@@ -42,8 +46,9 @@ export function buildSearchParams(item: MonitoredItem): { q: string; cats: strin
     const scopeType = item.scope_type ?? 'full'
 
     if (scopeType === 'episodes' && item.scope_episodes) {
-      const eps = JSON.parse(item.scope_episodes) as Array<{ s: number; e: number }>
-      if (eps.length > 0) {
+      let eps: Array<{ s: number; e: number }> = []
+      try { eps = JSON.parse(item.scope_episodes) } catch { /* malformed DB column — skip scope */ }
+      if (Array.isArray(eps) && eps.length > 0) {
         const ep = eps[0]
         const s = String(ep.s).padStart(2, '0')
         const e = String(ep.e).padStart(2, '0')
@@ -52,7 +57,8 @@ export function buildSearchParams(item: MonitoredItem): { q: string; cats: strin
     }
 
     if (scopeType === 'seasons' && item.scope_seasons) {
-      const seasons = JSON.parse(item.scope_seasons) as number[]
+      let seasons: number[] = []
+      try { const p = JSON.parse(item.scope_seasons); if (Array.isArray(p)) seasons = p } catch { /* malformed DB column — skip scope */ }
       if (seasons.length === 1) {
         // Season pack search — "Title S01" finds both individual episodes and packs;
         // filterByScope below will prefer packs and reject stray episodes from other seasons.
@@ -85,7 +91,8 @@ export function filterByScope(
   if (scopeType === 'full' || scopeType === 'movie') return results
 
   if (scopeType === 'episodes' && item.scope_episodes) {
-    const eps = JSON.parse(item.scope_episodes) as Array<{ s: number; e: number }>
+    let eps: Array<{ s: number; e: number }> = []
+    try { const p = JSON.parse(item.scope_episodes); if (Array.isArray(p)) eps = p } catch { return null }
     if (eps.length === 0) return null
     // Build a combined OR pattern for all requested episodes, e.g. S01E05|S01E06
     const patterns = eps.map(ep => {
@@ -100,7 +107,8 @@ export function filterByScope(
   }
 
   if (scopeType === 'seasons' && item.scope_seasons) {
-    const seasons = JSON.parse(item.scope_seasons) as number[]
+    let seasons: number[] = []
+    try { const p = JSON.parse(item.scope_seasons); if (Array.isArray(p)) seasons = p } catch { return null }
     if (seasons.length === 0) return null
 
     // For each requested season, accept releases that include S## or "Season N".
@@ -146,7 +154,8 @@ export function findBestRelease(
   profile: QualityProfile,
   language = 'any',
 ): TorznabResult | null {
-  const conditions = JSON.parse(profile.conditions) as QualityCondition[]
+  let conditions: QualityCondition[] = []
+  try { const p = JSON.parse(profile.conditions); if (Array.isArray(p)) conditions = p } catch { return null }
 
   let bestResult: TorznabResult | null = null
   let bestScore = -Infinity
@@ -214,12 +223,42 @@ export async function findSeasonPack(
  *
  * options.language: ISO 639-1 code or 'any' (default). Passed through to
  * findBestRelease as a hard constraint for auto-pick paths.
+ *
+ * options.force: when true, skip the atomic 'wanted'→'grabbing' claim (D3) and grab
+ * regardless of current status. Used by the admin "Grab Now" / re-search routes that
+ * are explicit manual actions and must work on already-grabbed items. The default
+ * (false) path is taken by the cron and the non-awaited approve/auto-approve grabs:
+ * the first caller to flip the row to 'grabbing' wins, the rest see changes===0 and
+ * bail, closing the double-grab race (the cron's getWantedItems only sees 'wanted').
  */
 export async function grabItem(
   item: MonitoredItem,
-  options: { language?: string } = {},
+  options: { language?: string; force?: boolean } = {},
 ): Promise<'grabbed' | 'not_found' | 'error'> {
-  const { language = 'any' } = options
+  const { language = 'any', force = false } = options
+
+  // D3: atomically claim the row before doing any work. If another grab (cron or the
+  // fire-and-forget approve grab) already claimed it, changes===0 and we skip — never
+  // grab the same wanted row twice. Manual force-grabs bypass the claim.
+  let claimed = false
+  if (!force) {
+    const claim = getDb()
+      .prepare("UPDATE monitored_items SET status = 'grabbing', updated_at = ? WHERE id = ? AND status = 'wanted'")
+      .run(Date.now(), item.id)
+    if (claim.changes === 0) return 'not_found'
+    claimed = true
+  }
+
+  // D3: release the 'grabbing' claim back to 'wanted' on any non-grab outcome so the
+  // cron retries it next tick. Only reverts a row we actually claimed and only if it's
+  // still 'grabbing' (a concurrent transition must not be clobbered).
+  const releaseClaim = (): void => {
+    if (!claimed) return
+    getDb()
+      .prepare("UPDATE monitored_items SET status = 'wanted', updated_at = ? WHERE id = ? AND status = 'grabbing'")
+      .run(Date.now(), item.id)
+  }
+
   try {
     // 1. Resolve quality profile; fall back to an "Any" profile if missing so a deleted
     //    profile doesn't permanently block an item from being grabbed
@@ -240,25 +279,25 @@ export async function grabItem(
       const scopeType = item.scope_type ?? 'full'
 
       if (scopeType === 'episodes') {
-        const eps = item.scope_episodes
-          ? (JSON.parse(item.scope_episodes) as Array<{ s: number; e: number }>)
-          : []
+        let eps: Array<{ s: number; e: number }> = []
+        try { if (item.scope_episodes) { const p = JSON.parse(item.scope_episodes); if (Array.isArray(p)) eps = p } } catch {}
         if (eps.length === 0) {
           process.stderr.write(
-            `[grabber] "${item.title}" has scope_type='episodes' but scope_episodes is empty or null — skipping indexer query\n`,
+            `[grabber] "${sanitizeLog(item.title)}" has scope_type='episodes' but scope_episodes is empty or null — skipping indexer query\n`,
           )
+          releaseClaim()
           return 'not_found'
         }
       }
 
       if (scopeType === 'seasons') {
-        const seasons = item.scope_seasons
-          ? (JSON.parse(item.scope_seasons) as number[])
-          : []
+        let seasons: number[] = []
+        try { if (item.scope_seasons) { const p = JSON.parse(item.scope_seasons); if (Array.isArray(p)) seasons = p } } catch {}
         if (seasons.length === 0) {
           process.stderr.write(
-            `[grabber] "${item.title}" has scope_type='seasons' but scope_seasons is empty or null — skipping indexer query\n`,
+            `[grabber] "${sanitizeLog(item.title)}" has scope_type='seasons' but scope_seasons is empty or null — skipping indexer query\n`,
           )
+          releaseClaim()
           return 'not_found'
         }
       }
@@ -273,12 +312,14 @@ export async function grabItem(
     if (scopeFiltered === null) {
       // No results matched the scope pattern — record and bail without grabbing anything
       recordGrabResults(item.id, rawResults.map(r => ({ result: r, score: -1, selected: false })), null)
+      releaseClaim()
       return 'not_found'
     }
     const results = scopeFiltered
 
     // 4. Score ALL (scope-filtered) results for UI display (combined base + custom format score)
-    const conditions = JSON.parse(profile.conditions) as QualityCondition[]
+    let conditions: QualityCondition[] = []
+    try { const p = JSON.parse(profile.conditions); if (Array.isArray(p)) conditions = p } catch {}
     const scored: ScoredCandidate[] = results.map(r => {
       const meta = parseReleaseName(r.title)
       const base = scoreRelease(meta, conditions)
@@ -298,7 +339,7 @@ export async function grabItem(
 
     recordGrabResults(item.id, scored, result?.infoHash ?? null)
 
-    if (!result) return 'not_found'
+    if (!result) { releaseClaim(); return 'not_found' }
 
     // 6. Prefer magnet link over .torrent URL — magnets don't require an extra HTTP fetch
     //    and work even when the indexer's download endpoint is behind auth
@@ -321,7 +362,8 @@ export async function grabItem(
     return 'grabbed'
   } catch (err) {
     // Errors are non-fatal to the cron loop — log and continue to next item
-    process.stderr.write(`[grabber] Error grabbing "${item.title}": ${err}\n`)
+    process.stderr.write(`[grabber] Error grabbing "${sanitizeLog(item.title)}": ${err}\n`)
+    releaseClaim()
     return 'error'
   }
 }

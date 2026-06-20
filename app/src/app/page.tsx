@@ -11,22 +11,14 @@ import { getAllRequests } from '@/lib/requests/monitor'
 import { getTorrents } from '@/lib/qbittorrent/api'
 import { getTorrentStateLabel, getTorrentStateColor } from '@/lib/qbittorrent/types'
 import { formatBytes, formatDate } from '@/lib/utils'
-import MediaCard from '@/components/media/MediaCard'
 import { Badge } from '@/components/ui/Badge'
 import { JoinPartyButton } from '@/components/party/JoinPartyButton'
 import { requireAuth } from '@/lib/dal'
 import type { MediaItem, WatchState } from '@/lib/media-server/types'
 import type { NativeRequestWithUser } from '@/lib/requests/types'
 import type { Torrent } from '@/lib/qbittorrent/types'
-
-interface ContinueWatchingItem {
-  id: string
-  title: string
-  subtitle?: string
-  type: 'Episode' | 'Movie'
-  imageUrl: string | undefined
-  progress: number
-}
+import { ContinueWatchingCarousel, RecentlyAddedCarousel } from './HomeCarousels'
+import type { ContinueItem, RecentItem } from './HomeCarousels'
 
 // ---------------------------------------------------------------------------
 // Root page — all sections are independently fault-tolerant via Suspense
@@ -124,12 +116,12 @@ async function ContinueWatchingSection() {
   // async functions each need their own auth check — they may render independently.
   const session = await requireAuth()
   const userId = session.userId
-  let items: ContinueWatchingItem[] = []
+  let items: ContinueItem[] = []
 
   try {
     const raw: MediaItem[] = getResumeItems(userId, 10)
 
-    const all: ContinueWatchingItem[] = []
+    const all: ContinueItem[] = []
 
     for (const item of raw) {
       const watchState: WatchState | undefined = getWatchState(userId, item.id)
@@ -186,49 +178,16 @@ async function ContinueWatchingSection() {
     )
   }
 
-  if (!items.length) {
-    return (
-      <section>
-        <SectionHeading title="Continue Watching" viewAllHref="/history" />
-        <p className="rounded-md border border-border bg-card px-4 py-3 text-sm text-muted-foreground">
-          Nothing in progress — start watching something to resume here.
-        </p>
-      </section>
-    )
-  }
+  const emptyFallback = (
+    <p className="rounded-md border border-border bg-card px-4 py-3 text-sm text-muted-foreground">
+      Nothing in progress — start watching something to resume here.
+    </p>
+  )
 
   return (
     <section>
       <SectionHeading title="Continue Watching" viewAllHref="/history" />
-      <div className="flex gap-4 overflow-x-auto pb-2 scrollbar-thin scrollbar-thumb-border">
-        {items.map((item) => (
-          <div key={item.id} className="flex-shrink-0">
-            <div className="relative">
-              <MediaCard
-                id={item.id}
-                title={item.title}
-                imageUrl={item.imageUrl}
-                type={item.type}
-                href={`/play/${item.id}`}
-              />
-              {item.progress > 0 && (
-                // Progress bar overlaid at the card bottom; bottom-9 clears the title text below
-                <div className="absolute bottom-9 left-0 right-0 h-1 bg-zinc-700 rounded-b">
-                  <div
-                    className="h-full bg-primary rounded-b"
-                    style={{ width: `${Math.min(100, Math.round(item.progress * 100))}%` }}
-                  />
-                </div>
-              )}
-            </div>
-            {item.subtitle && (
-              <p className="text-xs text-zinc-500 mt-1 truncate max-w-[120px] sm:max-w-[160px]">
-                {item.subtitle}
-              </p>
-            )}
-          </div>
-        ))}
-      </div>
+      <ContinueWatchingCarousel items={items as ContinueItem[]} fallback={emptyFallback} />
     </section>
   )
 }
@@ -238,9 +197,23 @@ async function ContinueWatchingSection() {
 // ---------------------------------------------------------------------------
 
 async function LatestAddedSection() {
-  let items: MediaItem[] = []
+  let recentItems: RecentItem[] = []
   try {
-    items = getRecentlyAdded(12)
+    const raw = getRecentlyAdded(12)
+    recentItems = raw.map((item) => {
+      // Recently Added is normally movies/series, but a mis-classified episode
+      // (e.g. a top-level anime episode) can land here with no poster_path — fall
+      // back to its parent series' poster the same way Continue Watching does.
+      const series = item.series_id ? getItemById(item.series_id) : undefined
+      return {
+        id: item.id,
+        title: item.title,
+        year: item.year ?? undefined,
+        imageUrl: resolveCardImage(item, series),
+        type: (item.type === 'movie' ? 'Movie' : 'Series') as 'Movie' | 'Series',
+        href: item.type === 'series' ? `/library/${item.id}` : `/play/${item.id}`,
+      }
+    })
   } catch {
     return (
       <section>
@@ -250,32 +223,12 @@ async function LatestAddedSection() {
     )
   }
 
-  if (!items.length) return null
+  if (!recentItems.length) return null
 
   return (
     <section>
       <SectionHeading title="Recently Added" viewAllHref="/library" />
-      <div className="flex gap-4 overflow-x-auto pb-2 scrollbar-thin scrollbar-thumb-border">
-        {items.map((item) => {
-          // Recently Added is normally movies/series, but a mis-classified episode
-          // (e.g. a top-level anime episode) can land here with no poster_path — fall
-          // back to its parent series' poster the same way Continue Watching does.
-          const series = item.series_id ? getItemById(item.series_id) : undefined
-          const imageUrl = resolveCardImage(item, series)
-          return (
-            <div key={item.id} className="flex-shrink-0">
-              <MediaCard
-                id={item.id}
-                title={item.title}
-                year={item.year ?? undefined}
-                imageUrl={imageUrl}
-                type={item.type === 'movie' ? 'Movie' : 'Series'}
-                href={item.type === 'series' ? `/library/${item.id}` : `/play/${item.id}`}
-              />
-            </div>
-          )
-        })}
-      </div>
+      <RecentlyAddedCarousel items={recentItems} />
     </section>
   )
 }

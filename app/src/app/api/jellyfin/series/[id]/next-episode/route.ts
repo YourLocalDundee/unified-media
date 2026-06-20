@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { getSession } from '@/lib/dal'
 import { jellyfinFetch } from '@/lib/jellyfin/client'
 
 export const dynamic = 'force-dynamic'
@@ -18,6 +19,10 @@ export async function GET(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  // S1: credentialed Jellyfin proxy — require a session.
+  const session = await getSession()
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
   const { id } = await params
   const userId = process.env.JELLYFIN_USER_ID ?? ''
   try {

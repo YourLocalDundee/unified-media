@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react'
 import { Palette, Plus, X } from 'lucide-react'
+import { useFocusTrap } from '@/hooks/useFocusTrap'
 
 // ── Built-in themes ────────────────────────────────────────────────────────────
 
@@ -81,7 +82,26 @@ export function saveCustomThemes(themes: CustomTheme[]) {
   try { localStorage.setItem(CUSTOM_THEMES_KEY, JSON.stringify(themes)) } catch {}
 }
 
-export function buildCustomThemeCSS(slug: string, c: CustomThemeColors): string {
+// Reject any color that is not a bare CSS hex color, preventing CSS injection
+// via crafted localStorage values (A21-02).
+const HEX_RE = /^#[0-9a-fA-F]{3,8}$/
+function sanitizeColor(value: string, fallback = '#000000'): string {
+  return HEX_RE.test(value) ? value : fallback
+}
+
+function sanitizeColors(c: CustomThemeColors): CustomThemeColors {
+  return {
+    bg:            sanitizeColor(c.bg,            '#0f1117'),
+    surface:       sanitizeColor(c.surface,       '#1c2128'),
+    accent:        sanitizeColor(c.accent,        '#2f81f7'),
+    textPrimary:   sanitizeColor(c.textPrimary,   '#e6edf3'),
+    textSecondary: sanitizeColor(c.textSecondary, '#8b949e'),
+    border:        sanitizeColor(c.border,        '#30363d'),
+  }
+}
+
+export function buildCustomThemeCSS(slug: string, raw: CustomThemeColors): string {
+  const c = sanitizeColors(raw)
   const hover = lightenHex(c.surface, 0.1)
   return `
 [data-theme="${slug}"] {
@@ -167,6 +187,9 @@ export function CreateThemeModal({ onClose, onSave }: CreateThemeModalProps) {
   const [name, setName] = useState('')
   const [colors, setColors] = useState<CustomThemeColors>(DEFAULT_COLORS)
 
+  const dialogRef = useRef<HTMLDivElement>(null)
+  useFocusTrap(dialogRef, true, onClose)
+
   function setColor(key: keyof CustomThemeColors, value: string) {
     setColors(prev => ({ ...prev, [key]: value }))
   }
@@ -195,11 +218,17 @@ export function CreateThemeModal({ onClose, onSave }: CreateThemeModalProps) {
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60">
-      <div className="bg-card border border-border rounded-xl p-6 w-full max-w-md shadow-2xl">
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="create-theme-title"
+        className="bg-card border border-border rounded-xl p-6 w-full max-w-md shadow-2xl"
+      >
 
         {/* Header */}
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-base font-semibold text-foreground">Create theme</h2>
+          <h2 id="create-theme-title" className="text-base font-semibold text-foreground">Create theme</h2>
           <button
             onClick={onClose}
             className="rounded-md p-1 text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"

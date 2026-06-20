@@ -2,8 +2,9 @@
 // filters. Supports bulk suspend/activate and per-row actions (reset password, delete).
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { Loader2, Search } from 'lucide-react'
+import { useFocusTrap } from '@/hooks/useFocusTrap'
 
 interface User {
   id: string; username: string; email: string | null; role: string;
@@ -27,6 +28,10 @@ export default function AdminUsersPage() {
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [actionLoading, setActionLoading] = useState<string | null>(null)
   const [resetResult, setResetResult] = useState<{ userId: string; tempPw: string } | null>(null)
+
+  const resetDialogRef = useRef<HTMLDivElement>(null)
+  const closeReset = useCallback(() => setResetResult(null), [])
+  useFocusTrap(resetDialogRef, resetResult !== null, closeReset)
 
   // Wrapped in useCallback so the effect dependency array stays stable between renders.
   const fetchUsers = useCallback(async () => {
@@ -83,8 +88,14 @@ export default function AdminUsersPage() {
       {/* Reset password modal */}
       {resetResult && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-          <div className="rounded-xl border border-border bg-card p-6 max-w-sm w-full">
-            <h2 className="text-lg font-semibold mb-2">Temporary Password</h2>
+          <div
+            ref={resetDialogRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="reset-pw-title"
+            className="rounded-xl border border-border bg-card p-6 max-w-sm w-full"
+          >
+            <h2 id="reset-pw-title" className="text-lg font-semibold mb-2">Temporary Password</h2>
             <p className="text-sm text-muted-foreground mb-3">Share this with the user. It will only be shown once.</p>
             <code className="block rounded-lg bg-muted px-4 py-2 text-sm font-mono break-all">{resetResult.tempPw}</code>
             <button onClick={() => setResetResult(null)} className="mt-4 w-full rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground">

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireAdmin } from '@/lib/dal'
 import { getSubtitleById, updateSubtitleStatus, deleteSubtitleWant } from '@/lib/subtitle/monitor'
 import type { SubtitleStatus } from '@/lib/subtitle/types'
+import { verifyOrigin } from '@/lib/csrf'
 
 export const dynamic = 'force-dynamic'
 
@@ -9,6 +10,7 @@ export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  if (!verifyOrigin(req)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 }) // S2: CSRF
   await requireAdmin()
   const { id } = await params
   const numId = parseInt(id, 10)
@@ -17,7 +19,9 @@ export async function PATCH(
   const item = getSubtitleById(numId)
   if (!item) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
-  const body = await req.json() as { status?: SubtitleStatus }
+  let body: { status?: SubtitleStatus }
+  try { body = await req.json() as { status?: SubtitleStatus } }
+  catch { return NextResponse.json({ error: 'Invalid request' }, { status: 400 }) } // A19: parse guard
   const valid: SubtitleStatus[] = ['wanted', 'downloaded', 'skipped', 'failed']
   if (!body.status || !valid.includes(body.status)) {
     return NextResponse.json({ error: 'Invalid status' }, { status: 400 })
@@ -28,9 +32,10 @@ export async function PATCH(
 }
 
 export async function DELETE(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  if (!verifyOrigin(req)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 }) // S2: CSRF
   await requireAdmin()
   const { id } = await params
   const numId = parseInt(id, 10)

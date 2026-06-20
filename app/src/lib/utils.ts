@@ -23,11 +23,21 @@ export function formatDuration(ticks: number): string {
   return `${minutes}m`
 }
 
-export function formatDate(dateStr: string): string {
-  return new Date(dateStr).toLocaleDateString('en-US', {
+// Accepts a date string (ISO, etc.) or epoch-ms number so callers with either
+// source type don't need a local copy that diverges in format (A20-06).
+export function formatDate(value: string | number): string {
+  return new Date(value).toLocaleDateString('en-US', {
     month: 'long',
     day: 'numeric',
     year: 'numeric',
+  })
+}
+
+export function formatDateShort(value: string | number): string {
+  return new Date(value).toLocaleDateString(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
   })
 }
 

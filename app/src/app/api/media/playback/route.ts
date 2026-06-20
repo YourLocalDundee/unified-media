@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth } from '@/lib/dal'
 import { createSession } from '@/lib/media-server/playback'
+import { verifyOrigin } from '@/lib/csrf'
 
 export const dynamic = 'force-dynamic'
 
@@ -11,9 +12,12 @@ interface PlaybackBody {
 }
 
 export async function POST(req: NextRequest) {
+  if (!verifyOrigin(req)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 }) // S2: CSRF
   await requireAuth()
 
-  const body = await req.json() as PlaybackBody
+  let body: PlaybackBody
+  try { body = await req.json() as PlaybackBody }
+  catch { return NextResponse.json({ error: 'Invalid request' }, { status: 400 }) } // A19: parse guard
   const { mediaId, method, quality } = body
 
   if (!mediaId || !method) {

@@ -29,14 +29,22 @@ async function writeSrtFile(want: SubtitleWant, content: string): Promise<string
     return null
   }
 
+  // Reject obvious non-SRT content (A15-M4): valid SRT files begin with a numeric counter line.
+  const trimmed = content.trimStart()
+  if (!trimmed || !/^\d/.test(trimmed)) {
+    console.error('[subtitle] Downloaded content does not look like an SRT file — discarding')
+    return null
+  }
+
   try {
-    // Output file follows the Jellyfin/Plex naming convention:
-    // <basename>.<language_code>.srt (e.g. Movie.en.srt) for auto-pickup.
     const ext = path.extname(want.media_path)
     const base = want.media_path.slice(0, want.media_path.length - ext.length)
     const outPath = `${base}.${want.language}.srt`
-
-    await fs.writeFile(outPath, content, 'utf-8')
+    // Atomic write: write to a temp file then rename so a crash mid-write
+    // cannot corrupt an existing subtitle file (A15-M4).
+    const tmpPath = `${outPath}.${process.pid}.tmp`
+    await fs.writeFile(tmpPath, content, 'utf-8')
+    await fs.rename(tmpPath, outPath)
     return outPath
   } catch (err) {
     console.error('[subtitle] Failed to write srt file:', err)
@@ -72,7 +80,13 @@ async function processOnePending(want: SubtitleWant): Promise<'downloaded' | 'sk
       return 'failed'
     }
 
-    const content = await fetch(downloadResponse.link).then(r => r.text())
+    const dlRes = await fetch(downloadResponse.link)
+    if (!dlRes.ok) {
+      console.error(`[subtitle] Download link returned HTTP ${dlRes.status}`)
+      await updateSubtitleStatus(want.id, 'failed')
+      return 'failed'
+    }
+    const content = await dlRes.text()
 
     const outPath = await writeSrtFile(want, content)
 

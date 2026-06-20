@@ -102,7 +102,7 @@ export default async function RequestsPage({
   const requests = statusOpt ? allRequests.filter((r) => r.status === statusOpt) : allRequests
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-white">
+    <div className="min-h-screen bg-background text-foreground">
       <div className="mx-auto max-w-screen-xl px-4 py-8 sm:px-6 lg:px-8">
         {/* Header */}
         <div className="mb-8">

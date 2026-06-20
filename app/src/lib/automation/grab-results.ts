@@ -50,14 +50,18 @@ export function getLatestGrabResults(monitoredItemId: number): GrabResultRow | u
   }
 }
 
-// Get the monitored_item_id for a request by joining through tmdb_id + type
-// Returns null if no monitored_item exists for this request
+// Get the monitored_item_id for a request by joining through tmdb_id + type.
+// Returns null if no monitored_item exists for this request.
+// A6-10: ORDER BY id makes the pick deterministic. With the A6-02 unique index there is at most
+// one row per (tmdb_id, type, scope_key); multiple scopes can still exist for one tmdb_id (e.g. a
+// full-series item plus episode fan-out rows), so the oldest row (the one created when the request
+// was first made) is the stable choice rather than an arbitrary LIMIT 1.
 export function getMonitoredItemIdForRequest(
   tmdbId: number,
   mediaType: 'movie' | 'tv',
 ): number | null {
   const row = getDb().prepare(
-    `SELECT id FROM monitored_items WHERE tmdb_id = ? AND type = ? LIMIT 1`
+    `SELECT id FROM monitored_items WHERE tmdb_id = ? AND type = ? ORDER BY id ASC LIMIT 1`
   ).get(tmdbId, mediaType === 'tv' ? 'tv' : 'movie') as { id: number } | undefined
   return row?.id ?? null
 }

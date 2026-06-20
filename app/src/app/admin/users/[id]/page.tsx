@@ -43,6 +43,8 @@ export default function UserDetailPage({ params }: { params: Promise<{ id: strin
   const [loading, setLoading] = useState(true)
   const [tab, setTab] = useState<'overview' | 'sessions' | 'watches' | 'audit' | 'logins'>('overview')
   const [actionLoading, setActionLoading] = useState(false)
+  // A7-04 / A9-10/11: a failed admin mutation must not silently appear to succeed.
+  const [actionError, setActionError] = useState<string | null>(null)
 
   useEffect(() => {
     fetch(`/api/admin/users/${id}/monitoring`)
@@ -53,25 +55,33 @@ export default function UserDetailPage({ params }: { params: Promise<{ id: strin
 
   async function doAction(action: 'suspend' | 'activate' | 'reset-password' | 'force-pw-change' | 'promote' | 'demote') {
     setActionLoading(true)
+    setActionError(null)
     try {
+      // A7-04: check res.ok on every mutation; throw so a failure is surfaced
+      // and the success-only paths (reset-password reveal, re-fetch) are skipped.
       if (action === 'reset-password') {
         const res = await fetch(`/api/admin/users/${id}/reset-password`, { method: 'POST' })
-        if (res.ok) {
-          const d = await res.json() as { tempPassword: string }
-          alert(`Temporary password: ${d.tempPassword}\n\nShare this with the user — shown once only.`)
-        }
+        if (!res.ok) throw new Error(`Reset failed (HTTP ${res.status})`)
+        const d = await res.json() as { tempPassword: string }
+        alert(`Temporary password: ${d.tempPassword}\n\nShare this with the user — shown once only.`)
       } else if (action === 'suspend' || action === 'activate') {
-        await fetch(`/api/admin/users/${id}/${action}`, { method: 'POST' })
+        const res = await fetch(`/api/admin/users/${id}/${action}`, { method: 'POST' })
+        if (!res.ok) throw new Error(`Action failed (HTTP ${res.status})`)
       } else if (action === 'force-pw-change') {
-        await fetch(`/api/admin/users/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ force_pw_change: 1 }) })
+        const res = await fetch(`/api/admin/users/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ force_pw_change: 1 }) })
+        if (!res.ok) throw new Error(`Action failed (HTTP ${res.status})`)
       } else if (action === 'promote') {
-        await fetch(`/api/admin/users/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ role: 'admin' }) })
+        const res = await fetch(`/api/admin/users/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ role: 'admin' }) })
+        if (!res.ok) throw new Error(`Action failed (HTTP ${res.status})`)
       } else if (action === 'demote') {
-        await fetch(`/api/admin/users/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ role: 'user' }) })
+        const res = await fetch(`/api/admin/users/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ role: 'user' }) })
+        if (!res.ok) throw new Error(`Action failed (HTTP ${res.status})`)
       }
       // Re-fetch the full monitoring payload so all tabs reflect the updated state
       const res = await fetch(`/api/admin/users/${id}/monitoring`)
       setData(await res.json() as MonitorData)
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : 'Action failed.')
     } finally {
       setActionLoading(false)
     }
@@ -80,9 +90,14 @@ export default function UserDetailPage({ params }: { params: Promise<{ id: strin
   async function deleteUser() {
     if (!confirm(`Delete user "${data?.user.username}" permanently? This cannot be undone.`)) return
     setActionLoading(true)
+    setActionError(null)
     try {
       const res = await fetch(`/api/admin/users/${id}`, { method: 'DELETE' })
+      // A7-04: only navigate away on a confirmed success.
       if (res.ok) router.push('/admin/users')
+      else setActionError(`Delete failed (HTTP ${res.status})`)
+    } catch {
+      setActionError('Delete failed.')
     } finally {
       setActionLoading(false)
     }
@@ -156,6 +171,14 @@ export default function UserDetailPage({ params }: { params: Promise<{ id: strin
           )}
         </div>
       </div>
+
+      {/* A7-04 / A16: failed admin actions are surfaced and announced. */}
+      <div aria-live="assertive" className="sr-only">{actionError ?? ''}</div>
+      {actionError && (
+        <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-2.5 text-sm font-medium text-red-400">
+          {actionError}
+        </div>
+      )}
 
       {/* Tab bar */}
       <div className="flex gap-1 border-b border-border overflow-x-auto">

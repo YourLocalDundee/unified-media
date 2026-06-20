@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireAdmin } from '@/lib/dal'
 import { getDb } from '@/lib/db/index'
 import { getAllProfiles, getAllTiers, getAllCustomFormats } from '@/lib/automation/quality'
+import { verifyOrigin } from '@/lib/csrf'
 
 export const dynamic = 'force-dynamic'
 
@@ -15,14 +16,17 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
+  if (!verifyOrigin(req)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 }) // S2: CSRF
   await requireAdmin()
-  const body = await req.json() as {
+  let body: {
     name?: string
     upgrade_allowed?: boolean
     cutoff_quality_id?: number | null
     min_format_score?: number
     cutoff_format_score?: number
   }
+  try { body = await req.json() }
+  catch { return NextResponse.json({ error: 'Invalid request' }, { status: 400 }) } // A19: parse guard
 
   const { name, upgrade_allowed = true, cutoff_quality_id = null, min_format_score = 0, cutoff_format_score = 0 } = body
   if (!name?.trim()) return NextResponse.json({ error: 'name is required' }, { status: 400 })

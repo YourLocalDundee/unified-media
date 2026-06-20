@@ -14,7 +14,8 @@
 
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
+import { useFocusTrap } from '@/hooks/useFocusTrap'
 import { Loader2, Trash2, Play, ChevronDown, ChevronUp, Plus, X } from 'lucide-react'
 
 interface MonitoredItem {
@@ -87,6 +88,7 @@ export default function AdminAutomationPage() {
 
   // Modal state
   const [showModal, setShowModal] = useState(false)
+  const modalRef = useRef<HTMLDivElement>(null)
   const [formTitle, setFormTitle] = useState('')
   const [formType, setFormType] = useState<'movie' | 'tv'>('movie')
   const [formYear, setFormYear] = useState('')
@@ -207,7 +209,7 @@ export default function AdminAutomationPage() {
     }
   }
 
-  function closeModal() {
+  const closeModal = useCallback(() => {
     setShowModal(false)
     setFormError('')
     setFormTitle('')
@@ -216,7 +218,9 @@ export default function AdminAutomationPage() {
     setFormProfile('')
     setFormTmdbId('')
     setFormRootPath('')
-  }
+  }, [])
+
+  useFocusTrap(modalRef, showModal, closeModal)
 
   // Build id→name lookup so table rows can display the profile name instead of the raw id
   const profileMap = Object.fromEntries(profiles.map(p => [p.id, p.name]))
@@ -406,10 +410,16 @@ export default function AdminAutomationPage() {
       {/* Add Item Modal */}
       {showModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-          <div className="w-full max-w-md rounded-xl border border-border bg-card p-6 shadow-xl">
+          <div
+            ref={modalRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="add-item-title"
+            className="w-full max-w-md rounded-xl border border-border bg-card p-6 shadow-xl"
+          >
             <div className="flex items-center justify-between mb-5">
-              <h2 className="text-lg font-semibold">Add Monitored Item</h2>
-              <button onClick={closeModal} className="rounded p-1 hover:bg-muted">
+              <h2 id="add-item-title" className="text-lg font-semibold">Add Monitored Item</h2>
+              <button onClick={closeModal} className="rounded p-1 hover:bg-muted" aria-label="Close">
                 <X className="h-4 w-4" />
               </button>
             </div>

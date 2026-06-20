@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAdmin } from '@/lib/dal'
+import { verifyOrigin } from '@/lib/csrf'
 import { checkRateLimit } from '@/lib/rate-limit'
 import { getClientIp } from '@/lib/client-ip'
 import { getRequestById, updateRequestStatus } from '@/lib/requests/monitor'
@@ -10,6 +11,7 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  if (!verifyOrigin(req)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   await requireAdmin()
 
   const ip = getClientIp(req)

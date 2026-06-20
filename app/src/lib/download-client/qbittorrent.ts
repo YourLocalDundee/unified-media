@@ -252,6 +252,10 @@ export class QBittorrentClient implements DownloadClient {
         cache: 'no-store',
       })
       if (!retryRes.ok) {
+        // A7-11: the freshly-acquired SID is still rejected. Clear it so the NEXT request
+        // re-authenticates cleanly instead of reusing this bad cached SID, hitting 403, and
+        // re-logging-in on every call (a login storm).
+        this.clearSession()
         throw new Error(`qBittorrent ${method} ${path}: ${retryRes.status}`)
       }
       const ct = retryRes.headers.get('content-type') ?? ''

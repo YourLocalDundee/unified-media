@@ -23,6 +23,7 @@ interface ExpiredRequest {
   tmdb_id: number
   media_type: string
   title: string
+  created_at: number
 }
 
 // Returns the number of requests successfully deleted during this run.
@@ -33,7 +34,7 @@ export async function runAutoDelete(): Promise<number> {
   // auto_approved=1 guards against accidentally deleting long-term requests that
   // somehow got an auto_delete_at set; only quick-mode content has this flag.
   const expired = db.prepare(
-    `SELECT id, tmdb_id, media_type, title FROM media_requests
+    `SELECT id, tmdb_id, media_type, title, created_at FROM media_requests
      WHERE auto_approved = 1 AND status = 'available'
      AND auto_delete_at IS NOT NULL AND auto_delete_at <= ?`
   ).all(now) as ExpiredRequest[]
@@ -44,21 +45,44 @@ export async function runAutoDelete(): Promise<number> {
 
   for (const req of expired) {
     try {
+      // D1 (ownership guard #1 — shared content). The old code matched media_items by tmdb_id+type
+      // ONLY, so an expiring quick request could delete files a *different* request still depends on
+      // (another user's request, or a long-term request for the same title). If any other
+      // non-terminal request references this title, free this slot but leave the files alone.
+      const sharedWithOther = db.prepare(
+        `SELECT 1 FROM media_requests
+         WHERE tmdb_id = ? AND media_type = ? AND id <> ?
+         AND status NOT IN ('expired', 'declined') LIMIT 1`
+      ).get(req.tmdb_id, req.media_type, req.id)
+      if (sharedWithOther) {
+        db.prepare(
+          `UPDATE media_requests SET status = 'expired', auto_delete_at = NULL WHERE id = ?`
+        ).run(req.id)
+        console.log(`[auto-delete] Freed slot for "${req.title}" (tmdb:${req.tmdb_id}); kept files — another active request references this title`)
+        deleted++
+        continue
+      }
+
       // For TV: episode rows (type='episode') hold actual file_path values.
       // The series stub row (type='series') has file_path=NULL and must also
       // be deleted, but has no file to unlink.
       const items = req.media_type === 'movie'
         ? db.prepare(
-            'SELECT id, file_path FROM media_items WHERE tmdb_id = ? AND type = ?'
-          ).all(req.tmdb_id, 'movie') as { id: string; file_path: string | null }[]
+            'SELECT id, file_path, added_at FROM media_items WHERE tmdb_id = ? AND type = ?'
+          ).all(req.tmdb_id, 'movie') as { id: string; file_path: string | null; added_at: number }[]
         : db.prepare(
-            `SELECT id, file_path FROM media_items
+            `SELECT id, file_path, added_at FROM media_items
              WHERE tmdb_id = ? AND type IN ('episode', 'series')`
-          ).all(req.tmdb_id) as { id: string; file_path: string | null }[]
+          ).all(req.tmdb_id) as { id: string; file_path: string | null; added_at: number }[]
 
       // Collect unique parent directories so we can clean up subtitles and empty dirs after
       const dirs = new Set<string>()
       for (const item of items) {
+        // D1 (ownership guard #2 — pre-existing library). Only remove content this request brought
+        // in. Anything added before the request was created is library the user already had, so it
+        // is never touched. This also scopes a single-episode quick request to just that episode
+        // instead of nuking every episode of a series that shares the tmdb_id.
+        if (item.added_at < req.created_at) continue
         if (item.file_path && fs.existsSync(item.file_path)) {
           fs.unlinkSync(item.file_path)
           dirs.add(path.dirname(item.file_path))

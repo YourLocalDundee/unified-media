@@ -1,6 +1,7 @@
 // Season list for a TV series. Sorts by IndexNumber with the Specials season
 // (IndexNumber=0) moved to the end of the list since it is less commonly accessed.
 import { NextRequest, NextResponse } from 'next/server'
+import { getSession } from '@/lib/dal'
 import { getSeasons } from '@/lib/jellyfin/api'
 
 export const dynamic = 'force-dynamic'
@@ -9,6 +10,10 @@ export async function GET(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  // S1: credentialed Jellyfin proxy — require a session.
+  const session = await getSession()
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
   const { id } = await params
   const userId = process.env.JELLYFIN_USER_ID ?? ''
   try {

@@ -12,6 +12,7 @@
  * the block idempotent.
  */
 import type Database from 'better-sqlite3'
+import { computeScopeKey } from '@/lib/automation/scope-key'
 
 export function runMigrations(db: Database.Database): void {
   // --------------------------------------------------------------------------
@@ -180,7 +181,7 @@ export function runMigrations(db: Database.Database): void {
       quality_profile_id INTEGER NOT NULL DEFAULT 1,
       root_path          TEXT NOT NULL DEFAULT '',
       monitored          INTEGER NOT NULL DEFAULT 1,
-      status             TEXT NOT NULL DEFAULT 'wanted' CHECK(status IN ('wanted','grabbed','imported','ignored')),
+      status             TEXT NOT NULL DEFAULT 'wanted' CHECK(status IN ('wanted','grabbing','grabbed','imported','ignored')),
       created_at         INTEGER NOT NULL,
       updated_at         INTEGER NOT NULL
     );
@@ -581,8 +582,142 @@ export function runMigrations(db: Database.Database): void {
     // media_items — enrichment fields from TMDB
     'ALTER TABLE media_items ADD COLUMN episode_title TEXT',
     'ALTER TABLE media_items ADD COLUMN genres TEXT',
+    // monitored_items — A6-02 scope-aware dedup discriminator (backfilled + uniquely indexed below)
+    "ALTER TABLE monitored_items ADD COLUMN scope_key TEXT NOT NULL DEFAULT ''",
   ]
   for (const sql of addCols) {
     try { db.exec(sql) } catch { /* column already exists — safe to ignore */ }
+  }
+
+  // --------------------------------------------------------------------------
+  // D3 — widen monitored_items.status CHECK to include 'grabbing' (atomic claim
+  // state for the immediate-grab-vs-cron race). SQLite cannot ALTER a CHECK
+  // constraint, so recreate the table if the old constraint is present. Mirrors
+  // the media_requests widening above: runs AFTER all additive columns exist so
+  // the new DDL/INSERT covers every column, and BEFORE the dedup/unique-index
+  // block below (which recreates idx_monitored_scope_unique idempotently). The
+  // base indexes are recreated here; the unique scope index is recreated below.
+  // --------------------------------------------------------------------------
+  {
+    const tblInfo = db.prepare(
+      "SELECT sql FROM sqlite_master WHERE type='table' AND name='monitored_items'"
+    ).get() as { sql: string } | undefined
+    if (tblInfo && !tblInfo.sql.includes("'grabbing'")) {
+      db.exec('BEGIN')
+      try {
+        db.exec(`
+          CREATE TABLE monitored_items_new (
+            id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+            tmdb_id            INTEGER,
+            tvdb_id            INTEGER,
+            type               TEXT NOT NULL CHECK(type IN ('movie','tv')),
+            title              TEXT NOT NULL,
+            year               INTEGER,
+            quality_profile_id INTEGER NOT NULL DEFAULT 1,
+            root_path          TEXT NOT NULL DEFAULT '',
+            monitored          INTEGER NOT NULL DEFAULT 1,
+            status             TEXT NOT NULL DEFAULT 'wanted'
+                                 CHECK(status IN ('wanted','grabbing','grabbed','imported','ignored')),
+            created_at         INTEGER NOT NULL,
+            updated_at         INTEGER NOT NULL,
+            download_completed_at INTEGER,
+            scope_type         TEXT DEFAULT 'full',
+            scope_seasons      TEXT,
+            scope_episodes     TEXT,
+            monitor_future     INTEGER DEFAULT 0,
+            language           TEXT NOT NULL DEFAULT 'any',
+            scope_key          TEXT NOT NULL DEFAULT ''
+          )
+        `)
+        const cols = [
+          'id', 'tmdb_id', 'tvdb_id', 'type', 'title', 'year', 'quality_profile_id',
+          'root_path', 'monitored', 'status', 'created_at', 'updated_at',
+          'download_completed_at', 'scope_type', 'scope_seasons', 'scope_episodes',
+          'monitor_future', 'language', 'scope_key',
+        ].join(', ')
+        db.exec(`INSERT INTO monitored_items_new (${cols}) SELECT ${cols} FROM monitored_items`)
+        db.exec('DROP TABLE monitored_items')
+        db.exec('ALTER TABLE monitored_items_new RENAME TO monitored_items')
+        db.exec('CREATE INDEX IF NOT EXISTS idx_monitored_status ON monitored_items(status)')
+        db.exec('CREATE INDEX IF NOT EXISTS idx_monitored_tmdb ON monitored_items(tmdb_id)')
+        db.exec('COMMIT')
+      } catch (e) {
+        db.exec('ROLLBACK')
+        throw e
+      }
+    }
+  }
+
+  // --------------------------------------------------------------------------
+  // A6-02 — enforce one monitored_items row per (tmdb_id, type, scope_key).
+  //
+  // A bare (tmdb_id, type) unique index would break the season/episode fan-out, which
+  // legitimately creates multiple rows per (tmdb_id, type). scope_key (never null) is the
+  // discriminator. Order matters: backfill keys → merge existing duplicates → THEN create the
+  // unique index (it would fail if duplicates still existed). The whole block is idempotent.
+  // --------------------------------------------------------------------------
+  {
+    // 1. Backfill scope_key for rows that don't have one yet (fresh column default '' or legacy).
+    const needKey = db
+      .prepare(
+        "SELECT id, type, scope_type, scope_seasons, scope_episodes FROM monitored_items WHERE scope_key = '' OR scope_key IS NULL"
+      )
+      .all() as Array<{
+        id: number
+        type: 'movie' | 'tv'
+        scope_type: string | null
+        scope_seasons: string | null
+        scope_episodes: string | null
+      }>
+    if (needKey.length > 0) {
+      const setKey = db.prepare('UPDATE monitored_items SET scope_key = ? WHERE id = ?')
+      const backfill = db.transaction(() => {
+        for (const r of needKey) {
+          setKey.run(
+            computeScopeKey(r.type, r.scope_type, r.scope_seasons, r.scope_episodes),
+            r.id
+          )
+        }
+      })
+      backfill()
+    }
+
+    // 2. Merge duplicate rows sharing (tmdb_id, type, scope_key): keep the lowest id, repoint
+    //    child rows (grab_history, grab_results) to it, delete the losers.
+    const dupGroups = db
+      .prepare(
+        `SELECT tmdb_id, type, scope_key, MIN(id) AS keep_id, COUNT(*) AS n
+         FROM monitored_items
+         WHERE tmdb_id IS NOT NULL
+         GROUP BY tmdb_id, type, scope_key
+         HAVING n > 1`
+      )
+      .all() as Array<{ tmdb_id: number; type: string; scope_key: string; keep_id: number; n: number }>
+    if (dupGroups.length > 0) {
+      const losersOf = db.prepare(
+        'SELECT id FROM monitored_items WHERE tmdb_id = ? AND type = ? AND scope_key = ? AND id <> ?'
+      )
+      const repointHistory = db.prepare('UPDATE grab_history SET item_id = ? WHERE item_id = ?')
+      const repointResults = db.prepare('UPDATE grab_results SET monitored_item_id = ? WHERE monitored_item_id = ?')
+      const deleteItem = db.prepare('DELETE FROM monitored_items WHERE id = ?')
+      const merge = db.transaction(() => {
+        for (const g of dupGroups) {
+          const losers = losersOf.all(g.tmdb_id, g.type, g.scope_key, g.keep_id) as Array<{ id: number }>
+          for (const loser of losers) {
+            repointHistory.run(g.keep_id, loser.id)
+            repointResults.run(g.keep_id, loser.id)
+            deleteItem.run(loser.id)
+          }
+        }
+      })
+      merge()
+    }
+
+    // 3. Now the index can be created safely.
+    try {
+      db.exec(
+        'CREATE UNIQUE INDEX IF NOT EXISTS idx_monitored_scope_unique ON monitored_items(tmdb_id, type, scope_key)'
+      )
+    } catch { /* duplicates somehow remained — leave index absent rather than crash startup */ }
   }
 }

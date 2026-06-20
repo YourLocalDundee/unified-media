@@ -7,6 +7,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireAdmin, logEvent } from '@/lib/dal'
 import { getDb } from '@/lib/db/index'
 import bcrypt from 'bcryptjs'
+import { verifyOrigin } from '@/lib/csrf'
 
 const UPPER = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
 function genTempPw(): string {
@@ -19,7 +20,8 @@ function genTempPw(): string {
   return pw.slice(0, 8) + 'x!' + pw.slice(8, 10) + pw.slice(10)
 }
 
-export async function POST(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  if (!verifyOrigin(req)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 }) // S2: CSRF
   const session = await requireAdmin()
   const { id } = await params
   const tempPassword = genTempPw()

@@ -30,7 +30,11 @@ interface ResumeRow {
   backdrop_path: string | null
   runtime_ticks: number | null
   position_ticks: number
-  last_played: number | null
+  // A20-02: order by updated_at, not last_played. last_played is only written when a row is
+  // marked *played*; resumable rows (played=0) always have last_played NULL, so the old
+  // ORDER BY/dedup/sort on it was effectively arbitrary. updated_at is bumped on every
+  // progress write, so it is the correct recency column for the continue-watching feed.
+  last_activity: number | null
   series_title: string | null
   series_poster_path: string | null
 }
@@ -46,7 +50,7 @@ export async function GET() {
            mi.id, mi.type, mi.title,
            mi.series_id, mi.season_number, mi.episode_number,
            mi.poster_path, mi.backdrop_path, mi.runtime_ticks,
-           mws.position_ticks, mws.last_played,
+           mws.position_ticks, mws.updated_at AS last_activity,
            s.title AS series_title,
            s.poster_path AS series_poster_path
          FROM media_items mi
@@ -56,7 +60,7 @@ export async function GET() {
            AND mws.played = 0
            AND mws.position_ticks > 0
            AND mi.type IN ('movie', 'episode')
-         ORDER BY mws.last_played DESC
+         ORDER BY mws.updated_at DESC
          LIMIT 50`
       )
       .all(session.userId) as ResumeRow[]
@@ -69,7 +73,7 @@ export async function GET() {
     for (const row of rows) {
       if (row.type === 'episode' && row.series_id) {
         const existing = seriesMap.get(row.series_id)
-        if (!existing || (row.last_played ?? 0) > (existing.last_played ?? 0)) {
+        if (!existing || (row.last_activity ?? 0) > (existing.last_activity ?? 0)) {
           seriesMap.set(row.series_id, row)
         }
       } else if (row.type === 'movie') {
@@ -99,7 +103,7 @@ export async function GET() {
           ep.runtime_ticks && ep.runtime_ticks > 0
             ? ep.position_ticks / ep.runtime_ticks
             : 0,
-        lastPlayed: ep.last_played ? new Date(ep.last_played).toISOString() : '',
+        lastPlayed: ep.last_activity ? new Date(ep.last_activity).toISOString() : '',
       })
     }
 
@@ -113,7 +117,7 @@ export async function GET() {
           movie.runtime_ticks && movie.runtime_ticks > 0
             ? movie.position_ticks / movie.runtime_ticks
             : 0,
-        lastPlayed: movie.last_played ? new Date(movie.last_played).toISOString() : '',
+        lastPlayed: movie.last_activity ? new Date(movie.last_activity).toISOString() : '',
       })
     }
 

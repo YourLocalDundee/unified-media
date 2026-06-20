@@ -4,6 +4,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth } from '@/lib/dal'
+import { verifyOrigin } from '@/lib/csrf'
 import { checkRateLimit } from '@/lib/rate-limit'
 import type { RequestStatus } from '@/lib/requests/types'
 import {
@@ -35,6 +36,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  if (!verifyOrigin(req)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   const session = await requireAuth()
 
   const rl = checkRateLimit(`create-request:${session.userId}`, 20, 60 * 60 * 1000)
@@ -42,7 +44,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Too many requests. Try again later.' }, { status: 429 })
   }
 
-  const body = await req.json() as {
+  let body: {
     tmdbId?: number
     mediaType?: 'movie' | 'tv'
     title?: string
@@ -73,6 +75,8 @@ export async function POST(req: NextRequest) {
       size: number
     }
   }
+  try { body = await req.json() }
+  catch { return NextResponse.json({ error: 'Invalid request' }, { status: 400 }) } // A19: parse guard
 
   const { tmdbId, mediaType, title, year, posterPath, overview, seasons, pickedTorrent,
           scopeType, scopeSeasons, scopeEpisodes, monitorFuture } = body
@@ -113,12 +117,19 @@ export async function POST(req: NextRequest) {
   }
 
   // Year guard for 48hr retention: quick-slot logic only applies to back-catalog content.
+  // A6-08: this is a content-policy rejection, not a rate/slot limit — return 422 (not 429, which
+  // the client treats as "limit reached"). The `code` lets the client branch deterministically.
+  // A7-03: only the auto-pick quick path is gated here. An interactive pick goes to the admin queue
+  // "regardless of year" (CLAUDE.md §15), so it must not be rejected by the year rule.
   const currentYear = new Date().getFullYear()
   const isOldEnough = (year != null) && (year < currentYear)
-  if (retentionType === 'quick' && !isOldEnough) {
+  if (retentionType === 'quick' && methodType === 'auto-pick' && !isOldEnough) {
     return NextResponse.json(
-      { error: '48hr Access is only available for content released before this year. Try Long-term instead.' },
-      { status: 429 }
+      {
+        code: 'year_not_eligible',
+        error: '48hr Access is only available for content released before this year. Try Long-term instead.',
+      },
+      { status: 422 }
     )
   }
 
@@ -144,80 +155,17 @@ export async function POST(req: NextRequest) {
     .run(methodType, language, Date.now(), created.id)
 
   // ── INTERACTIVE PATH (user hand-picked a specific release) ──────────────────
+  // A7-03: interactive picks ALWAYS go to the admin queue (pending), for both quick and long-term
+  // retention. CLAUDE.md §15 and the TorrentPickModal footer both state this ("Interactive picks
+  // always go to admin queue regardless of retention"); the previous quick+interactive branch
+  // grabbed immediately, which (a) contradicted the spec, (b) skipped the quick-slot accounting in
+  // tryAutoApprove, and (c) added the torrent before any bookkeeping (A6-06 orphaned-download race).
+  // The chosen release is stored as preferred_release; the admin approve route grabs it on approval.
   if (pickedTorrent) {
-    // Store the preferred release regardless of retention type.
     getDb()
       .prepare('UPDATE media_requests SET preferred_release = ?, updated_at = ? WHERE id = ?')
       .run(JSON.stringify(pickedTorrent), Date.now(), created.id)
 
-    if (retentionType === 'quick') {
-      // Quick + interactive: grab immediately (same as Radarr interactive search).
-      // The user already chose the release — no admin approval gate applies.
-      try {
-        const { getClient } = await import('@/lib/download-client/registry')
-        const client = getClient()
-        await client.addTorrent({
-          urls: pickedTorrent.magnetUrl || pickedTorrent.downloadUrl,
-          category: mediaType,
-        })
-
-        // Create a monitored_item so the importer can track completion.
-        const { createItem } = await import('@/lib/automation/monitor')
-        try {
-          createItem({
-            tmdb_id: tmdbId,
-            tvdb_id: undefined,
-            type: mediaType === 'movie' ? 'movie' : 'tv',
-            title,
-            year: year ?? undefined,
-            quality_profile_id: 1,
-            root_path: '',
-            scope_type: scopeType ?? null,
-            scope_seasons: scopeSeasons ? (Array.isArray(scopeSeasons) ? scopeSeasons : null) : null,
-            scope_episodes: scopeEpisodes ? (Array.isArray(scopeEpisodes) ? scopeEpisodes : null) : null,
-            monitor_future: Boolean(monitorFuture),
-            language,
-          })
-        } catch (itemErr) {
-          // 'already exists' is fine — a previous request may have already created the item.
-          const msg = itemErr instanceof Error ? itemErr.message : String(itemErr)
-          if (!msg.toLowerCase().includes('already exists')) {
-            throw itemErr
-          }
-        }
-
-        // Record in grab_history.
-        const { getAllItems, recordGrab, updateItem } = await import('@/lib/automation/monitor')
-        const allItems = getAllItems()
-        const monitoredItem = allItems.find(
-          i => i.tmdb_id === tmdbId && i.type === (mediaType === 'movie' ? 'movie' : 'tv')
-        )
-        if (monitoredItem) {
-          recordGrab({
-            item_id: monitoredItem.id,
-            indexer: pickedTorrent.indexerName,
-            release_title: pickedTorrent.releaseTitle,
-            info_hash: pickedTorrent.infoHash,
-          })
-          updateItem(monitoredItem.id, { status: 'grabbed' })
-        }
-
-        // Mark request approved.
-        getDb()
-          .prepare("UPDATE media_requests SET status = 'approved', auto_approved = 1, updated_at = ? WHERE id = ?")
-          .run(Date.now(), created.id)
-
-        const approved = getRequestById(created.id)
-        return NextResponse.json(approved, { status: 201 })
-      } catch (grabErr) {
-        // Grab failed — leave request in pending state for manual retry.
-        console.error('[requests] Interactive quick grab failed:', grabErr)
-        const pending = getRequestById(created.id)
-        return NextResponse.json({ ...pending, _grabError: true }, { status: 201 })
-      }
-    }
-
-    // Long-term + interactive: store preferred release, queue for admin approval.
     const pending = getRequestById(created.id)
     return NextResponse.json(pending, { status: 201 })
   }

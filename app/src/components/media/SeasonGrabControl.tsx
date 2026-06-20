@@ -11,9 +11,10 @@
  * Rendered only when the viewer is an admin (the parent gates on session.role).
  */
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Download, Loader2, X, Check } from 'lucide-react'
 import { ModalPortal } from '@/components/ui/ModalPortal'
+import { useFocusTrap } from '@/hooks/useFocusTrap'
 import { LANGUAGE_OPTIONS } from './RequestOptions'
 
 interface Props {
@@ -47,6 +48,9 @@ export function SeasonGrabControl({ tmdbId, title, year, seasonNumber, seasonNam
   const [ui, setUi] = useState<UIState>('idle')
   const [msg, setMsg] = useState('')
   const [foundEpisodeCount, setFoundEpisodeCount] = useState<number>(episodeCount ?? 0)
+
+  const dialogRef = useRef<HTMLDivElement>(null)
+  useFocusTrap(dialogRef, open, () => setOpen(false))
 
   // Load quality profiles when the modal opens.
   useEffect(() => {
@@ -125,10 +129,16 @@ export function SeasonGrabControl({ tmdbId, title, year, seasonNumber, seasonNam
             className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
             onClick={(e) => { if (e.target === e.currentTarget) setOpen(false) }}
           >
-            <div className="w-full max-w-sm rounded-xl border border-zinc-700 bg-zinc-900 p-5 shadow-2xl">
+            <div
+              ref={dialogRef}
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="season-grab-title"
+              className="w-full max-w-sm rounded-xl border border-zinc-700 bg-zinc-900 p-5 shadow-2xl"
+            >
               <div className="mb-4 flex items-start justify-between">
                 <div>
-                  <h2 className="text-base font-semibold text-zinc-100">Grab season</h2>
+                  <h2 id="season-grab-title" className="text-base font-semibold text-zinc-100">Grab season</h2>
                   <p className="mt-0.5 text-xs text-zinc-400 line-clamp-1">{title} — {seasonName}</p>
                 </div>
                 <button onClick={() => setOpen(false)} className="text-zinc-500 hover:text-zinc-300" aria-label="Close">

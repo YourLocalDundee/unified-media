@@ -9,6 +9,8 @@ export default function AdminSettingsPage() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
+  // A7-04: a failed save must not show "Saved."
+  const [saveError, setSaveError] = useState<string | null>(null)
 
   useEffect(() => {
     // Settings are stored as strings in the DB ('0'/'1'), so compare against '1' not 1.
@@ -24,14 +26,22 @@ export default function AdminSettingsPage() {
   async function save() {
     setSaving(true)
     setSaved(false)
-    await fetch('/api/admin/settings', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ auto_approve: autoApprove ? '1' : '0' }),
-    })
-    setSaving(false)
-    setSaved(true)
-    setTimeout(() => setSaved(false), 2500)
+    setSaveError(null)
+    try {
+      // A7-04: only report success on a confirmed 2xx response.
+      const res = await fetch('/api/admin/settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ auto_approve: autoApprove ? '1' : '0' }),
+      })
+      if (!res.ok) throw new Error(`Save failed (HTTP ${res.status})`)
+      setSaved(true)
+      setTimeout(() => setSaved(false), 2500)
+    } catch (e) {
+      setSaveError(e instanceof Error ? e.message : 'Save failed.')
+    } finally {
+      setSaving(false)
+    }
   }
 
   if (loading) {
@@ -97,7 +107,11 @@ export default function AdminSettingsPage() {
         >
           {saving ? 'Saving…' : 'Save Settings'}
         </button>
-        {saved && <p className="text-sm text-green-400">Saved.</p>}
+        {/* A16: announce save result politely. */}
+        <p aria-live="polite" className="text-sm">
+          {saved && <span className="text-green-400">Saved.</span>}
+          {saveError && <span className="text-red-400">{saveError}</span>}
+        </p>
       </div>
     </div>
   )

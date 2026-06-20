@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import type { TorrentSearchResult } from '@/app/api/torrent-search/route'
 import { ModalPortal } from '@/components/ui/ModalPortal'
+import { useFocusTrap } from '@/hooks/useFocusTrap'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -162,22 +163,32 @@ export function TorrentPickModal({
   const [scopeEpisodesLoading, setScopeEpisodesLoading] = useState(false)
 
   const inputRef = useRef<HTMLInputElement>(null)
+  const dialogRef = useRef<HTMLDivElement>(null)
+  useFocusTrap(dialogRef, true, onClose)
+  // Abort controller for any in-flight search — aborts stale requests when a new
+  // dropdown change fires before the previous search completes (A7-15).
+  const searchAbortRef = useRef<AbortController | null>(null)
 
   const runSearch = useCallback(async (q: string) => {
     if (!q.trim()) return
+    // Cancel any in-flight search
+    searchAbortRef.current?.abort()
+    const ctrl = new AbortController()
+    searchAbortRef.current = ctrl
     setLoading(true)
     setError(null)
     setSearched(true)
     try {
       const params = new URLSearchParams({ q: q.trim(), type: mediaType })
-      const res = await fetch(`/api/torrent-search?${params}`)
+      const res = await fetch(`/api/torrent-search?${params}`, { signal: ctrl.signal })
       if (!res.ok) throw new Error(`Search failed (${res.status})`)
       const data = await res.json() as { results: TorrentSearchResult[] }
       setResults(data.results)
     } catch (e) {
+      if (e instanceof Error && e.name === 'AbortError') return // superseded by a newer search
       setError(e instanceof Error ? e.message : 'Search error')
     } finally {
-      setLoading(false)
+      if (!ctrl.signal.aborted) setLoading(false)
     }
   }, [mediaType])
 
@@ -320,7 +331,13 @@ export function TorrentPickModal({
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
       onClick={e => { if (e.target === e.currentTarget) onClose() }}
     >
-      <div className="flex flex-col w-full max-w-4xl max-h-[90vh] rounded-xl border border-zinc-700 bg-zinc-950 shadow-2xl overflow-hidden">
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="torrent-pick-title"
+        className="flex flex-col w-full max-w-4xl max-h-[90vh] rounded-xl border border-border bg-card shadow-2xl overflow-hidden"
+      >
 
         {/* Header */}
         <div className="flex items-start justify-between gap-4 px-5 pt-5 pb-4 border-b border-zinc-800 shrink-0">
@@ -333,15 +350,16 @@ export function TorrentPickModal({
               />
             )}
             <div className="min-w-0">
-              <h2 className="font-semibold text-white truncate">{title}</h2>
+              <h2 id="torrent-pick-title" className="font-semibold text-white truncate">{title}</h2>
               <p className="text-xs text-zinc-500">{year} · {mediaType === 'movie' ? 'Movie' : 'TV Show'} · Choose a release</p>
             </div>
           </div>
           <button
             onClick={onClose}
             className="shrink-0 text-zinc-500 hover:text-white transition-colors text-xl leading-none"
+            aria-label="Close"
           >
-            ✕
+            <span aria-hidden="true">✕</span>
           </button>
         </div>
 
@@ -480,7 +498,7 @@ export function TorrentPickModal({
 
           {!loading && visible.length > 0 && (
             <table className="w-full text-sm">
-              <thead className="sticky top-0 bg-zinc-950 border-b border-zinc-800">
+              <thead className="sticky top-0 bg-card border-b border-border">
                 <tr>
                   <th className="py-2 pl-4 pr-2 text-left text-xs font-medium text-zinc-500 w-4"></th>
                   <th className="py-2 px-2 text-left text-xs font-medium text-zinc-500">Release</th>

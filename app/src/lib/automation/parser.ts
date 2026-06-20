@@ -109,7 +109,9 @@ function normaliseSource(raw: string): string {
 
 // Extracts the human-readable title by slicing the filename at the earliest quality tag.
 // Scene releases use dots/underscores as word separators, so we convert them to spaces.
-export function extractTitle(name: string): string | null {
+export function extractTitle(rawName: string): string | null {
+  // Cap input length to bound regex execution time on crafted indexer releases (A21-04).
+  const name = rawName.length > 512 ? rawName.slice(0, 512) : rawName
   // Collect the string position of every known "end of title" marker
   const positions: number[] = []
 
@@ -143,7 +145,9 @@ export function extractTitle(name: string): string | null {
 
 // ── main parser ────────────────────────────────────────────────────────────────
 
-export function parseReleaseName(name: string): ReleaseMeta {
+export function parseReleaseName(rawName: string): ReleaseMeta {
+  // Cap input length to bound regex execution time on crafted indexer releases (A21-04).
+  const name = rawName.length > 512 ? rawName.slice(0, 512) : rawName
   // resolution — first match
   const resMatch = RE_RESOLUTION.exec(name)
   const resolution = resMatch ? resMatch[1].toLowerCase() as ReleaseMeta['resolution'] : null

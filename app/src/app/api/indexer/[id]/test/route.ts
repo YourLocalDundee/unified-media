@@ -1,14 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAdmin } from '@/lib/dal'
+import { verifyOrigin } from '@/lib/csrf'
 import { getIndexerById, updateIndexerHealth } from '@/lib/indexer/config'
 import { testIndexer } from '@/lib/indexer/index'
 
 export const dynamic = 'force-dynamic'
 
 export async function POST(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  if (!verifyOrigin(req)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   await requireAdmin()
 
   const { id: idStr } = await params

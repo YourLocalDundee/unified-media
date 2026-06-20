@@ -49,13 +49,13 @@ export default function DiscoverResults({ items, query }: Props) {
             {/* Poster as link */}
             <a href={detailUrl} className="relative aspect-[2/3] w-full bg-zinc-800 block">
               {posterUrl ? (
+                // A02-006/A15-G: TMDB host covered by remotePatterns — optimization on.
                 <Image
                   src={posterUrl}
                   alt={item.title}
                   fill
                   sizes="(max-width: 640px) 50vw, (max-width: 768px) 33vw, 20vw"
                   className="object-cover"
-                  unoptimized
                 />
               ) : (
                 <div className="flex h-full w-full items-center justify-center text-zinc-600">

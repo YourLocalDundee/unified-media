@@ -1,4 +1,10 @@
 unified.minijoe.dev {
     import compressed
+    # F3 (CLAUDE.md §16): the party WebSocket runs on a dedicated server on port 3002.
+    # Route /api/party/ws* there; everything else goes to the Next.js app on 3001.
+    # Caddy upgrades WebSockets automatically (forwards Upgrade/Connection). Match must
+    # precede the catch-all reverse_proxy so the WS path isn't swallowed by it.
+    @partyws path /api/party/ws*
+    reverse_proxy @partyws unified-frontend:3002
     reverse_proxy unified-frontend:3001
 }

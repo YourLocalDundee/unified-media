@@ -1,19 +1,24 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAdmin } from '@/lib/dal'
-import { getAllIndexers, createIndexer } from '@/lib/indexer/config'
+import { verifyOrigin } from '@/lib/csrf'
+import { getAllIndexers, createIndexer, redactIndexer } from '@/lib/indexer/config'
 
 export const dynamic = 'force-dynamic'
 
 export async function GET() {
   await requireAdmin()
-  const indexers = getAllIndexers()
+  // S4: never return api_key to the browser.
+  const indexers = getAllIndexers().map(redactIndexer)
   return NextResponse.json(indexers)
 }
 
 export async function POST(req: NextRequest) {
+  if (!verifyOrigin(req)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   await requireAdmin()
 
-  const body = await req.json() as { name?: unknown; torznab_url?: unknown; api_key?: unknown }
+  let body: { name?: unknown; torznab_url?: unknown; api_key?: unknown }
+  try { body = await req.json() }
+  catch { return NextResponse.json({ error: 'Invalid request' }, { status: 400 }) } // A19: parse guard
 
   if (!body.name || typeof body.name !== 'string' || body.name.trim() === '') {
     return NextResponse.json({ error: 'name is required' }, { status: 400 })
@@ -28,5 +33,5 @@ export async function POST(req: NextRequest) {
     api_key: typeof body.api_key === 'string' ? body.api_key : '',
   })
 
-  return NextResponse.json(indexer, { status: 201 })
+  return NextResponse.json(redactIndexer(indexer), { status: 201 })
 }

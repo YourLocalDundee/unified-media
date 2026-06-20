@@ -4,11 +4,12 @@
 'use client'
 
 import Link from 'next/link'
-import { Suspense } from 'react'
+import { Suspense, useEffect } from 'react'
 import { usePathname } from 'next/navigation'
 import { Home, Film, Library, ClipboardList, Download, ChevronLeft, ChevronRight } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAppStore } from '@/store'
+import { useDisplayPrefs } from '@/hooks/useSettings'
 
 const navItems = [
   { href: '/', icon: Home, label: 'Dashboard' },
@@ -51,7 +52,17 @@ function SidebarNav({ sidebarOpen }: { sidebarOpen: boolean }) {
 }
 
 export function Sidebar() {
-  const { sidebarOpen, toggleSidebar } = useAppStore()
+  const sidebarOpen = useAppStore((s) => s.sidebarOpen)
+  const setSidebarOpen = useAppStore((s) => s.setSidebarOpen)
+  const toggleSidebar = useAppStore((s) => s.toggleSidebar)
+  const { prefs } = useDisplayPrefs()
+
+  // Seed Zustand's sidebar state from the user's display pref on first mount.
+  // Only runs once (no pref in deps) so the user's toggle during the session wins.
+  useEffect(() => {
+    setSidebarOpen(!prefs.sidebarCollapsed)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   return (
     <aside

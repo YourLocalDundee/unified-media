@@ -356,7 +356,7 @@ export default async function BrowsePage({ searchParams }: BrowsePageProps) {
   if (f.discoverType === 'all' || f.query) f.genreId = undefined
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-white">
+    <div className="min-h-screen bg-background text-foreground">
       <div className="mx-auto max-w-screen-2xl px-4 py-8 sm:px-6 lg:px-8">
         <div className="mb-8 flex flex-col gap-4">
           <div className="flex items-center justify-between">

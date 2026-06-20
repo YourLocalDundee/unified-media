@@ -1,14 +1,18 @@
 /**
- * Internal Torznab search endpoint consumed by the automation layer.
- * No session auth — callers are server-side scheduled jobs, not browser clients.
+ * Torznab search endpoint. The automation layer calls `searchAllIndexers` directly (in-process),
+ * so this HTTP route has no internal callers — but it is still a normally-reachable endpoint.
+ * A7-06: gate it with requireAuth so an anonymous caller can't drive an unbounded outbound
+ * fan-out to every configured indexer (rate-limit burn / private-tracker bans).
  */
 import { NextRequest, NextResponse } from 'next/server'
+import { requireAuth } from '@/lib/dal'
 import { searchAllIndexers } from '@/lib/indexer/index'
 import type { TorznabSearchParams } from '@/lib/indexer/types'
 
 export const dynamic = 'force-dynamic'
 
 export async function GET(req: NextRequest) {
+  await requireAuth()
   const sp = req.nextUrl.searchParams
 
   const q = sp.get('q') ?? undefined

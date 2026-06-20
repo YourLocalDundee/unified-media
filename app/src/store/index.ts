@@ -15,15 +15,13 @@ interface AppState {
   playerStartTicks: number
   // UI
   sidebarOpen: boolean
-  // Browse page per-page preference (in-memory — persists across client navigations)
-  browsePageSize: number
 }
 
 interface AppActions {
   openPlayer: (itemId: string, startTicks?: number) => void
   closePlayer: () => void
   toggleSidebar: () => void
-  setBrowsePageSize: (size: number) => void
+  setSidebarOpen: (open: boolean) => void
 }
 
 export const useAppStore = create<AppState & AppActions>()((set) => ({
@@ -32,7 +30,6 @@ export const useAppStore = create<AppState & AppActions>()((set) => ({
   isPlayerOpen: false,
   playerStartTicks: 0,
   sidebarOpen: false,
-  browsePageSize: 25,
 
   // Actions
   openPlayer: (itemId, startTicks = 0) =>
@@ -44,5 +41,5 @@ export const useAppStore = create<AppState & AppActions>()((set) => ({
   toggleSidebar: () =>
     set((state) => ({ sidebarOpen: !state.sidebarOpen })),
 
-  setBrowsePageSize: (size) => set({ browsePageSize: size }),
+  setSidebarOpen: (open) => set({ sidebarOpen: open }),
 }))

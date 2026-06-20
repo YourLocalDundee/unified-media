@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAdmin } from '@/lib/dal'
+import { verifyOrigin } from '@/lib/csrf'
 import { getIndexerById, activateIndexer } from '@/lib/indexer/config'
 import { testIndexer } from '@/lib/indexer/index'
 
@@ -9,6 +10,7 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  if (!verifyOrigin(req)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   await requireAdmin()
   const { id: idStr } = await params
   const id = parseInt(idStr, 10)
@@ -17,7 +19,9 @@ export async function POST(
   const indexer = getIndexerById(id)
   if (!indexer) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
-  const body = await req.json() as { credentials?: Record<string, string> }
+  let body: { credentials?: Record<string, string> }
+  try { body = await req.json() }
+  catch { return NextResponse.json({ error: 'Invalid request' }, { status: 400 }) } // A19: parse guard
   const creds = body.credentials ?? {}
 
   const torznab_url = (creds['torznab_url'] ?? '').trim()

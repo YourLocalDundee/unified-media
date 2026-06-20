@@ -16,8 +16,9 @@
  * POST /api/requests body.
  */
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { ModalPortal } from '@/components/ui/ModalPortal'
+import { useFocusTrap } from '@/hooks/useFocusTrap'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -120,6 +121,9 @@ function Checkbox({
 // ---------------------------------------------------------------------------
 
 export function SeriesScopeModal({ tmdbId, title, onConfirm, onClose }: Props) {
+  const dialogRef = useRef<HTMLDivElement>(null)
+  useFocusTrap(dialogRef, true, onClose)
+
   const [scopeType, setScopeType] = useState<SeriesScopeType>('full')
   const [monitorFuture, setMonitorFuture] = useState(true)
 
@@ -316,12 +320,18 @@ export function SeriesScopeModal({ tmdbId, title, onConfirm, onClose }: Props) {
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
       onClick={e => { if (e.target === e.currentTarget) onClose() }}
     >
-      <div className="relative w-full max-w-lg bg-zinc-900 border border-zinc-700 rounded-xl shadow-2xl flex flex-col max-h-[90vh]">
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="series-scope-title"
+        className="relative w-full max-w-lg bg-zinc-900 border border-zinc-700 rounded-xl shadow-2xl flex flex-col max-h-[90vh]"
+      >
 
         {/* Header */}
         <div className="flex items-start justify-between px-5 pt-5 pb-3 flex-shrink-0">
           <div>
-            <h2 className="text-base font-semibold text-zinc-100 leading-tight">Request Series</h2>
+            <h2 id="series-scope-title" className="text-base font-semibold text-zinc-100 leading-tight">Request Series</h2>
             <p className="text-xs text-zinc-400 mt-0.5 line-clamp-1">{title}</p>
           </div>
           <button
