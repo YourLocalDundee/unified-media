@@ -78,6 +78,10 @@ function sortResults(arr: TMDBSearchResult[], sort: DiscoverSort): TMDBSearchRes
   }
 }
 
+const COUNT_OPTIONS = [10, 15, 20, 25, 50, 75, 100] as const
+type BrowseCount = typeof COUNT_OPTIONS[number]
+const DEFAULT_COUNT: BrowseCount = 20
+
 interface FilterState {
   query?: string
   page: number
@@ -87,6 +91,7 @@ interface FilterState {
   year?: number
   minRating?: number
   genreId?: number
+  count: BrowseCount
 }
 
 // Build a /browse query string preserving the chosen subset of the current filters.
@@ -98,6 +103,7 @@ function buildQuery(f: FilterState, overrides: Omit<Partial<FilterState>, 'genre
   if (s.sort !== 'popularity') p.set('sort', s.sort)
   if (s.year) p.set('year', String(s.year))
   if (s.minRating) p.set('minRating', String(s.minRating))
+  if (s.count !== DEFAULT_COUNT) p.set('count', String(s.count))
   // genreId override of null explicitly drops it (used when switching type)
   const genre = 'genreId' in overrides ? overrides.genreId : s.genreId
   if (genre) p.set('genre', String(genre))
@@ -105,7 +111,7 @@ function buildQuery(f: FilterState, overrides: Omit<Partial<FilterState>, 'genre
 }
 
 interface BrowsePageProps {
-  searchParams: Promise<{ q?: string; page?: string; type?: string; genre?: string; sort?: string; year?: string; minRating?: string }>
+  searchParams: Promise<{ q?: string; page?: string; type?: string; genre?: string; sort?: string; year?: string; minRating?: string; count?: string }>
 }
 
 // ---------------------------------------------------------------------------
@@ -123,7 +129,7 @@ function TypeTabs({ f }: { f: FilterState }) {
       {tabs.map((tab) => (
         <a
           key={tab.value}
-          // Switching type keeps the search + sort/year/rating but drops genre (genre IDs are type-specific).
+          // Switching type keeps the search + sort/year/rating/count but drops genre (genre IDs are type-specific).
           href={buildQuery(f, { itemType: tab.value, genreId: null })}
           className={`rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
             f.itemType === tab.value ? 'bg-white text-black' : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700 hover:text-white'
@@ -166,6 +172,10 @@ function FilterBar({ f }: { f: FilterState }) {
       <select name="minRating" defaultValue={f.minRating?.toString() ?? ''} className={select} title="Minimum rating">
         <option value="">Any rating</option>
         {MIN_RATING_OPTIONS.filter((r) => r > 0).map((r) => <option key={r} value={r}>{r}+ ★</option>)}
+      </select>
+
+      <select name="count" defaultValue={f.count} className={select} title="Results per page">
+        {COUNT_OPTIONS.map((n) => <option key={n} value={n}>{n} / page</option>)}
       </select>
 
       {/* Preserve the active type + genre across a filter submit. */}
@@ -220,37 +230,88 @@ async function GenreFilterBar({ f }: { f: FilterState }) {
 // Discover grid
 // ---------------------------------------------------------------------------
 
+// Fetch one or more TMDB pages so we can fulfil the requested count.
+// TMDB always returns 20 results per page; for counts > 20 we fan out to
+// ceil(count/20) consecutive pages and concat the results.
+async function fetchTMDBPages<T>(
+  fetchOnePage: (page: number) => Promise<{ results: T[]; totalPages: number; totalResults: number } | null>,
+  browsePageIndex: number,
+  count: number,
+): Promise<{ results: T[]; totalPages: number; totalResults: number }> {
+  const TMDB_PAGE_SIZE = 20
+  const pagesNeeded = Math.ceil(count / TMDB_PAGE_SIZE)
+  const tmdbStart = (browsePageIndex - 1) * pagesNeeded + 1
+  const tmdbPages = Array.from({ length: pagesNeeded }, (_, i) => tmdbStart + i)
+
+  const responses = await Promise.all(tmdbPages.map((p) => fetchOnePage(p).catch(() => null)))
+  const allResults = responses.flatMap((r) => r?.results ?? [])
+  const tmdbTotalPages = responses[0]?.totalPages ?? 1
+  const totalResults = responses[0]?.totalResults ?? 0
+  // Browse page total = TMDB total pages divided by how many TMDB pages each browse page consumes.
+  const browseTotalPages = Math.max(1, Math.ceil(tmdbTotalPages / pagesNeeded))
+  return { results: allResults.slice(0, count), totalPages: browseTotalPages, totalResults }
+}
+
 async function fetchDiscover(f: FilterState): Promise<{ results: TMDBSearchResult[]; totalPages: number; totalResults: number }> {
-  const { query, page, discoverType, sort, year, minRating, genreId } = f
+  const { query, page, discoverType, sort, year, minRating, genreId, count } = f
 
   if (query) {
-    const data = await searchTMDB(query, discoverType, page).catch(() => null)
-    let results = data?.results ?? []
+    // Name search: TMDB /search has no sort_by; apply filters client-side.
+    // For counts > 20 we fetch multiple pages and apply filters before slicing.
+    const pagesNeeded = Math.ceil(count / 20)
+    const tmdbStart = (page - 1) * pagesNeeded + 1
+    const responses = await Promise.all(
+      Array.from({ length: pagesNeeded }, (_, i) =>
+        searchTMDB(query, discoverType, tmdbStart + i).catch(() => null)
+      )
+    )
+    let results = responses.flatMap((r) => r?.results ?? [])
     if (year) results = results.filter((r) => r.year === year)
     if (minRating) results = results.filter((r) => (r.rating ?? 0) >= minRating)
     results = sortResults(results, sort)
-    return { results, totalPages: data?.totalPages ?? 0, totalResults: data?.totalResults ?? 0 }
+    const tmdbTotalPages = responses[0]?.totalPages ?? 1
+    const totalResults = responses[0]?.totalResults ?? 0
+    return {
+      results: results.slice(0, count),
+      totalPages: Math.max(1, Math.ceil(tmdbTotalPages / pagesNeeded)),
+      totalResults,
+    }
   }
 
   if (discoverType === 'all') {
     const filtersActive = sort !== 'popularity' || !!year || !!minRating
     if (!filtersActive) {
-      const t = await getTrendingContent('trending', page).catch(() => null)
-      return { results: t?.results ?? [], totalPages: t?.totalPages ?? 0, totalResults: t?.totalResults ?? 0 }
+      return fetchTMDBPages(
+        (p) => getTrendingContent('trending', p).catch(() => null),
+        page,
+        count,
+      )
     }
-    const [m, tv] = await Promise.all([
-      discoverTMDB('movie', { sortBy: sort, year, minRating, page }).catch(() => null),
-      discoverTMDB('tv', { sortBy: sort, year, minRating, page }).catch(() => null),
-    ])
+    // Filtered all: merge movie + tv at every TMDB page
+    const pagesNeeded = Math.ceil(count / 20)
+    const tmdbStart = (page - 1) * pagesNeeded + 1
+    const pageNums = Array.from({ length: pagesNeeded }, (_, i) => tmdbStart + i)
+    const pairs = await Promise.all(
+      pageNums.map((p) => Promise.all([
+        discoverTMDB('movie', { sortBy: sort, year, minRating, page: p }).catch(() => null),
+        discoverTMDB('tv',    { sortBy: sort, year, minRating, page: p }).catch(() => null),
+      ]))
+    )
+    const allResults = pairs.flatMap(([m, tv]) => interleave(m?.results ?? [], tv?.results ?? []))
+    const tmdbTotalPages = Math.max(pairs[0]?.[0]?.totalPages ?? 1, pairs[0]?.[1]?.totalPages ?? 1)
+    const totalResults = (pairs[0]?.[0]?.totalResults ?? 0) + (pairs[0]?.[1]?.totalResults ?? 0)
     return {
-      results: interleave(m?.results ?? [], tv?.results ?? []),
-      totalPages: Math.max(m?.totalPages ?? 0, tv?.totalPages ?? 0),
-      totalResults: (m?.totalResults ?? 0) + (tv?.totalResults ?? 0),
+      results: allResults.slice(0, count),
+      totalPages: Math.max(1, Math.ceil(tmdbTotalPages / pagesNeeded)),
+      totalResults,
     }
   }
 
-  const data = await discoverTMDB(discoverType, { genreId, sortBy: sort, year, minRating, page }).catch(() => null)
-  return { results: data?.results ?? [], totalPages: data?.totalPages ?? 0, totalResults: data?.totalResults ?? 0 }
+  return fetchTMDBPages(
+    (p) => discoverTMDB(discoverType, { genreId, sortBy: sort, year, minRating, page: p }).catch(() => null),
+    page,
+    count,
+  )
 }
 
 async function DiscoverGrid({ f, userId }: { f: FilterState; userId: string }) {
@@ -341,6 +402,10 @@ export default async function BrowsePage({ searchParams }: BrowsePageProps) {
   const sort: DiscoverSort = (VALID_SORTS as string[]).includes(sortRaw) ? (sortRaw as DiscoverSort) : 'popularity'
   const yearN = params.year ? parseInt(params.year, 10) : NaN
   const minRatingN = params.minRating ? parseInt(params.minRating, 10) : NaN
+  const countRaw = params.count ? parseInt(params.count, 10) : DEFAULT_COUNT
+  const count: BrowseCount = (COUNT_OPTIONS as readonly number[]).includes(countRaw)
+    ? (countRaw as BrowseCount)
+    : DEFAULT_COUNT
 
   const f: FilterState = {
     query: params.q?.trim() || undefined,
@@ -351,6 +416,7 @@ export default async function BrowsePage({ searchParams }: BrowsePageProps) {
     year: Number.isFinite(yearN) ? yearN : undefined,
     minRating: Number.isFinite(minRatingN) && minRatingN > 0 ? minRatingN : undefined,
     genreId: params.genre ? parseInt(params.genre, 10) || undefined : undefined,
+    count,
   }
   // Genre only applies to single-type browsing.
   if (f.discoverType === 'all' || f.query) f.genreId = undefined

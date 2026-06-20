@@ -588,6 +588,10 @@ export function runMigrations(db: Database.Database): void {
     // null = successful grab (selected_hash is set); non-null = specific skip reason.
     // Values: 'no_results' | 'scope_mismatch' | 'language_mismatch' | 'quality_reject' | 'degenerate_scope'
     'ALTER TABLE grab_results ADD COLUMN skip_reason TEXT',
+    // media_requests — quality profile the user chose at request time; forwarded to monitored_items.
+    // NULL means "use the default profile" (ID 1 — 'Any'). Rows created before this migration
+    // stay NULL and the existing behaviour (quality_profile_id: 1) is preserved.
+    'ALTER TABLE media_requests ADD COLUMN quality_profile_id INTEGER',
   ]
   for (const sql of addCols) {
     try { db.exec(sql) } catch { /* column already exists — safe to ignore */ }

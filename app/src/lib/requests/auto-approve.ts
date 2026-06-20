@@ -50,10 +50,15 @@ export function tryAutoApprove(requestId: number): boolean {
 
   // Push the item to the automation layer (Radarr/Sonarr equivalent).
   // Scope fields are forwarded from the request so the grabber targets exactly what the user requested.
-  const scopeType = (request as unknown as Record<string, unknown>).scope_type as string | undefined
-  const scopeSeasonsRaw = (request as unknown as Record<string, unknown>).scope_seasons as string | null | undefined
-  const scopeEpisodesRaw = (request as unknown as Record<string, unknown>).scope_episodes as string | null | undefined
-  const monitorFuture = (request as unknown as Record<string, unknown>).monitor_future as number | undefined
+  const raw = request as unknown as Record<string, unknown>
+  const scopeType = raw.scope_type as string | undefined
+  const scopeSeasonsRaw = raw.scope_seasons as string | null | undefined
+  const scopeEpisodesRaw = raw.scope_episodes as string | null | undefined
+  const monitorFuture = raw.monitor_future as number | undefined
+  // Use the quality profile the user chose; fall back to the default (1 = "Any").
+  const qualityProfileId = typeof raw.quality_profile_id === 'number' && raw.quality_profile_id > 0
+    ? raw.quality_profile_id as number
+    : 1
 
   try {
     createItem({
@@ -62,7 +67,7 @@ export function tryAutoApprove(requestId: number): boolean {
       type: mediaType === 'movie' ? 'movie' : 'tv',
       title: request.title,
       year: request.year ?? undefined,
-      quality_profile_id: 1,
+      quality_profile_id: qualityProfileId,
       root_path: '',
       scope_type: (scopeType as 'full' | 'seasons' | 'episodes' | 'movie' | null) ?? null,
       scope_seasons: scopeSeasonsRaw ? (JSON.parse(scopeSeasonsRaw) as number[]) : null,

@@ -59,6 +59,9 @@ export async function POST(req: NextRequest) {
     requestMethod?: 'auto-pick' | 'interactive'
     // PIECE 4 — Language: ISO 639-1 code or 'any'. Default 'any'.
     language?: string
+    // Quality profile to use when creating the monitored_items row.
+    // null / omitted → falls back to the default (ID 1).
+    quality_profile_id?: number
     // Series scope — which portion of the TV series the user wants.
     scopeType?: 'full' | 'seasons' | 'episodes' | 'movie'
     scopeSeasons?: number[]
@@ -101,6 +104,11 @@ export async function POST(req: NextRequest) {
 
   // Language defaults to 'any' (no constraint).
   const language = body.language?.trim() || 'any'
+  // Quality profile — positive integer or null (default profile).
+  const qualityProfileId =
+    typeof body.quality_profile_id === 'number' && body.quality_profile_id > 0
+      ? body.quality_profile_id
+      : null
 
   // GATING RULE: grab immediately ONLY when retention=48hr AND method=auto-pick.
   // Everything else (longterm OR interactive) → admin approval queue.
@@ -149,10 +157,10 @@ export async function POST(req: NextRequest) {
     monitorFuture,
   })
 
-  // Persist the two new dimension columns and language on the freshly created row.
+  // Persist request method, language, and quality profile on the freshly created row.
   getDb()
-    .prepare('UPDATE media_requests SET request_method = ?, language = ?, updated_at = ? WHERE id = ?')
-    .run(methodType, language, Date.now(), created.id)
+    .prepare('UPDATE media_requests SET request_method = ?, language = ?, quality_profile_id = ?, updated_at = ? WHERE id = ?')
+    .run(methodType, language, qualityProfileId, Date.now(), created.id)
 
   // ── INTERACTIVE PATH (user hand-picked a specific release) ──────────────────
   // A7-03: interactive picks ALWAYS go to the admin queue (pending), for both quick and long-term

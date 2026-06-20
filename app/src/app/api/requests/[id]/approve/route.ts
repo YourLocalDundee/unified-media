@@ -33,6 +33,7 @@ function fireImmediateGrab(tmdbId: number, mediaType: string): void {
 function firePreferredGrab(
   tmdbId: number,
   mediaType: string,
+  profileId: number,
   picked: {
     magnetUrl: string
     downloadUrl: string
@@ -57,7 +58,7 @@ function firePreferredGrab(
           type: mediaType === 'movie' ? 'movie' : 'tv',
           title: picked.releaseTitle,
           year: undefined,
-          quality_profile_id: 1,
+          quality_profile_id: profileId,
           root_path: '',
         })
       } catch {
@@ -168,18 +169,24 @@ export async function POST(
     )
   }
 
-  // Read scope fields from the request row — stored as raw DB columns
+  // Read scope + quality profile fields from the request row
   const scopeRow = getDb()
-    .prepare('SELECT scope_type, scope_seasons, scope_episodes, monitor_future FROM media_requests WHERE id = ?')
+    .prepare('SELECT scope_type, scope_seasons, scope_episodes, monitor_future, quality_profile_id FROM media_requests WHERE id = ?')
     .get(id) as {
       scope_type: string | null
       scope_seasons: string | null
       scope_episodes: string | null
       monitor_future: number | null
+      quality_profile_id: number | null
     } | undefined
 
+  const qualityProfileId =
+    typeof scopeRow?.quality_profile_id === 'number' && scopeRow.quality_profile_id > 0
+      ? scopeRow.quality_profile_id
+      : 1
+
   // Create the monitored_item so the cron loop can find it.
-  // Scope fields are forwarded so the grabber targets exactly what the user requested.
+  // Scope and quality profile are forwarded from what the user chose at request time.
   try {
     createItem({
       tmdb_id: request.tmdb_id,
@@ -187,7 +194,7 @@ export async function POST(
       type: request.media_type === 'movie' ? 'movie' : 'tv',
       title: request.title,
       year: request.year ?? undefined,
-      quality_profile_id: 1,
+      quality_profile_id: qualityProfileId,
       root_path: '',
       scope_type: (scopeRow?.scope_type as 'full' | 'seasons' | 'episodes' | 'movie' | null) ?? null,
       scope_seasons: scopeRow?.scope_seasons ? (JSON.parse(scopeRow.scope_seasons) as number[]) : null,
@@ -227,10 +234,10 @@ export async function POST(
 
   if (body.overrideRelease) {
     // Admin picked a different specific release — bypass the user's pick
-    firePreferredGrab(request.tmdb_id, request.media_type, body.overrideRelease)
+    firePreferredGrab(request.tmdb_id, request.media_type, qualityProfileId, body.overrideRelease)
   } else if (!body.ignorePreferred && preferred) {
     // Grab the specific release the user picked — non-blocking
-    firePreferredGrab(request.tmdb_id, request.media_type, preferred)
+    firePreferredGrab(request.tmdb_id, request.media_type, qualityProfileId, preferred)
   } else {
     // No pre-selection or admin chose to ignore it — auto-search and grab best result
     fireImmediateGrab(request.tmdb_id, request.media_type)

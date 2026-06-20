@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import type { RequestStatus, RequestType } from '@/lib/requests/types'
 import { TorrentPickModal } from './TorrentPickModal'
 import { SeriesScopeModal } from './SeriesScopeModal'
@@ -74,6 +74,15 @@ export function RequestOptions({
   // DIMENSION 1 — Retention: default to 48hr for old content, longterm for new
   const [retention, setRetention] = useState<'quick' | 'longterm'>(isOldContent ? 'quick' : 'longterm')
   const [language, setLanguage] = useState('any')
+  const [qualityProfileId, setQualityProfileId] = useState<number | null>(null)
+  const [profiles, setProfiles] = useState<Array<{ id: number; name: string }>>([])
+
+  useEffect(() => {
+    fetch('/api/automation/profiles')
+      .then(r => r.ok ? r.json() : Promise.reject())
+      .then((data: Array<{ id: number; name: string }>) => setProfiles(data))
+      .catch(() => {/* non-fatal: profile selector stays hidden */})
+  }, [])
 
   const BADGE = compact ? BADGE_COMPACT : BADGE_NORMAL
   const sz = compact ? 'px-2 py-1 text-xs' : 'px-3 py-2 text-sm'
@@ -91,6 +100,7 @@ export function RequestOptions({
           requestType: retention,
           requestMethod: 'auto-pick',
           language,
+          quality_profile_id: qualityProfileId,
           // scope fields — only meaningful for tv; movies default to 'movie' server-side
           scopeType: scope?.scopeType,
           scopeSeasons: scope?.scopeSeasons,
@@ -265,6 +275,23 @@ export function RequestOptions({
             >
               {LANGUAGE_OPTIONS.map(opt => (
                 <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        {/* Quality profile — non-compact only, only when profiles are loaded */}
+        {!compact && profiles.length > 0 && (
+          <div className="flex items-center gap-1.5">
+            <span className="text-[10px] text-zinc-500">Quality:</span>
+            <select
+              value={qualityProfileId ?? ''}
+              onChange={e => setQualityProfileId(e.target.value ? Number(e.target.value) : null)}
+              className="rounded px-1.5 py-0.5 text-[10px] bg-zinc-900 border border-zinc-700 text-zinc-300 focus:outline-none"
+            >
+              <option value="">Default</option>
+              {profiles.map(p => (
+                <option key={p.id} value={p.id}>{p.name}</option>
               ))}
             </select>
           </div>
