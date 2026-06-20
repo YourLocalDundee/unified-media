@@ -257,28 +257,6 @@ export default function QualitySettingsPage() {
         </div>
       </section>
 
-      {/* Shared profiles (read-only) */}
-      {sharedProfiles.length > 0 && (
-        <section className="space-y-3">
-          <h3 className="text-sm font-semibold">Shared Profiles</h3>
-          <div className="rounded-lg border border-border divide-y divide-border overflow-hidden">
-            {sharedProfiles.map(p => (
-              <div key={p.id} className="flex items-center justify-between px-4 py-3 bg-card">
-                <div>
-                  <p className="text-sm font-medium">{p.name}</p>
-                  <p className="text-xs text-muted-foreground">{conditionSummary(p.conditions)}</p>
-                </div>
-                {defaultId === p.id && (
-                  <span className="text-xs rounded-full px-2 py-0.5 bg-primary/20 text-primary border border-primary/30">
-                    Default
-                  </span>
-                )}
-              </div>
-            ))}
-          </div>
-        </section>
-      )}
-
       {/* My profiles */}
       <section className="space-y-3">
         <div className="flex items-center justify-between">
