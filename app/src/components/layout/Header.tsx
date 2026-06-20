@@ -28,13 +28,7 @@ export function Header({ username }: HeaderProps) {
   }, [])
 
   return (
-    <header className="flex h-16 items-center justify-between border-b border-border bg-card px-6">
-      {/* Logo */}
-      <Link href="/" className="flex min-w-0 items-center gap-1 text-lg font-bold select-none">
-        <span className="text-primary">U</span>
-        <span className="hidden sm:inline text-foreground">nified Media</span>
-      </Link>
-
+    <header className="flex h-16 items-center justify-end border-b border-border bg-card px-6">
       {/* Right actions */}
       <div className="flex flex-shrink-0 items-center gap-2">
         <Link

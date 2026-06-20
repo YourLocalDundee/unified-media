@@ -71,14 +71,19 @@ export function Sidebar() {
         sidebarOpen ? 'w-56' : 'w-16',
       )}
     >
-      {/* Logo */}
+      {/* Logo / toggle */}
       <div
         className={cn(
           'flex h-16 items-center border-b border-border px-4',
           sidebarOpen ? 'justify-between' : 'justify-center',
         )}
       >
-        {sidebarOpen && <span className="text-lg font-bold text-primary">unified media</span>}
+        {sidebarOpen && (
+          <Link href="/" className="flex items-center gap-0.5 text-lg font-bold select-none">
+            <span className="text-primary">U</span>
+            <span className="text-foreground">nified Media</span>
+          </Link>
+        )}
         <button onClick={toggleSidebar} className="rounded p-2 hover:bg-accent">
           {sidebarOpen ? <ChevronLeft className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
         </button>
