@@ -584,6 +584,10 @@ export function runMigrations(db: Database.Database): void {
     'ALTER TABLE media_items ADD COLUMN genres TEXT',
     // monitored_items — A6-02 scope-aware dedup discriminator (backfilled + uniquely indexed below)
     "ALTER TABLE monitored_items ADD COLUMN scope_key TEXT NOT NULL DEFAULT ''",
+    // grab_results — decision gate-chain: why a search attempt did not produce a grab.
+    // null = successful grab (selected_hash is set); non-null = specific skip reason.
+    // Values: 'no_results' | 'scope_mismatch' | 'language_mismatch' | 'quality_reject' | 'degenerate_scope'
+    'ALTER TABLE grab_results ADD COLUMN skip_reason TEXT',
   ]
   for (const sql of addCols) {
     try { db.exec(sql) } catch { /* column already exists — safe to ignore */ }

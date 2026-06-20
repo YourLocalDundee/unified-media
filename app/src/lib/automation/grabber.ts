@@ -17,7 +17,7 @@ import { searchAllIndexers } from '@/lib/indexer/index'
 import { parseReleaseName, parseLanguage, scoreRelease } from './parser'
 import { scoreWithProfile } from './quality'
 import { getProfileById, recordGrab, updateItem } from './monitor'
-import { recordGrabResults, type ScoredCandidate } from './grab-results'
+import { recordGrabResults, type ScoredCandidate, type SkipReason } from './grab-results'
 import type { MonitoredItem, QualityProfile, QualityCondition } from './types'
 import type { TorznabResult } from '@/lib/indexer/types'
 import { getDb } from '@/lib/db/index'
@@ -285,6 +285,7 @@ export async function grabItem(
           process.stderr.write(
             `[grabber] "${sanitizeLog(item.title)}" has scope_type='episodes' but scope_episodes is empty or null — skipping indexer query\n`,
           )
+          recordGrabResults(item.id, [], null, 'degenerate_scope')
           releaseClaim()
           return 'not_found'
         }
@@ -297,6 +298,7 @@ export async function grabItem(
           process.stderr.write(
             `[grabber] "${sanitizeLog(item.title)}" has scope_type='seasons' but scope_seasons is empty or null — skipping indexer query\n`,
           )
+          recordGrabResults(item.id, [], null, 'degenerate_scope')
           releaseClaim()
           return 'not_found'
         }
@@ -305,13 +307,20 @@ export async function grabItem(
 
     const rawResults = await searchAllIndexers(params)
 
-    // 3. Pre-filter results to only those matching the requested scope.
-    //    filterByScope returns null when no results match — treat as not_found rather than
-    //    falling back to random content which is the original bug being fixed.
+    // 3a. No indexer hits at all — record and bail.
+    if (rawResults.length === 0) {
+      recordGrabResults(item.id, [], null, 'no_results')
+      releaseClaim()
+      return 'not_found'
+    }
+
+    // 3b. Pre-filter results to only those matching the requested scope.
+    //     filterByScope returns null when no results match — treat as not_found rather than
+    //     falling back to random content which is the original bug being fixed.
     const scopeFiltered = filterByScope(rawResults, item)
     if (scopeFiltered === null) {
-      // No results matched the scope pattern — record and bail without grabbing anything
-      recordGrabResults(item.id, rawResults.map(r => ({ result: r, score: -1, selected: false })), null)
+      // Results found but none matched the scope pattern
+      recordGrabResults(item.id, rawResults.map(r => ({ result: r, score: -1, selected: false })), null, 'scope_mismatch')
       releaseClaim()
       return 'not_found'
     }
@@ -328,7 +337,16 @@ export async function grabItem(
       return { result: r, score: combined, selected: false }
     })
 
-    // 5. Pick the best result according to the quality profile (language is a hard constraint)
+    // 5. Pick the best result according to the quality profile (language is a hard constraint).
+    //    Determine skip reason before calling findBestRelease so the reason is specific:
+    //    - language_mismatch: all scope-filtered results fail the language check
+    //    - quality_reject:    some pass language but none survive the quality conditions
+    let skipReason: SkipReason = 'quality_reject'
+    if (language !== 'any') {
+      const passesLang = results.some(r => parseLanguage(r.title) === language)
+      if (!passesLang) skipReason = 'language_mismatch'
+    }
+
     const result = findBestRelease(results, profile, language)
 
     // Mark the winning candidate and record all results before touching the download client
@@ -337,7 +355,7 @@ export async function grabItem(
       if (idx >= 0) scored[idx].selected = true
     }
 
-    recordGrabResults(item.id, scored, result?.infoHash ?? null)
+    recordGrabResults(item.id, scored, result?.infoHash ?? null, result ? undefined : skipReason)
 
     if (!result) { releaseClaim(); return 'not_found' }
 

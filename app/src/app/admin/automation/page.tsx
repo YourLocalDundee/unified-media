@@ -31,6 +31,28 @@ interface MonitoredItem {
   status: 'wanted' | 'grabbed' | 'imported' | 'ignored'
   created_at: number
   updated_at: number
+  // Decision gate-chain fields (LEFT JOINed from grab_results)
+  last_searched_at: number | null
+  last_skip_reason: string | null
+  last_selected_hash: string | null
+}
+
+type SkipReason = 'no_results' | 'scope_mismatch' | 'language_mismatch' | 'quality_reject' | 'degenerate_scope'
+
+const SKIP_REASON_LABEL: Record<SkipReason, string> = {
+  no_results:       'No indexer hits',
+  scope_mismatch:   'Scope filter: no match',
+  language_mismatch:'Wrong language',
+  quality_reject:   'Quality profile: rejected',
+  degenerate_scope: 'Empty scope',
+}
+
+const SKIP_REASON_CLASS: Record<SkipReason, string> = {
+  no_results:       'bg-zinc-500/20 text-zinc-400 border border-zinc-500/30',
+  scope_mismatch:   'bg-orange-500/20 text-orange-400 border border-orange-500/30',
+  language_mismatch:'bg-violet-500/20 text-violet-400 border border-violet-500/30',
+  quality_reject:   'bg-amber-500/20 text-amber-400 border border-amber-500/30',
+  degenerate_scope: 'bg-red-500/20 text-red-400 border border-red-500/30',
 }
 
 interface QualityProfile {
@@ -279,7 +301,7 @@ export default function AdminAutomationPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-border">
-                  {['Title', 'Type', 'Year', 'Status', 'Quality Profile', 'Actions'].map(h => (
+                  {['Title', 'Type', 'Year', 'Status', 'Quality Profile', 'Last Search', 'Actions'].map(h => (
                     <th key={h} className="px-4 py-2 text-left text-muted-foreground font-medium">{h}</th>
                   ))}
                 </tr>
@@ -307,6 +329,24 @@ export default function AdminAutomationPage() {
                       {profileMap[item.quality_profile_id] ?? `#${item.quality_profile_id}`}
                     </td>
                     <td className="px-4 py-2">
+                      {item.last_searched_at == null ? (
+                        <span className="text-xs text-muted-foreground">Never</span>
+                      ) : item.last_selected_hash != null ? (
+                        <span className="inline-flex rounded-full px-2 py-0.5 text-xs font-medium bg-green-500/20 text-green-400 border border-green-500/30">
+                          Grabbed
+                        </span>
+                      ) : item.last_skip_reason != null ? (
+                        <span
+                          className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${SKIP_REASON_CLASS[item.last_skip_reason as SkipReason] ?? 'bg-muted text-muted-foreground border border-border'}`}
+                          title={`${relativeTime(item.last_searched_at)}`}
+                        >
+                          {SKIP_REASON_LABEL[item.last_skip_reason as SkipReason] ?? item.last_skip_reason}
+                        </span>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">—</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-2">
                       <div className="flex items-center gap-1">
                         <button
                           onClick={() => void handleGrab(item)}
@@ -328,7 +368,7 @@ export default function AdminAutomationPage() {
                 ))}
                 {items.length === 0 && (
                   <tr>
-                    <td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">
+                    <td colSpan={7} className="px-4 py-8 text-center text-muted-foreground">
                       No monitored items. Add one to get started.
                     </td>
                   </tr>

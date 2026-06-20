@@ -56,11 +56,29 @@ export function getWantedItems(): MonitoredItem[] {
     .all() as MonitoredItem[]
 }
 
-export function getAllItems(): MonitoredItem[] {
+export function getAllItems(): (MonitoredItem & {
+  last_searched_at: number | null
+  last_skip_reason: string | null
+  last_selected_hash: string | null
+})[] {
   const db = getDb()
-  return db
-    .prepare('SELECT * FROM monitored_items ORDER BY created_at DESC')
-    .all() as MonitoredItem[]
+  return db.prepare(`
+    SELECT mi.*,
+      gr.searched_at   AS last_searched_at,
+      gr.skip_reason   AS last_skip_reason,
+      gr.selected_hash AS last_selected_hash
+    FROM monitored_items mi
+    LEFT JOIN grab_results gr
+      ON gr.monitored_item_id = mi.id
+      AND gr.searched_at = (
+        SELECT MAX(searched_at) FROM grab_results WHERE monitored_item_id = mi.id
+      )
+    ORDER BY mi.created_at DESC
+  `).all() as (MonitoredItem & {
+    last_searched_at: number | null
+    last_skip_reason: string | null
+    last_selected_hash: string | null
+  })[]
 }
 
 export function getItemById(id: number): MonitoredItem | undefined {

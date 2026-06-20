@@ -8,6 +8,13 @@ export interface ScoredCandidate {
   selected: boolean    // true only for the result that was sent to qBittorrent
 }
 
+export type SkipReason =
+  | 'no_results'        // indexers returned zero hits
+  | 'scope_mismatch'    // hits found, none matched the scope filter (S01E05, season pack)
+  | 'language_mismatch' // scope-matched hits exist, none passed the language constraint
+  | 'quality_reject'    // language passed, none survived the quality profile conditions
+  | 'degenerate_scope'  // scope columns empty/malformed — bailed before querying indexers
+
 export interface GrabResultRow {
   id: number
   monitored_item_id: number
@@ -15,23 +22,26 @@ export interface GrabResultRow {
   candidates: ScoredCandidate[]  // parsed from JSON
   selected_hash: string | null
   total_found: number
+  skip_reason: SkipReason | null  // null = successful grab
 }
 
 export function recordGrabResults(
   monitoredItemId: number,
   candidates: ScoredCandidate[],
   selectedHash: string | null,
+  skipReason?: SkipReason,
 ): number {
   const db = getDb()
   const result = db.prepare(`
-    INSERT INTO grab_results (monitored_item_id, searched_at, candidates, selected_hash, total_found)
-    VALUES (?, ?, ?, ?, ?)
+    INSERT INTO grab_results (monitored_item_id, searched_at, candidates, selected_hash, total_found, skip_reason)
+    VALUES (?, ?, ?, ?, ?, ?)
   `).run(
     monitoredItemId,
     Date.now(),
     JSON.stringify(candidates),
     selectedHash,
     candidates.length,
+    skipReason ?? null,
   )
   return Number(result.lastInsertRowid)
 }
