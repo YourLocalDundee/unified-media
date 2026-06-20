@@ -61,6 +61,10 @@ export interface QualityCondition {
   value: string
   // If required=true and the release doesn't match, the entire release is rejected (score=null)
   required: boolean
+  // If negate=true, the match logic is inverted: a matching release is treated as non-matching.
+  // Useful for exclusions: e.g. {type:'source', value:'BluRay REMUX', required:true, negate:true}
+  // hard-rejects any REMUX release.
+  negate?: boolean
 }
 
 export interface GrabHistory {

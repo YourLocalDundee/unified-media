@@ -3,8 +3,75 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useFocusTrap } from '@/hooks/useFocusTrap'
 import type { QualityProfileFull, QualityTier, CustomFormatSpec } from '@/lib/automation/quality'
+import type { QualityCondition } from '@/lib/automation/types'
 
 type FormatEntry = { format_id: number; name: string; specs: string; score: number }
+
+type CondType = QualityCondition['type']
+const COND_TYPES: CondType[] = ['resolution', 'source', 'codec']
+const COND_VALUES: Record<CondType, string[]> = {
+  resolution: ['480p', '576p', '720p', '1080p', '2160p'],
+  source:     ['BluRay', 'BluRay REMUX', 'WEB-DL', 'WEBRip', 'HDTV', 'DVDRip', 'CAM', 'TS'],
+  codec:      ['x264', 'x265', 'xvid', 'divx'],
+}
+
+function ConditionEditor({
+  conditions,
+  onChange,
+}: {
+  conditions: QualityCondition[]
+  onChange: (c: QualityCondition[]) => void
+}) {
+  function add() {
+    onChange([...conditions, { type: 'resolution', value: '1080p', required: false, negate: false }])
+  }
+  function remove(i: number) {
+    onChange(conditions.filter((_, idx) => idx !== i))
+  }
+  function update(i: number, patch: Partial<QualityCondition>) {
+    const next = conditions.map((c, idx) => {
+      if (idx !== i) return c
+      const merged = { ...c, ...patch }
+      // When type changes, reset value to the first option for that type
+      if (patch.type && patch.type !== c.type) merged.value = COND_VALUES[patch.type][0]
+      return merged
+    })
+    onChange(next)
+  }
+
+  const cell = 'text-xs text-zinc-300'
+  const sel = 'rounded bg-zinc-800 border border-zinc-700 px-2 py-1 text-xs text-zinc-200 focus:outline-none'
+
+  return (
+    <div className="space-y-2">
+      {conditions.map((c, i) => (
+        <div key={i} className="flex flex-wrap items-center gap-2 rounded-lg bg-zinc-900 border border-zinc-800 px-3 py-2">
+          <select value={c.type} onChange={e => update(i, { type: e.target.value as CondType })} className={sel}>
+            {COND_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+          </select>
+          <select value={c.value} onChange={e => update(i, { value: e.target.value })} className={sel}>
+            {COND_VALUES[c.type].map(v => <option key={v} value={v}>{v}</option>)}
+          </select>
+          <label className={`flex items-center gap-1 cursor-pointer ${cell}`}>
+            <input type="checkbox" checked={c.required} onChange={e => update(i, { required: e.target.checked })} />
+            Required
+          </label>
+          <label className={`flex items-center gap-1 cursor-pointer ${cell}`}>
+            <input type="checkbox" checked={!!c.negate} onChange={e => update(i, { negate: e.target.checked })} />
+            Exclude
+          </label>
+          <button onClick={() => remove(i)} className="ml-auto text-zinc-600 hover:text-red-400 text-xs px-1" title="Remove">✕</button>
+        </div>
+      ))}
+      <button
+        onClick={add}
+        className="rounded-lg border border-dashed border-zinc-700 px-3 py-1.5 text-xs text-zinc-500 hover:border-zinc-500 hover:text-zinc-300 transition-colors"
+      >
+        + Add condition
+      </button>
+    </div>
+  )
+}
 
 interface ProfilesData {
   profiles: QualityProfileFull[]
@@ -167,6 +234,7 @@ function ProfileEditor({
   const [cutoffScore, setCutoffScore] = useState(profile.cutoff_format_score)
   const [language, setLanguage] = useState(profile.language ?? 'any')
   const [formats, setFormats] = useState<FormatEntry[]>(profile.formats)
+  const [conditions, setConditions] = useState<QualityCondition[]>(profile.conditions ?? [])
   const [busy, setBusy] = useState(false)
   const [showAddFormat, setShowAddFormat] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
@@ -187,6 +255,7 @@ function ProfileEditor({
           min_format_score: minScore,
           cutoff_format_score: cutoffScore,
           language,
+          conditions,
           formats: formats.map(f => ({ format_id: f.format_id, score: f.score })),
         }),
       })
@@ -309,6 +378,17 @@ function ProfileEditor({
         <input type="checkbox" checked={upgradeAllowed} onChange={e => setUpgradeAllowed(e.target.checked)} />
         Allow upgrades (grab a better release if one appears)
       </label>
+
+      <div className="mb-5">
+        <span className="mb-2 block text-xs font-semibold uppercase tracking-wider text-zinc-400">
+          Conditions
+        </span>
+        <p className="mb-3 text-[10px] text-zinc-600">
+          Required + Exclude = hard-reject matching releases. Required without Exclude = must match or skip.
+          Non-required = preferred bonus (+10 score) but never rejects.
+        </p>
+        <ConditionEditor conditions={conditions} onChange={setConditions} />
+      </div>
 
       <div className="mb-5">
         <div className="flex items-center justify-between mb-2">

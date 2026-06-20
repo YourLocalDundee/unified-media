@@ -35,6 +35,7 @@ export async function PATCH(
     language?: string
     formats?: Array<{ format_id: number; score: number }>
     new_format?: { name: string; specs: CustomFormatSpec[] }
+    conditions?: Array<{ type: string; value: string; required: boolean; negate?: boolean }>
   }
   try { body = await req.json() }
   catch { return NextResponse.json({ error: 'Invalid request' }, { status: 400 }) } // A19: parse guard
@@ -43,7 +44,8 @@ export async function PATCH(
 
   if (body.name !== undefined || body.upgrade_allowed !== undefined ||
       body.cutoff_quality_id !== undefined || body.min_format_score !== undefined ||
-      body.cutoff_format_score !== undefined || body.language !== undefined) {
+      body.cutoff_format_score !== undefined || body.language !== undefined ||
+      body.conditions !== undefined) {
     const fields: string[] = []
     const vals: unknown[] = []
     if (body.name !== undefined)              { fields.push('name = ?');               vals.push(body.name.trim()) }
@@ -52,6 +54,7 @@ export async function PATCH(
     if (body.min_format_score !== undefined)  { fields.push('min_format_score = ?');  vals.push(body.min_format_score) }
     if (body.cutoff_format_score !== undefined) { fields.push('cutoff_format_score = ?'); vals.push(body.cutoff_format_score) }
     if (body.language !== undefined)          { fields.push('language = ?');          vals.push(body.language.trim() || 'any') }
+    if (body.conditions !== undefined)        { fields.push('conditions = ?');        vals.push(JSON.stringify(body.conditions)) }
     if (fields.length > 0) {
       db.prepare(`UPDATE quality_profiles SET ${fields.join(', ')} WHERE id = ?`).run(...vals, profileId)
     }

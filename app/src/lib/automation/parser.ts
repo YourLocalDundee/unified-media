@@ -216,16 +216,14 @@ const SOURCE_BONUS: Record<string, number> = {
 }
 
 function conditionMatches(meta: ReleaseMeta, cond: QualityCondition): boolean {
+  let hit: boolean
   switch (cond.type) {
-    case 'resolution':
-      return (meta.resolution ?? '').toLowerCase() === cond.value.toLowerCase()
-    case 'codec':
-      return (meta.codec ?? '').toLowerCase() === cond.value.toLowerCase()
-    case 'source':
-      return (meta.source ?? '').toLowerCase() === cond.value.toLowerCase()
-    default:
-      return false
+    case 'resolution': hit = (meta.resolution ?? '').toLowerCase() === cond.value.toLowerCase(); break
+    case 'codec':      hit = (meta.codec ?? '').toLowerCase() === cond.value.toLowerCase(); break
+    case 'source':     hit = (meta.source ?? '').toLowerCase() === cond.value.toLowerCase(); break
+    default:           hit = false
   }
+  return cond.negate ? !hit : hit
 }
 
 // Returns null on hard rejection (failed required condition); caller must treat null as "skip",

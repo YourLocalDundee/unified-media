@@ -170,6 +170,8 @@ export interface QualityProfileFull {
   // ISO 639-1 language code or 'any'. 'any' disables the language constraint on auto-pick grabs.
   language: string
   formats: Array<{ format_id: number; name: string; specs: string; score: number }>
+  // Parsed quality conditions (resolution/source/codec filters)
+  conditions: import('./types').QualityCondition[]
 }
 
 export function getProfileFull(profileId: number): QualityProfileFull | null {
@@ -186,6 +188,12 @@ export function getProfileFull(profileId: number): QualityProfileFull | null {
     ORDER BY cf.name
   `).all(profileId) as FormatRow[]
 
+  let conditions: import('./types').QualityCondition[] = []
+  try {
+    const raw = profile.conditions as string | null
+    if (raw) conditions = JSON.parse(raw)
+  } catch { /* malformed JSON — treat as no conditions */ }
+
   return {
     id: profile.id as number,
     name: profile.name as string,
@@ -195,6 +203,7 @@ export function getProfileFull(profileId: number): QualityProfileFull | null {
     cutoff_format_score: (profile.cutoff_format_score as number) ?? 0,
     language: (profile.language as string) ?? 'any',
     formats,
+    conditions,
   }
 }
 
