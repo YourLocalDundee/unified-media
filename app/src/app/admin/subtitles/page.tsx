@@ -89,11 +89,28 @@ export default function AdminSubtitlesPage() {
     setDlResult(null)
     try {
       const res = await fetch('/api/subtitle/download', { method: 'POST' })
-      if (res.ok) {
-        const d = await res.json() as { downloaded: number; skipped: number; failed: number }
-        setDlResult(`${d.downloaded} downloaded, ${d.skipped} skipped, ${d.failed} failed`)
-        void fetchItems()
-      } else setError('Download failed')
+      if (!res.ok) { setError('Download failed'); setDownloading(false); return }
+      const { jobId } = await res.json() as { jobId: string }
+
+      // Poll until the background download job finishes (max 5 min).
+      for (let i = 0; i < 300; i++) {
+        await new Promise(r => setTimeout(r, 1000))
+        const statusRes = await fetch(`/api/jobs/${jobId}`)
+        if (!statusRes.ok) break
+        const job = await statusRes.json() as {
+          status: string
+          result?: { downloaded: number; skipped: number; failed: number }
+          error?: string
+        }
+        if (job.status === 'done') {
+          const d = job.result
+          setDlResult(d ? `${d.downloaded} downloaded, ${d.skipped} skipped, ${d.failed} failed` : 'Done')
+          void fetchItems()
+          setDownloading(false)
+          return
+        }
+        if (job.status === 'failed') { setError(job.error ?? 'Download failed'); break }
+      }
     } catch { setError('Download error') }
     finally { setDownloading(false) }
   }

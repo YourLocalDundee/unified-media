@@ -67,11 +67,12 @@ export default function AdvancedSettingsPage() {
       </section>
 
       {/* Jellyfin URL override */}
-      <section className="rounded-lg border border-border bg-card p-6 space-y-3">
-        <h2 className="text-lg font-semibold">Jellyfin URL Override</h2>
+      <section className="rounded-lg border border-border bg-card p-6 space-y-3 opacity-60">
+        <h2 className="text-lg font-semibold">Jellyfin URL Override <span className="ml-2 text-xs font-normal text-muted-foreground">(not yet wired to the player)</span></h2>
         <p className="text-xs text-muted-foreground">
-          Override the Jellyfin base URL used for player streams. Leave blank to use the server
-          default.
+          Intended to let you point browser-side stream requests at a different Jellyfin URL without
+          changing the server-side <code className="font-mono">JELLYFIN_URL</code> env var. Stored
+          in localStorage but not yet read by the player or stream routes.
         </p>
         <div className="flex gap-2">
           <input
@@ -79,11 +80,13 @@ export default function AdvancedSettingsPage() {
             value={jellyfinUrl}
             onChange={(e) => setJellyfinUrl(e.target.value)}
             placeholder="http://192.168.0.50:8096"
-            className="flex-1 rounded-md border border-border bg-muted px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+            disabled
+            className="flex-1 rounded-md border border-border bg-muted px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary cursor-not-allowed"
           />
           <button
             onClick={saveJellyfinUrl}
-            className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
+            disabled
+            className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Save
           </button>

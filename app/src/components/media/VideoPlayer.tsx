@@ -91,6 +91,7 @@ export default function VideoPlayer(props: PlaybackData) {
     progressApiUrl,
     nextEpisodeApiBase,
     subtitleApiBase,
+    downloadedSubtitles,
   } = props
 
   const router = useRouter()
@@ -115,6 +116,9 @@ export default function VideoPlayer(props: PlaybackData) {
   // in-flight next-episode fetch on unmount (A4-M8).
   const didEndRef = useRef(false)
   const endedAbortRef = useRef<AbortController | null>(null)
+  // Keeps nextEpisode current inside the keydown effect (which has empty deps to avoid
+  // re-registration). Functional state setters handle activeSubIndex without a ref.
+  const nextEpisodeRef = useRef<NextEpisode | null>(null)
   // True while the user is dragging the seek bar; suppresses timeupdate-driven setCurrentTime
   // so the thumb doesn't jump back to the playhead between drag events (A4-M3).
   const isScrubbingRef = useRef(false)
@@ -134,7 +138,11 @@ export default function VideoPlayer(props: PlaybackData) {
   // Next-episode autoplay state
   const [nextEpisode, setNextEpisode] = useState<NextEpisode | null>(null)
   const [countdownActive, setCountdownActive] = useState(false)
-  const [countdown, setCountdown] = useState(10)
+  const [countdown, setCountdown] = useState<number>(10)
+
+  // Resume-mode dialog: shown when resumeMode === 'ask' and resumeSeconds > 30
+  const [showResumeDialog, setShowResumeDialog] = useState(false)
+  const pendingResumeSecondsRef = useRef<number | null>(null)
 
   // Tools panel state
   const [showToolsPanel, setShowToolsPanel] = useState(false)
@@ -164,6 +172,9 @@ export default function VideoPlayer(props: PlaybackData) {
 
   // User language preferences (localStorage). Read once on mount to set English defaults.
   const { prefs, ready: prefsReady } = usePlaybackPrefs()
+  // Ref kept current so async closures (HLS MANIFEST_PARSED) can read latest prefs (A4-M1).
+  const prefsRef = useRef(prefs)
+  useEffect(() => { prefsRef.current = prefs }, [prefs])
 
   // Stats overlay state
   const [showStats, setShowStats] = useState(false)
@@ -320,17 +331,26 @@ export default function VideoPlayer(props: PlaybackData) {
       setAspectRatioMode(detectAspectRatio(props.nativeWidth, props.nativeHeight))
     }
 
-    if (props.availableQualities?.length && props.nativeHeight) {
+    const qualities = props.availableQualities
+    if (qualities?.length && props.nativeHeight) {
+      // Screen-aware selection: downgrade when the screen is significantly smaller than native.
       const screenH = (window.screen.height ?? 0) * (window.devicePixelRatio || 1)
+      let selected: typeof qualities[number] | undefined
       if (props.nativeHeight > 0 && screenH > 0 && screenH < props.nativeHeight * 0.75) {
-        const best = props.availableQualities.find(
-          (q) => !q.isDirect && q.maxHeight <= screenH
-        )
-        if (best) {
-          setCurrentQuality(best)
-          setActiveStreamUrl(best.streamUrl)
-          setActiveIsHls(best.isHls)
-        }
+        selected = qualities.find((q) => !q.isDirect && q.maxHeight <= screenH)
+      }
+      // Quality pref: if the user set a preferred max bitrate and screen-aware didn't trigger,
+      // find the best quality option at or below that bitrate ceiling.
+      if (!selected && prefs.quality !== 0) {
+        selected = qualities
+          .filter((q) => !q.isDirect && q.bitrate <= prefs.quality)
+          .at(-1) // highest quality within the ceiling (options are sorted best-first)
+          ?? qualities.find((q) => !q.isDirect) // fallback to any non-direct
+      }
+      if (selected) {
+        setCurrentQuality(selected)
+        setActiveStreamUrl(selected.streamUrl)
+        setActiveIsHls(selected.isHls)
       }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -344,6 +364,9 @@ export default function VideoPlayer(props: PlaybackData) {
       tracks[i].mode = i === activeSubIndex ? 'showing' : 'hidden'
     }
   }, [activeSubIndex])
+
+  // Keep ref current so the keydown closure (empty deps) can read the latest value.
+  useEffect(() => { nextEpisodeRef.current = nextEpisode }, [nextEpisode])
 
   // ---------------------------------------------------------------------------
   // Display title
@@ -472,7 +495,14 @@ export default function VideoPlayer(props: PlaybackData) {
       handleAudioChange(preferredAudioRel)
     }
 
-    setActiveSubIndex(selectPreferredSubtitleIndex(subtitleStreams, prefs.subtitleLang))
+    // Build a combined SubTrackInfo list so language matching considers both embedded
+    // and downloaded tracks. Downloaded tracks are appended after embedded ones so the
+    // returned index matches the unified subtitleTracks array.
+    const allSubTrackInfo = [
+      ...subtitleStreams.map(s => ({ language: s.language, title: s.title, forced: s.forced, extractable: s.extractable })),
+      ...(downloadedSubtitles ?? []).map(s => ({ language: s.language, title: s.label, forced: s.forced, extractable: true })),
+    ]
+    setActiveSubIndex(selectPreferredSubtitleIndex(allSubTrackInfo, prefs.subtitleLang))
   }, [
     prefsReady,
     prefs,
@@ -539,6 +569,14 @@ export default function VideoPlayer(props: PlaybackData) {
           hls.on(Hls.Events.MANIFEST_PARSED, () => {
             if (destroyed) return
             setIsLoading(false)
+            // Apply resume seek before play so HLS starts at the right position
+            // instead of jumping 0→resumePoint after loadedmetadata (A4-M1).
+            // 'ask' and 'restart' cases are still handled by handleLoadedMetadata.
+            const resumeSeconds = resumePositionTicks / 10_000_000
+            if (resumeSeconds > 30 && !resumeApplied.current && prefsRef.current.resumeMode === 'resume') {
+              resumeApplied.current = true
+              video.currentTime = resumeSeconds
+            }
             video.play().catch(() => setIsPlaying(false))
           })
           hls.on(Hls.Events.ERROR, (_event: unknown, data: {
@@ -779,6 +817,22 @@ export default function VideoPlayer(props: PlaybackData) {
           e.preventDefault()
           setShowStats((s) => !s)
           break
+        case 's':
+        case 'S':
+          // Cycle through all subtitle tracks (embedded + downloaded): off → 0 → … → off
+          e.preventDefault()
+          if (totalSubCount > 0) {
+            setActiveSubIndex((cur) => cur >= totalSubCount - 1 ? -1 : cur + 1)
+          }
+          break
+        case 'n':
+        case 'N':
+          e.preventDefault()
+          if (nextEpisodeRef.current) {
+            if (countdownTimer.current) clearInterval(countdownTimer.current)
+            router.push(`/watch/${nextEpisodeRef.current.id}`)
+          }
+          break
       }
     }
 
@@ -809,8 +863,18 @@ export default function VideoPlayer(props: PlaybackData) {
     }
     const resumeSeconds = resumePositionTicks / 10_000_000
     if (resumeSeconds > 30 && !resumeApplied.current) {
-      resumeApplied.current = true
-      video.currentTime = resumeSeconds
+      if (prefs.resumeMode === 'restart') {
+        // Always start from beginning — ignore the saved position.
+        resumeApplied.current = true
+      } else if (prefs.resumeMode === 'ask') {
+        // Show the resume dialog; actual seek is deferred until the user chooses.
+        pendingResumeSecondsRef.current = resumeSeconds
+        setShowResumeDialog(true)
+      } else {
+        // 'resume' (default): seek to the saved position automatically.
+        resumeApplied.current = true
+        video.currentTime = resumeSeconds
+      }
     }
   }
 
@@ -884,6 +948,7 @@ export default function VideoPlayer(props: PlaybackData) {
     if (didEndRef.current) return
     didEndRef.current = true
     reportStop()
+    if (!prefs.autoPlayNext) return
     if (seriesId && nextEpisodeApiBase) {
       const ctrl = new AbortController()
       endedAbortRef.current = ctrl
@@ -892,14 +957,20 @@ export default function VideoPlayer(props: PlaybackData) {
         .then((ep: NextEpisode | null) => {
           if (!ep) return
           setNextEpisode(ep)
-          setCountdown(10)
-          setCountdownActive(true)
+          const delay = prefs.autoPlayDelay
+          if (delay === 0) {
+            // Navigate immediately — no countdown needed.
+            router.push(`/watch/${ep.id}`)
+          } else {
+            setCountdown(delay)
+            setCountdownActive(true)
+          }
         })
         .catch(() => {}) // includes AbortError on unmount
     } else if (seriesId && !nextEpisodeApiBase) {
       console.warn('[VideoPlayer] nextEpisodeApiBase not set, next episode autoplay disabled')
     }
-  }, [seriesId, nextEpisodeApiBase, reportStop])
+  }, [seriesId, nextEpisodeApiBase, reportStop, prefs.autoPlayNext, prefs.autoPlayDelay, router])
 
   // ---------------------------------------------------------------------------
   // Countdown timer for auto-play
@@ -1072,15 +1143,37 @@ export default function VideoPlayer(props: PlaybackData) {
   // <video> won't render embedded MKV subs on Direct Play). One <track> per stream keeps the
   // list index aligned with activeSubIndex and the video's textTracks. Image-based tracks
   // (extractable=false) still get an element for index alignment but are disabled in the menu.
-  const subtitleTracks = subtitleApiBase
+  // Downloaded subtitles (from subtitle_wants) are appended after embedded tracks; each is
+  // served as proper WebVTT via /api/media/subtitles/{id}/{positionalIndex}.
+  const embeddedTracks = subtitleApiBase
     ? subtitleStreams.map((s) => ({
         src: `${subtitleApiBase}/embedded/${itemId}/${s.index}`,
-        label: s.title,
+        label: s.title || s.language || 'Track',
         srcLang: s.language,
-        isDefault: s.isDefault,
         extractable: s.extractable,
+        isDownloaded: false,
       }))
     : []
+  const downloadedTracks = subtitleApiBase && downloadedSubtitles
+    ? downloadedSubtitles.map((s) => ({
+        src: `${subtitleApiBase}/${itemId}/${s.index}`,
+        label: s.label,
+        srcLang: s.language,
+        extractable: true,
+        isDownloaded: true,
+      }))
+    : []
+  // Combined list — order must match the rendered <track> elements (embedded first, then downloaded).
+  const subtitleTracks = [...embeddedTracks, ...downloadedTracks]
+  const totalSubCount = subtitleTracks.length
+
+  // ---------------------------------------------------------------------------
+  // Derived subtitle cue styles from user prefs
+  // ---------------------------------------------------------------------------
+
+  const cueFontSize = prefs.subtitleSize === 'small' ? '0.85em' : prefs.subtitleSize === 'large' ? '1.35em' : '1.05em'
+  const cueBg = prefs.subtitleBg === 'none' ? 'rgba(0,0,0,0)' : prefs.subtitleBg === 'opaque' ? 'rgba(0,0,0,0.85)' : 'rgba(0,0,0,0.5)'
+  const cueColor = prefs.subtitleColor === 'yellow' ? '#ffe566' : '#ffffff'
 
   // ---------------------------------------------------------------------------
   // Render
@@ -1173,6 +1266,48 @@ export default function VideoPlayer(props: PlaybackData) {
           />
         ))}
       </video>
+
+      {/* Subtitle cue appearance — injected inline so it reacts to pref changes without a full CSS cascade */}
+      <style>{`::cue { font-size: ${cueFontSize}; color: ${cueColor}; background-color: ${cueBg}; }`}</style>
+
+      {/* Resume-mode dialog ("Always ask") */}
+      {showResumeDialog && pendingResumeSecondsRef.current != null && (
+        <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/60">
+          <div className="rounded-xl bg-zinc-900 border border-zinc-700 p-6 flex flex-col gap-4 max-w-xs w-full mx-4 text-white">
+            <p className="text-base font-semibold">Resume playback?</p>
+            <p className="text-sm text-zinc-400">
+              You were at {new Date(pendingResumeSecondsRef.current * 1000).toISOString().slice(11, 19).replace(/^00:/, '')}
+            </p>
+            <div className="flex gap-3">
+              <button
+                className="flex-1 rounded-lg bg-primary py-2 text-sm font-medium hover:bg-primary/90 transition-colors"
+                onClick={() => {
+                  const video = videoRef.current
+                  const t = pendingResumeSecondsRef.current
+                  if (video && t != null) {
+                    resumeApplied.current = true
+                    video.currentTime = t
+                  }
+                  pendingResumeSecondsRef.current = null
+                  setShowResumeDialog(false)
+                }}
+              >
+                Resume
+              </button>
+              <button
+                className="flex-1 rounded-lg border border-zinc-700 py-2 text-sm font-medium hover:bg-zinc-800 transition-colors"
+                onClick={() => {
+                  resumeApplied.current = true
+                  pendingResumeSecondsRef.current = null
+                  setShowResumeDialog(false)
+                }}
+              >
+                Restart
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Loading spinner */}
       {isLoading && (
@@ -1287,8 +1422,8 @@ export default function VideoPlayer(props: PlaybackData) {
             </div>
           )}
 
-          {/* Subtitle track picker */}
-          {subtitleStreams.length > 0 && (
+          {/* Subtitle track picker — visible when any embedded or downloaded tracks exist */}
+          {totalSubCount > 0 && (
             <div className="relative">
               <button
                 onClick={() => setShowSubMenu((v) => !v)}
@@ -1306,7 +1441,11 @@ export default function VideoPlayer(props: PlaybackData) {
                     {activeSubIndex === -1 && <Check className="h-3.5 w-3.5 text-white shrink-0" />}
                     <span className={`${activeSubIndex === -1 ? 'text-white font-medium' : 'text-zinc-300'} ${activeSubIndex !== -1 ? 'ml-5' : ''}`}>Off</span>
                   </button>
-                  {subtitleTracks.map((track, i) => (
+                  {/* Embedded tracks */}
+                  {embeddedTracks.length > 0 && downloadedTracks.length > 0 && (
+                    <p className="px-3 pt-2 pb-0.5 text-[10px] uppercase tracking-wider text-zinc-500">Embedded</p>
+                  )}
+                  {embeddedTracks.map((track, i) => (
                     <button
                       key={track.src}
                       disabled={!track.extractable}
@@ -1316,10 +1455,29 @@ export default function VideoPlayer(props: PlaybackData) {
                       {activeSubIndex === i && <Check className="h-3.5 w-3.5 text-white shrink-0" />}
                       <span className={`${activeSubIndex === i ? 'text-white font-medium' : 'text-zinc-300'} ${activeSubIndex !== i ? 'ml-5' : ''}`}>
                         {track.label || track.srcLang || `Track ${i + 1}`}
-                        {!track.extractable && ' (image — unsupported)'}
+                        {!track.extractable && ' (image)'}
                       </span>
                     </button>
                   ))}
+                  {/* Downloaded tracks (from subtitle_wants) */}
+                  {downloadedTracks.length > 0 && (
+                    <p className="px-3 pt-2 pb-0.5 text-[10px] uppercase tracking-wider text-zinc-500">Downloaded</p>
+                  )}
+                  {downloadedTracks.map((track, di) => {
+                    const i = embeddedTracks.length + di
+                    return (
+                      <button
+                        key={track.src}
+                        onClick={() => { setActiveSubIndex(i); setShowSubMenu(false) }}
+                        className="flex items-center gap-2 w-full px-3 py-1.5 text-sm text-left hover:bg-zinc-800 transition-colors"
+                      >
+                        {activeSubIndex === i && <Check className="h-3.5 w-3.5 text-white shrink-0" />}
+                        <span className={`${activeSubIndex === i ? 'text-white font-medium' : 'text-zinc-300'} ${activeSubIndex !== i ? 'ml-5' : ''}`}>
+                          {track.label}
+                        </span>
+                      </button>
+                    )
+                  })}
                 </div>
               )}
             </div>

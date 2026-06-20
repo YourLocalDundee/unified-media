@@ -49,6 +49,7 @@
 import { spawn, type ChildProcess } from 'child_process'
 import path from 'path'
 import fs from 'fs/promises'
+import pLimit from 'p-limit'
 
 // ---------------------------------------------------------------------------
 // Config
@@ -399,6 +400,8 @@ export async function waitForSegment(segPath: string): Promise<boolean> {
 // (they are tiny and cheap to regenerate, but caching avoids re-running ffmpeg on
 // every track (re)selection).
 const SUBS_CACHE = path.join(TRANSCODE_CACHE, '.subs')
+// Cap simultaneous subtitle ffmpeg extractions to avoid saturating CPU on cold cache.
+const subExtractLimit = pLimit(2)
 
 function execFile(bin: string, args: string[]): Promise<{ code: number; stderr: string }> {
   return new Promise((resolve) => {
@@ -427,19 +430,24 @@ export async function extractSubtitleToVtt(
   const out = path.join(dir, `${absoluteIndex}.vtt`)
   if (await fileExists(out)) return out
 
-  await fs.mkdir(dir, { recursive: true })
-  const { code, stderr } = await execFile(FFMPEG_BIN, [
-    '-y',
-    '-i', filePath,
-    '-map', `0:${absoluteIndex}`,
-    '-c:s', 'webvtt',
-    '-f', 'webvtt',
-    out,
-  ])
+  return subExtractLimit(async () => {
+    // Re-check cache inside the limit slot in case a concurrent request already extracted it.
+    if (await fileExists(out)) return out
 
-  if (code !== 0 || !(await fileExists(out))) {
-    await fs.rm(out, { force: true }).catch(() => {})
-    throw new Error(`Subtitle extraction failed for ${mediaId} stream ${absoluteIndex} (code=${code}).\n${stderr.slice(-600)}`)
-  }
-  return out
+    await fs.mkdir(dir, { recursive: true })
+    const { code, stderr } = await execFile(FFMPEG_BIN, [
+      '-y',
+      '-i', filePath,
+      '-map', `0:${absoluteIndex}`,
+      '-c:s', 'webvtt',
+      '-f', 'webvtt',
+      out,
+    ])
+
+    if (code !== 0 || !(await fileExists(out))) {
+      await fs.rm(out, { force: true }).catch(() => {})
+      throw new Error(`Subtitle extraction failed for ${mediaId} stream ${absoluteIndex} (code=${code}).\n${stderr.slice(-600)}`)
+    }
+    return out
+  })
 }

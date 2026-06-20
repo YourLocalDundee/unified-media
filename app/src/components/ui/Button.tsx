@@ -36,6 +36,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
       // isLoading disables the button independently of the disabled prop so callers
       // don't have to manually gate both.
       disabled={disabled || isLoading}
+      aria-busy={isLoading ?? undefined}
       className={cn(
         'inline-flex items-center justify-center gap-2 whitespace-nowrap font-medium transition-colors',
         'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',

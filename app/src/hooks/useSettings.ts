@@ -52,7 +52,6 @@ const PLAYBACK_DEFAULTS: PlaybackPrefs = {
 export interface DisplayPrefs {
   showContinueWatching: boolean
   showRecentlyAdded: boolean
-  showNextUp: boolean
   carouselLimit: 5 | 8 | 10 | 0
   defaultView: 'grid' | 'list'
   posterSize: 'small' | 'medium' | 'large'
@@ -65,7 +64,6 @@ export interface DisplayPrefs {
 const DISPLAY_DEFAULTS: DisplayPrefs = {
   showContinueWatching: true,
   showRecentlyAdded: true,
-  showNextUp: true,
   carouselLimit: 10,
   defaultView: 'grid',
   posterSize: 'medium',

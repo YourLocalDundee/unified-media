@@ -112,6 +112,15 @@ export interface PlaybackData {
   progressApiUrl?: string
   subtitleApiBase?: string      // base path for subtitle proxy, e.g. /api/media/subtitles
   nextEpisodeApiBase?: string   // base path for next-episode lookup, e.g. /api/media/series
+  // Downloaded subtitle files from subtitle_wants (status='downloaded'). These supplement
+  // embedded streams. Each index is positional in the subtitle_wants query for this media,
+  // served at /api/media/subtitles/{itemId}/{index}.
+  downloadedSubtitles?: Array<{
+    language: string
+    label: string       // display name, e.g. "EN" or "EN (HI)"
+    index: number       // positional index into subtitle_wants result for this media
+    forced: boolean
+  }>
   // --- Party Play (optional; only set when reaching the player via a party link) ---
   initialJoinCode?: string      // when present, auto-join this party on mount (?party= one-tap link)
   selfUserId?: string           // the viewing user's id, for party member self-identification

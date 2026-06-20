@@ -10,10 +10,11 @@
  * (the API re-checks requireAdmin + verifyOrigin).
  */
 
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Settings, Trash2, Loader2, X, AlertTriangle } from 'lucide-react'
 import { ModalPortal } from '@/components/ui/ModalPortal'
+import { useFocusTrap } from '@/hooks/useFocusTrap'
 
 interface Props {
   itemId: string
@@ -34,6 +35,13 @@ export function LibraryItemAdminMenu({ itemId, title }: Props) {
   const [deleting, setDeleting] = useState(false)
   const [error, setError] = useState('')
   const menuRef = useRef<HTMLDivElement>(null)
+  const dialogRef = useRef<HTMLDivElement>(null)
+
+  // Don't allow the confirm dialog to close mid-delete.
+  const closeConfirm = useCallback(() => {
+    if (!deleting) setConfirmOpen(false)
+  }, [deleting])
+  useFocusTrap(dialogRef, confirmOpen, closeConfirm)
 
   // Close the menu on outside click.
   useEffect(() => {
@@ -90,11 +98,17 @@ export function LibraryItemAdminMenu({ itemId, title }: Props) {
             className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
             onClick={(e) => { if (e.target === e.currentTarget && !deleting) setConfirmOpen(false) }}
           >
-            <div className="w-full max-w-md rounded-xl border border-zinc-700 bg-zinc-900 p-5 shadow-2xl">
+            <div
+              ref={dialogRef}
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="library-delete-title"
+              className="w-full max-w-md rounded-xl border border-zinc-700 bg-zinc-900 p-5 shadow-2xl"
+            >
               <div className="mb-3 flex items-start justify-between">
                 <div className="flex items-center gap-2">
                   <AlertTriangle className="h-5 w-5 text-red-400" />
-                  <h2 className="text-base font-semibold text-zinc-100">Delete from server</h2>
+                  <h2 id="library-delete-title" className="text-base font-semibold text-zinc-100">Delete from server</h2>
                 </div>
                 <button onClick={() => !deleting && setConfirmOpen(false)} className="text-zinc-500 hover:text-zinc-300" aria-label="Close">
                   <X className="h-5 w-5" />

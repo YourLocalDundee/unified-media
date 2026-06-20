@@ -22,6 +22,9 @@ import type { MonitoredItem, QualityProfile, QualityCondition } from './types'
 import type { TorznabResult } from '@/lib/indexer/types'
 import { getDb } from '@/lib/db/index'
 
+// Strip CR/LF so DB-sourced title strings cannot forge additional log lines (A21-07).
+const sanitizeLog = (s: string) => s.replace(/[\r\n]/g, ' ')
+
 // ---------------------------------------------------------------------------
 // buildSearchParams
 // ---------------------------------------------------------------------------
@@ -43,8 +46,9 @@ export function buildSearchParams(item: MonitoredItem): { q: string; cats: strin
     const scopeType = item.scope_type ?? 'full'
 
     if (scopeType === 'episodes' && item.scope_episodes) {
-      const eps = JSON.parse(item.scope_episodes) as Array<{ s: number; e: number }>
-      if (eps.length > 0) {
+      let eps: Array<{ s: number; e: number }> = []
+      try { eps = JSON.parse(item.scope_episodes) } catch { /* malformed DB column — skip scope */ }
+      if (Array.isArray(eps) && eps.length > 0) {
         const ep = eps[0]
         const s = String(ep.s).padStart(2, '0')
         const e = String(ep.e).padStart(2, '0')
@@ -53,7 +57,8 @@ export function buildSearchParams(item: MonitoredItem): { q: string; cats: strin
     }
 
     if (scopeType === 'seasons' && item.scope_seasons) {
-      const seasons = JSON.parse(item.scope_seasons) as number[]
+      let seasons: number[] = []
+      try { const p = JSON.parse(item.scope_seasons); if (Array.isArray(p)) seasons = p } catch { /* malformed DB column — skip scope */ }
       if (seasons.length === 1) {
         // Season pack search — "Title S01" finds both individual episodes and packs;
         // filterByScope below will prefer packs and reject stray episodes from other seasons.
@@ -86,7 +91,8 @@ export function filterByScope(
   if (scopeType === 'full' || scopeType === 'movie') return results
 
   if (scopeType === 'episodes' && item.scope_episodes) {
-    const eps = JSON.parse(item.scope_episodes) as Array<{ s: number; e: number }>
+    let eps: Array<{ s: number; e: number }> = []
+    try { const p = JSON.parse(item.scope_episodes); if (Array.isArray(p)) eps = p } catch { return null }
     if (eps.length === 0) return null
     // Build a combined OR pattern for all requested episodes, e.g. S01E05|S01E06
     const patterns = eps.map(ep => {
@@ -101,7 +107,8 @@ export function filterByScope(
   }
 
   if (scopeType === 'seasons' && item.scope_seasons) {
-    const seasons = JSON.parse(item.scope_seasons) as number[]
+    let seasons: number[] = []
+    try { const p = JSON.parse(item.scope_seasons); if (Array.isArray(p)) seasons = p } catch { return null }
     if (seasons.length === 0) return null
 
     // For each requested season, accept releases that include S## or "Season N".
@@ -147,7 +154,8 @@ export function findBestRelease(
   profile: QualityProfile,
   language = 'any',
 ): TorznabResult | null {
-  const conditions = JSON.parse(profile.conditions) as QualityCondition[]
+  let conditions: QualityCondition[] = []
+  try { const p = JSON.parse(profile.conditions); if (Array.isArray(p)) conditions = p } catch { return null }
 
   let bestResult: TorznabResult | null = null
   let bestScore = -Infinity
@@ -271,12 +279,11 @@ export async function grabItem(
       const scopeType = item.scope_type ?? 'full'
 
       if (scopeType === 'episodes') {
-        const eps = item.scope_episodes
-          ? (JSON.parse(item.scope_episodes) as Array<{ s: number; e: number }>)
-          : []
+        let eps: Array<{ s: number; e: number }> = []
+        try { if (item.scope_episodes) { const p = JSON.parse(item.scope_episodes); if (Array.isArray(p)) eps = p } } catch {}
         if (eps.length === 0) {
           process.stderr.write(
-            `[grabber] "${item.title}" has scope_type='episodes' but scope_episodes is empty or null — skipping indexer query\n`,
+            `[grabber] "${sanitizeLog(item.title)}" has scope_type='episodes' but scope_episodes is empty or null — skipping indexer query\n`,
           )
           releaseClaim()
           return 'not_found'
@@ -284,12 +291,11 @@ export async function grabItem(
       }
 
       if (scopeType === 'seasons') {
-        const seasons = item.scope_seasons
-          ? (JSON.parse(item.scope_seasons) as number[])
-          : []
+        let seasons: number[] = []
+        try { if (item.scope_seasons) { const p = JSON.parse(item.scope_seasons); if (Array.isArray(p)) seasons = p } } catch {}
         if (seasons.length === 0) {
           process.stderr.write(
-            `[grabber] "${item.title}" has scope_type='seasons' but scope_seasons is empty or null — skipping indexer query\n`,
+            `[grabber] "${sanitizeLog(item.title)}" has scope_type='seasons' but scope_seasons is empty or null — skipping indexer query\n`,
           )
           releaseClaim()
           return 'not_found'
@@ -312,7 +318,8 @@ export async function grabItem(
     const results = scopeFiltered
 
     // 4. Score ALL (scope-filtered) results for UI display (combined base + custom format score)
-    const conditions = JSON.parse(profile.conditions) as QualityCondition[]
+    let conditions: QualityCondition[] = []
+    try { const p = JSON.parse(profile.conditions); if (Array.isArray(p)) conditions = p } catch {}
     const scored: ScoredCandidate[] = results.map(r => {
       const meta = parseReleaseName(r.title)
       const base = scoreRelease(meta, conditions)
@@ -355,7 +362,7 @@ export async function grabItem(
     return 'grabbed'
   } catch (err) {
     // Errors are non-fatal to the cron loop — log and continue to next item
-    process.stderr.write(`[grabber] Error grabbing "${item.title}": ${err}\n`)
+    process.stderr.write(`[grabber] Error grabbing "${sanitizeLog(item.title)}": ${err}\n`)
     releaseClaim()
     return 'error'
   }

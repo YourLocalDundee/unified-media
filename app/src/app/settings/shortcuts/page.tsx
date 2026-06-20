@@ -1,23 +1,19 @@
-/**
- * /settings/shortcuts — static reference table of player keyboard shortcuts.
- * These are defined here as a static list rather than auto-generated from the
- * player component because there is no centralized shortcut registry yet (see
- * CLAUDE.md backlog). If shortcuts are changed in the player, this table must
- * be updated manually.
- */
 import type { Metadata } from 'next'
 
 export const metadata: Metadata = { title: 'Keyboard Shortcuts — Settings' }
 
-const SHORTCUTS = [
-  { key: 'Space', action: 'Play / Pause' },
+const SHORTCUTS: { key: string; action: string }[] = [
+  { key: 'Space / K', action: 'Play / Pause' },
   { key: 'F', action: 'Toggle fullscreen' },
   { key: 'M', action: 'Toggle mute' },
-  { key: '← →', action: 'Seek ±10 seconds' },
+  { key: '← → / J L', action: 'Seek ±10 seconds' },
+  { key: 'Shift + ← →', action: 'Seek ±30 seconds' },
   { key: '↑ ↓', action: 'Volume ±10%' },
-  { key: 'S', action: 'Toggle subtitles' },
-  { key: 'N', action: 'Next episode' },
-  { key: 'Esc', action: 'Exit fullscreen / close modal' },
+  { key: ', .', action: 'Step one frame backward / forward (paused)' },
+  { key: '0 – 9', action: 'Seek to 0% – 90% of duration' },
+  { key: 'S', action: 'Cycle subtitle tracks (off → first → … → off)' },
+  { key: 'N', action: 'Skip to next episode' },
+  { key: 'I', action: 'Toggle stats overlay' },
 ]
 
 export default function ShortcutsPage() {
@@ -36,7 +32,7 @@ export default function ShortcutsPage() {
           ))}
         </div>
         <p className="mt-4 text-xs text-muted-foreground">
-          Shortcuts are active when the video player has focus. Keyboard shortcut customization is
+          Shortcuts are active when the video player is open. Keyboard shortcut customization is
           not yet supported.
         </p>
       </section>

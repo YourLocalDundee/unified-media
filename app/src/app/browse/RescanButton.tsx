@@ -29,26 +29,42 @@ export default function RescanButton() {
       if (!res.ok) {
         setState('error')
         setResultText('Scan failed')
-      } else {
-        const data = await res.json() as { scanned?: number; enriched?: number; failed?: number }
-        const newItems = data.scanned ?? 0
-        setState('done')
-        setResultText(
-          newItems > 0
-            ? `Scan complete — ${newItems} new item${newItems !== 1 ? 's' : ''}`
-            : 'Scan complete — no new items'
-        )
+        setTimeout(() => { setState('idle'); setResultText(null) }, 3000)
+        return
       }
+      const { jobId } = await res.json() as { jobId: string }
+
+      // Poll until the background scan job finishes (max 5 min).
+      for (let i = 0; i < 300; i++) {
+        await new Promise(r => setTimeout(r, 1000))
+        const statusRes = await fetch(`/api/jobs/${jobId}`)
+        if (!statusRes.ok) break
+        const job = await statusRes.json() as {
+          status: string
+          result?: { scanned?: number }
+          error?: string
+        }
+        if (job.status === 'done') {
+          const newItems = (job.result?.scanned ?? 0)
+          setState('done')
+          setResultText(
+            newItems > 0
+              ? `Scan complete — ${newItems} new item${newItems !== 1 ? 's' : ''}`
+              : 'Scan complete — no new items'
+          )
+          setTimeout(() => { setState('idle'); setResultText(null) }, 3000)
+          return
+        }
+        if (job.status === 'failed') break
+      }
+      setState('error')
+      setResultText('Scan failed')
     } catch {
       setState('error')
       setResultText('Scan failed')
     }
 
-    // Reset after 3 seconds regardless of outcome
-    setTimeout(() => {
-      setState('idle')
-      setResultText(null)
-    }, 3000)
+    setTimeout(() => { setState('idle'); setResultText(null) }, 3000)
   }, [state])
 
   // Hide while auth is loading or if the user isn't admin

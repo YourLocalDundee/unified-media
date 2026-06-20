@@ -50,7 +50,17 @@ function createLimit(concurrency: number) {
  * @param xml        Raw XML string from the indexer
  * @param indexerName Human-readable name to stamp on every result
  */
+// 5 MB is generous for any real Torznab response; reject larger payloads to
+// bound memory and CPU cost of xml2js parsing on malformed/adversarial XML (A21-05).
+const MAX_XML_BYTES = 5 * 1024 * 1024
+
 export async function parseXml(xml: string, indexerName: string): Promise<TorznabResult[]> {
+  if (xml.length > MAX_XML_BYTES) {
+    process.stderr.write(
+      `[indexer] XML response too large from ${indexerName} (${xml.length} bytes) — skipping\n`,
+    )
+    return []
+  }
   let parsed: Record<string, unknown>
   try {
     parsed = await parseStringPromise(xml, { explicitArray: true })

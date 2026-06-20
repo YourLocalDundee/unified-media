@@ -4,6 +4,7 @@ import { probeFile } from './probe'
 import { isAudioDirectPlayable, isImageSubtitleCodec, selectAudioTrack } from './codecs'
 import type { MediaItem, PlaybackData } from './types'
 import type { QualityOption } from '@/components/player/types'
+import { getDb } from '@/lib/db/index'
 
 export interface PlaybackSession {
   sessionId: string
@@ -117,6 +118,31 @@ export async function getNativePlaybackData(
     // Non-fatal: probe failed, streams will be empty
   }
 
+  // Downloaded subtitle files for this media item (status = 'downloaded' in subtitle_wants).
+  // Served at /api/media/subtitles/{id}/{positionalIndex} as WebVTT.
+  type RawDlSub = { language: string; forced: number; hi: number }
+  const rawDlSubs = item.file_path
+    ? (getDb()
+        .prepare(
+          `SELECT language, forced, hi FROM subtitle_wants
+           WHERE media_path = ? AND status = 'downloaded' AND subtitle_path IS NOT NULL
+           ORDER BY language, forced, hi`
+        )
+        .all(item.file_path) as RawDlSub[])
+    : []
+  const downloadedSubtitles: PlaybackData['downloadedSubtitles'] = rawDlSubs.length > 0
+    ? rawDlSubs.map((s, index) => {
+        const lang = (s.language ?? 'unk').toUpperCase()
+        const tags = [s.forced ? 'Forced' : null, s.hi ? 'HI' : null].filter(Boolean).join(', ')
+        return {
+          language: s.language ?? '',
+          label: tags ? `${lang} (${tags})` : lang,
+          index,
+          forced: s.forced === 1,
+        }
+      })
+    : undefined
+
   // Series metadata for episodes
   let seriesTitle: string | undefined
   let seriesId: string | undefined
@@ -213,5 +239,6 @@ export async function getNativePlaybackData(
     progressApiUrl: '/api/media/progress',
     subtitleApiBase: '/api/media/subtitles',
     nextEpisodeApiBase: '/api/media/series',
+    downloadedSubtitles,
   }
 }

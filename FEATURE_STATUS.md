@@ -253,7 +253,7 @@ The phase checklist below is left as originally written for history; trust the f
 
 ### From Section 13 (Future Ideas)
 
-- [ ] **Watch party sync** — no WebSocket room code, no SSE endpoint, no room model found anywhere in source
+- [x] **Watch party sync** — shipped v0.9.5. Native party play with WebSocket sync, presence, text chat, emoji reactions. Dedicated WS server on port 3002 (`src/lib/party/`). Full audit in `PARTY_PLAY_AUDIT.md`; all findings remediated. See CLAUDE.md §16.
 - [ ] **Jellyfin user linking** — no `jellyfin_user_id` column in DB migrations, not in users table schema
 - [ ] **Push notifications** — no VAPID keys, no push subscription storage, no Web Push API code
 - [ ] **Mobile PWA** — no `manifest.json`, no service worker (`sw.js`) found in app directory

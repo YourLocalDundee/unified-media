@@ -35,6 +35,28 @@ Severity tags mirror the audit (S = security, D = data/engine, F = functional, A
   deterministic item resolution. **A6-12** grab-override URL validation. **A7-03** interactive picks
   go to the admin queue per the spec (also removes the A6-06 orphaned-download race).
 
+**2026-06-19**
+- **P1** Heavy work in request handlers (A10-08, A15-H1/H2, A19-H1) — `POST /api/media/scan` and
+  `POST /api/subtitle/download` now enqueue background jobs via `src/lib/jobs/queue.ts` (FIFO,
+  max-1 concurrency) and return `202 { jobId }` immediately. Callers poll `GET /api/jobs/[id]`.
+  Embedded subtitle ffmpeg extraction (`extractSubtitleToVtt`) is now capped at 2 concurrent
+  processes via `pLimit(2)` with a double-check inside the limit slot to avoid redundant extractions.
+- **a11y (A16)** — focus-trap/restore/Escape is fully wired (`useFocusTrap`) on all modals (all
+  were already done). `Modal.tsx` close button got `aria-label="Close"` + `aria-hidden` on the icon.
+  Light-theme contrast fixed: 5 page roots (`bg-zinc-950 text-white` → `bg-background text-foreground`),
+  request table expansion rows (`bg-zinc-950` → `bg-card`), TorrentPickModal container + sticky header
+  (`bg-zinc-950` → `bg-card`). Video player chrome kept hardcoded dark (correct — always dark).
+- **Doc drift** — `FEATURE_STATUS.md` watch party line corrected (`[ ]` → `[x]`). Version bumped to
+  0.9.8 in `package.json` and CLAUDE.md header. CLAUDE.md "Known Issues" remediation note updated to
+  reflect all criticals/P1 closed.
+- **No-op settings (A08)** — all wirable settings now wired:
+  - *Sidebar*: `sidebarCollapsed` seeds Zustand `sidebarOpen` on mount via `useDisplayPrefs`. `browsePageSize` Zustand slice removed (no readers).
+  - *Home carousels*: `showContinueWatching` / `showRecentlyAdded` now show/hide the Continue Watching and Recently Added sections. `carouselLimit` slices both carousels client-side. `showNextUp` removed from settings UI (no Next Up section exists). Home sections refactored through `ContinueWatchingCarousel` / `RecentlyAddedCarousel` client components in `app/HomeCarousels.tsx`.
+  - *Library cards*: `showTypeBadge` / `showYear` wired through new `LibraryCard` client component; `MediaCard` accepts `showTypeBadge`/`showYear` props (default true).
+  - *Light-theme page roots*: `bg-zinc-950 text-white` replaced by `bg-background text-foreground` on 5 pages (search, library, requests, browse, browse/discover).
+  - *VideoPlayer playback prefs*: `resumeMode` (resume/restart/ask + dialog), `autoPlayNext` (gate the next-episode fetch), `autoPlayDelay` (countdown length; 0 = navigate immediately), `quality` (pref bitrate matched to best available quality option on mount), subtitle appearance (`subtitleSize`/`subtitleBg`/`subtitleColor`) wired via inline `::cue` style.
+  - *Not wired*: `defaultView` (list view layout not yet built), `posterSize` (no grid column count hook), `hwAccel` (server-side transcoding decision, out of scope), `skipIntro` (no intro-detection system).
+
 **2026-06-16 (two subagents) — working tree, type-check + build clean**
 - **S2 (rest)** `verifyOrigin` now on every remaining mutating route (admin invites/settings/users/*,
   automation/*, jellyfin sessions/*, media playback/progress/scan, quality-profiles/*, subtitle/*).
@@ -77,28 +99,44 @@ Severity tags mirror the audit (S = security, D = data/engine, F = functional, A
 
 ## OPEN — P1 (engine correctness + deploy)
 
-- **Heavy work synchronous in request handlers** (A10-08, A15-H1/H2, A19-H1) — `media/scan`,
-  subtitle download, embedded-subtitle ffmpeg run in-request. Needs a job queue + concurrency caps.
-  (The only remaining P1; D3/F3/A20-01 are closed.)
+*(All P1 items closed — see Closed section.)*
 
 ## OPEN — P2 / systemic
 
-- **No-op settings** (A08-H1..H4) — **flagged, needs a product decision (wire vs remove), not guessed.**
-  Per-item recommendations: Display prefs → wire `unified-display-prefs` into resume/recently-added/
-  library page size, or remove; Playback (9 of 11) → wire each into `VideoPlayer`, or remove; Torrent
-  Interface tab → wire remaining prefs into the live downloads page, or hide; Advanced Jellyfin-URL
-  override → remove (no reader, security-sensitive to wire); `store/index.ts` `browsePageSize` slice →
-  remove (0 readers); sidebar collapse/labels → seed zustand from pref on mount; `S`/`N` shortcuts →
-  bind in `VideoPlayer` or fix the docs table.
-- **a11y remainder** (A16) — modal focus-trap/restore/Escape gaps and light-theme `bg-zinc-950`
-  contrast on ~17 pages are still open (the `error/not-found/loading` boundaries + aria-live are done).
+- **No-op settings — all wirable prefs now closed** (A08-H1/H2/H3/H4, A7-05) **CLOSED 2026-06-19–20**:
+  - Torrent Interface tab: `/downloads/page.tsx` loads `unified-torrent-prefs`, wires `sortColumn`/`sortReverse`/`rowsPerPage`/`confirmDelete`/`confirmDeleteFiles`. Delete confirm replaced with `DeleteConfirmModal` offering "Delete torrent only" / "Delete torrent + files".
+  - `defaultView`: `/library` has a grid/list toggle via `?view=` URL param; list view renders a compact linked list with thumbnail.
+  - `posterSize`: wired through `LibraryViewLayout` client component; small/medium/large map to different responsive grid column counts.
+  - `hwAccel` (server-side transcoding decision — leave as-is); `skipIntro` (no intro detection — leave as-is).
+- ~~**`S`/`N` shortcuts**~~ — **CLOSED 2026-06-20**: `S` cycles subtitle tracks (off→0→1→…→off) and `N` skips to next episode. Both bound in VideoPlayer keydown handler via `nextEpisodeRef` (keeps closure current). Shortcuts page expanded with all real bindings (K/J/L/,/./0-9/I/Shift+arrows).
 
 ## OPEN — Medium / Low remainder
 
 - **A7-10** two parallel qBit SID caches — left separate by design (different lifetimes/credential
   sourcing); the `clearSession`-on-failed-retry fix (A7-11) was applied to both. Unify only if revisited.
-- Remaining per-domain Medium/Low items in `audit-2026-06-13/NN-*.md` not explicitly tasked above
-  (triage from the files as needed). A7-04/A6-18/A7-07/A7-12/A7-13 are now resolved.
+
+**CLOSED 2026-06-20 (medium/low triage):**
+- **A21-02** CSS injection via custom theme colors — `buildCustomThemeCSS` now sanitizes all six color fields through `sanitizeColor(val, fallback)` (rejects anything not matching `#[0-9a-fA-F]{3,8}`).
+- **A21-08** Unguarded `JSON.parse` in grabber — all 5 call sites in `grabber.ts` now wrapped in try/catch with `Array.isArray` guard; malformed DB columns fail safely instead of crashing the cron.
+- **A15-M4/M5** Subtitle file write — added `r.ok` check on the download link fetch, basic SRT validation (content must begin with a digit), and atomic write (write to `.pid.tmp` then rename).
+- **A7-15** TorrentPickModal season/episode re-search — `runSearch` now uses an `AbortController` ref; each call aborts the previous in-flight search so rapid dropdown changes don't produce stale overwrites.
+- **A8-M2** Dead Jellyfin URL override — section marked disabled + "not yet wired" label; controls non-functional to prevent user confusion.
+- **A8-L1** Sidebar whole-store subscription — replaced `useAppStore()` with 3 atomic selectors (`s => s.sidebarOpen`, `s => s.setSidebarOpen`, `s => s.toggleSidebar`).
+- **A8-L6** Button `aria-busy` missing — added `aria-busy={isLoading ?? undefined}` to Button component.
+
+**CLOSED 2026-06-20 (rounds 2–3):**
+- **A16-M9** MediaCard onClick non-keyboard-operable — `onClick` path now renders `<button type="button">` instead of `<div onClick>`. Shared visual content extracted into `content` fragment; `<Link>` path unchanged.
+- **A4-M1** HLS resume seek jump — `prefsRef` ref added (synced via effect to current `prefs`). In `MANIFEST_PARSED`, when `resumeMode === 'resume'` and position > 30s, seek is applied before `video.play()` so HLS starts at the right position without a 0→resume jump. `ask`/`restart` cases still handled by `handleLoadedMetadata`.
+- **A4-M6** Subtitle delay control — already implemented (cue timestamp shifting via `useEffect`, `WeakMap` for originals). Closed retroactively; was listed as open in error.
+- **A21-07** Log forging via unsanitised newlines — `sanitizeLog(s)` helper (strips `\r\n`) applied to all `item.title` and `filePath` interpolations in `scanner.ts` and `grabber.ts`.
+- **A21-04** Polynomial backtracking in parsers — input length capped at 512 chars in `parseFilename`, `extractTitle`, and `parseReleaseName` before running any regex.
+
+**CLOSED 2026-06-20 (rounds 4–5):**
+- **A21-05** xml2js parsing unbounded indexer XML — `MAX_XML_BYTES = 5 MB` guard added in `parseXml`; oversized responses are logged and skipped before xml2js is invoked.
+- **A20-06** formatDate overload ambiguity — shared `formatDate(value: string | number)` in `lib/utils.ts` widened to accept either type; `formatDateShort` added for the short-month variant. `RequestsTable.tsx` local copy removed; now imports `formatDateShort` from utils.
+- **A15-M7** scanAll re-probes nothing useful — replaced the old DB-row iteration (which hit `scanFile`'s early-return guard on every row) with a real filesystem walk via `walkDirectory` (recursive `fs.readdir`). `scanAll` now walks all `MEDIA_ROOTS` directories and discovers files added during watcher downtime. `knownRoots` set before walk so type resolution works correctly.
+
+*(All Medium/Low audit items from the triage list are now closed.)*
 
 ---
 
@@ -122,10 +160,6 @@ gate-chain, real custom formats, Discord/ntfy notifications. See `feature-mining
 
 ---
 
-## Doc drift to fix
+## Doc drift
 
-- `FEATURE_STATUS.md` lists "Watch party sync [ ] Not done" — it is done and audited (CLAUDE.md §16,
-  `PARTY_PLAY_AUDIT.md` all-remediated).
-- Version drift: `package.json` 0.9.2, CLAUDE.md says 0.9.5/0.9.6, `stack-audit.md` noted 0.4.0.
-- `CLAUDE.md` "Known Issues" and `audit-2026-06-13/06`+`07` still describe items this session closed
-  (updated in those files with a remediation banner).
+*(All three doc-drift items closed 2026-06-19 — see session notes above.)*

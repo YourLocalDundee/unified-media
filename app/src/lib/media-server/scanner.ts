@@ -1,11 +1,15 @@
 import chokidar from 'chokidar'
 import path from 'path'
+import fs from 'fs/promises'
 import crypto from 'crypto'
 import pLimit from 'p-limit'
 import { getDb } from '@/lib/db/index'
 import { parseFilename } from './filename-parser'
 import { probeFile } from './probe'
 import type { MediaItem } from './types'
+
+// Strip CR/LF so a crafted file path or title cannot forge additional log lines (A21-07).
+const sanitizeLog = (s: string) => s.replace(/[\r\n]/g, ' ')
 
 const scanLimit = pLimit(4)
 
@@ -111,15 +115,15 @@ export async function scanFile(filePath: string): Promise<void> {
       type === 'episode' ? (parsed.episodeTitle ?? null) : null,
       now, now, now
     )
-    console.log(`[scanner] Added: ${itemTitle}`)
+    console.log(`[scanner] Added: ${sanitizeLog(itemTitle)}`)
   } catch (err) {
-    console.error(`[scanner] Error scanning ${filePath}:`, err)
+    console.error(`[scanner] Error scanning ${sanitizeLog(filePath)}:`, err)
   }
 }
 
 export function removeFromDb(filePath: string): void {
   getDb().prepare('DELETE FROM media_items WHERE file_path = ?').run(filePath)
-  console.log(`[scanner] Removed: ${filePath}`)
+  console.log(`[scanner] Removed: ${sanitizeLog(filePath)}`)
 }
 
 export function initWatcher(): void {
@@ -143,13 +147,41 @@ export function initWatcher(): void {
   console.log(`[scanner] Watching: ${mediaRoots.join(', ')}`)
 }
 
-export async function scanAll(): Promise<{ scanned: number }> {
-  const db = getDb()
-  const items = db.prepare("SELECT file_path FROM media_items WHERE file_path IS NOT NULL").all() as { file_path: string }[]
-  let count = 0
-  for (const { file_path } of items) {
-    await scanFile(file_path)
-    count++
+// Recursively walk a directory, calling onFile for every regular file found.
+async function walkDirectory(dir: string, onFile: (filePath: string) => Promise<void>): Promise<void> {
+  let entries: import('fs').Dirent[]
+  try {
+    entries = await fs.readdir(dir, { withFileTypes: true }) as import('fs').Dirent[]
+  } catch {
+    return // directory missing or unreadable
   }
-  return { scanned: count }
+  for (const entry of entries) {
+    const fullPath = path.join(dir, String(entry.name))
+    if (entry.isDirectory()) {
+      await walkDirectory(fullPath, onFile)
+    } else if (entry.isFile()) {
+      await onFile(fullPath)
+    }
+  }
+}
+
+// Walk MEDIA_ROOTS and scan any media file not already in the DB (A15-M7).
+// The old implementation queried existing DB rows and bailed early in scanFile
+// for all of them, so it could never discover files added during watcher downtime.
+export async function scanAll(): Promise<{ scanned: number }> {
+  const mediaRoots = (process.env.MEDIA_ROOTS ?? '').split(':').map(s => s.trim()).filter(Boolean)
+  if (mediaRoots.length === 0) return { scanned: 0 }
+
+  // Ensure resolveType/extractSeriesFromPath see the correct roots
+  knownRoots = mediaRoots
+
+  let found = 0
+  for (const root of mediaRoots) {
+    await walkDirectory(root, async (filePath) => {
+      if (!isMediaFile(filePath)) return
+      found++
+      await scanLimit(() => scanFile(filePath))
+    })
+  }
+  return { scanned: found }
 }

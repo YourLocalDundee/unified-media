@@ -3,7 +3,8 @@
 // and persists back to the health_status column via the test API route.
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
+import { useFocusTrap } from '@/hooks/useFocusTrap'
 import { Loader2, Trash2, Pencil, FlaskConical } from 'lucide-react'
 
 interface Indexer {
@@ -228,12 +229,15 @@ export default function AdminIndexersPage() {
     setModalOpen(true)
   }
 
-  function closeModal() {
+  const closeModal = useCallback(() => {
     setModalOpen(false)
     setEditingId(null)
     setForm(EMPTY_FORM)
     setFormErrors({})
-  }
+  }, [])
+
+  const modalRef = useRef<HTMLDivElement>(null)
+  useFocusTrap(modalRef, modalOpen, closeModal)
 
   function validateForm(): boolean {
     const errs: Partial<FormState> = {}
@@ -479,8 +483,14 @@ export default function AdminIndexersPage() {
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
           onClick={e => { if (e.target === e.currentTarget) closeModal() }}
         >
-          <div className="w-full max-w-md rounded-xl border border-border bg-card p-6 shadow-xl mx-4">
-            <h2 className="text-lg font-semibold mb-5">
+          <div
+            ref={modalRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="indexer-modal-title"
+            className="w-full max-w-md rounded-xl border border-border bg-card p-6 shadow-xl mx-4"
+          >
+            <h2 id="indexer-modal-title" className="text-lg font-semibold mb-5">
               {editingId !== null ? 'Edit Indexer' : 'Add Indexer'}
             </h2>
 

@@ -98,9 +98,6 @@ export default function DisplaySettingsPage() {
             onChange={(v) => update({ showRecentlyAdded: v })}
           />
         </SettingRow>
-        <SettingRow label="Show Next Up">
-          <Toggle checked={prefs.showNextUp} onChange={(v) => update({ showNextUp: v })} />
-        </SettingRow>
         <SettingRow label="Carousel Item Limit">
           <Select
             value={prefs.carouselLimit}

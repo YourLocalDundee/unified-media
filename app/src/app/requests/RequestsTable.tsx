@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
+import { formatDateShort } from '@/lib/utils'
 import type { NativeRequestWithUser, RequestStatus, PreferredRelease } from '@/lib/requests/types'
 import type { ScoredCandidate, GrabResultRow } from '@/lib/automation/grab-results'
 import type { TorrentSearchResult } from '@/app/api/torrent-search/route'
@@ -42,13 +43,8 @@ function tmdbImageUrl(path: string, size = 'w92') {
   return `https://image.tmdb.org/t/p/${size}${path}`
 }
 
-function formatDate(ms: number): string {
-  return new Date(ms).toLocaleDateString(undefined, {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-  })
-}
+// Use shared formatDateShort from utils (A20-06)
+const formatDate = formatDateShort
 
 function formatBytes(bytes: number) {
   if (bytes === 0) return '—'
@@ -410,7 +406,7 @@ function GrabResultsPanel({ requestId, status }: GrabResultsPanelProps) {
   if (loading && data === undefined) {
     return (
       <tr>
-        <td colSpan={9} className="px-6 py-4 text-sm text-zinc-500 bg-zinc-950">
+        <td colSpan={9} className="px-6 py-4 text-sm text-muted-foreground bg-card">
           Loading grab results...
         </td>
       </tr>
@@ -421,7 +417,7 @@ function GrabResultsPanel({ requestId, status }: GrabResultsPanelProps) {
 
   return (
     <tr>
-      <td colSpan={9} className="bg-zinc-950 border-b border-zinc-800 px-4 pb-4 pt-3">
+      <td colSpan={9} className="bg-card border-b border-border px-4 pb-4 pt-3">
         <div className="flex items-center justify-between mb-3">
           <span className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
             Grab Results
@@ -624,7 +620,7 @@ function PreferredReleasePanel({
 
   return (
     <tr>
-      <td colSpan={9} className="bg-zinc-950 border-b border-zinc-800 px-4 pb-4 pt-3">
+      <td colSpan={9} className="bg-card border-b border-border px-4 pb-4 pt-3">
         <div className="mb-2 flex items-center gap-3 flex-wrap">
           <span className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
             User&apos;s Selected Release

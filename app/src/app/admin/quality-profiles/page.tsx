@@ -1,6 +1,7 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
+import { useFocusTrap } from '@/hooks/useFocusTrap'
 import type { QualityProfileFull, QualityTier, CustomFormatSpec } from '@/lib/automation/quality'
 
 type FormatEntry = { format_id: number; name: string; specs: string; score: number }
@@ -62,6 +63,9 @@ function AddFormatModal({
   const [name, setName] = useState('')
   const [specs, setSpecs] = useState<CustomFormatSpec[]>([{ type: 'title_regex', value: '', required: true, negate: false }])
 
+  const dialogRef = useRef<HTMLDivElement>(null)
+  useFocusTrap(dialogRef, true, onClose)
+
   function addSpec() {
     setSpecs(s => [...s, { type: 'title_regex', value: '', required: true, negate: false }])
   }
@@ -76,8 +80,14 @@ function AddFormatModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70">
-      <div className="bg-zinc-900 rounded-xl border border-zinc-700 p-6 w-full max-w-lg mx-4">
-        <h3 className="text-lg font-semibold text-white mb-4">New Custom Format</h3>
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="add-format-title"
+        className="bg-zinc-900 rounded-xl border border-zinc-700 p-6 w-full max-w-lg mx-4"
+      >
+        <h3 id="add-format-title" className="text-lg font-semibold text-white mb-4">New Custom Format</h3>
 
         <div className="mb-4">
           <label className="block text-xs text-zinc-400 mb-1">Name</label>

@@ -1,23 +1,9 @@
-/**
- * /downloads — simplified single-page UMT queue viewer.
- * This is an older, self-contained page that predates the component-split
- * version (FilterSidebar, TorrentRow, DetailPanel). It still ships alongside
- * those components but only uses the raw UMT hooks directly.
- *
- * Primary differences from the component-split version:
- *   - No filter sidebar, no detail panel, no right-click context menu
- *   - Has an inline speed graph and a quick speed-limit dropdown
- *   - Responsive: table on md+, card list on mobile
- */
 'use client'
 
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react'
 import TorrentSettingsClient from '@/app/settings/torrent/TorrentSettingsClient'
 import { formatBytes } from '@/lib/utils'
-// The hooks below import from @/lib/qbittorrent directly because this page
-// uses client-side polling against the /api/qbit proxy route. The abstraction
-// layer in src/lib/download-client is for server-side use; the browser hook
-// works with raw UMT types since it talks to the qBit proxy endpoint.
+import { useFocusTrap } from '@/hooks/useFocusTrap'
 import {
   useMainData,
   useAddTorrent,
@@ -32,6 +18,121 @@ import {
   getTorrentStateColor,
 } from '@/lib/qbittorrent/types'
 import type { Torrent, TorrentState } from '@/lib/qbittorrent/types'
+
+// ---------------------------------------------------------------------------
+// UI prefs (mirrors TorrentSettingsClient — same key, same shape)
+// ---------------------------------------------------------------------------
+
+const UI_PREFS_KEY = 'unified-torrent-prefs'
+
+interface UIPrefs {
+  rowsPerPage: 25 | 50 | 100 | 'all'
+  sortColumn: string
+  sortReverse: boolean
+  confirmDelete: boolean
+  confirmDeleteFiles: boolean
+}
+
+const DEFAULT_UI_PREFS: UIPrefs = {
+  rowsPerPage: 50,
+  sortColumn: 'added_on',
+  sortReverse: false,
+  confirmDelete: true,
+  confirmDeleteFiles: true,
+}
+
+function loadUIPrefs(): UIPrefs {
+  if (typeof window === 'undefined') return DEFAULT_UI_PREFS
+  try {
+    const raw = localStorage.getItem(UI_PREFS_KEY)
+    if (!raw) return DEFAULT_UI_PREFS
+    return { ...DEFAULT_UI_PREFS, ...JSON.parse(raw) }
+  } catch {
+    return DEFAULT_UI_PREFS
+  }
+}
+
+// Sort torrents by a field key. Numeric fields sort largest-first by default;
+// string fields sort A-Z. sortReverse inverts the comparison.
+function sortTorrents(torrents: Torrent[], column: string, reverse: boolean): Torrent[] {
+  return [...torrents].sort((a, b) => {
+    const av = (a as unknown as Record<string, unknown>)[column]
+    const bv = (b as unknown as Record<string, unknown>)[column]
+    let cmp = 0
+    if (typeof av === 'number' && typeof bv === 'number') {
+      cmp = bv - av // newest/highest first
+    } else if (typeof av === 'string' && typeof bv === 'string') {
+      cmp = av.localeCompare(bv)
+    }
+    return reverse ? -cmp : cmp
+  })
+}
+
+// ---------------------------------------------------------------------------
+// Delete confirm modal (replaces window.confirm — A7-05)
+// ---------------------------------------------------------------------------
+
+interface DeleteConfirmProps {
+  name: string
+  allowDeleteFiles: boolean
+  onConfirm: (deleteFiles: boolean) => void
+  onCancel: () => void
+}
+
+function DeleteConfirmModal({ name, allowDeleteFiles, onConfirm, onCancel }: DeleteConfirmProps) {
+  const dialogRef = useRef<HTMLDivElement>(null)
+  useFocusTrap(dialogRef, true, onCancel)
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onCancel() }
+    document.addEventListener('keydown', handler)
+    return () => document.removeEventListener('keydown', handler)
+  }, [onCancel])
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="delete-confirm-title"
+        className="w-full max-w-sm rounded-xl border border-border bg-card p-6 shadow-xl"
+      >
+        <h2 id="delete-confirm-title" className="mb-2 text-base font-semibold text-foreground">
+          Delete torrent?
+        </h2>
+        <p
+          className="mb-5 truncate text-sm text-muted-foreground"
+          title={name}
+        >
+          {name}
+        </p>
+        <div className="flex flex-col gap-2">
+          <button
+            onClick={() => onConfirm(false)}
+            className="w-full rounded-lg border border-border bg-card px-4 py-2.5 text-sm font-medium text-foreground hover:bg-muted focus:outline-none focus:ring-2 focus:ring-ring"
+          >
+            Delete torrent only
+          </button>
+          {allowDeleteFiles && (
+            <button
+              onClick={() => onConfirm(true)}
+              className="w-full rounded-lg border border-red-500/60 bg-red-500/10 px-4 py-2.5 text-sm font-medium text-red-500 hover:bg-red-500/20 focus:outline-none focus:ring-2 focus:ring-red-500 dark:text-red-400"
+            >
+              Delete torrent + files
+            </button>
+          )}
+          <button
+            onClick={onCancel}
+            className="w-full rounded-lg px-4 py-2.5 text-sm font-medium text-muted-foreground hover:bg-muted focus:outline-none focus:ring-2 focus:ring-ring"
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -456,7 +557,7 @@ interface TorrentRowProps {
   onSelect: (hash: string, checked: boolean) => void
   onPause: (hash: string) => void
   onResume: (hash: string) => void
-  onDelete: (hash: string) => void
+  onRequestDelete: (hash: string, name: string) => void
 }
 
 function TorrentRow({
@@ -465,7 +566,7 @@ function TorrentRow({
   onSelect,
   onPause,
   onResume,
-  onDelete,
+  onRequestDelete,
 }: TorrentRowProps) {
   const isPaused = [
     'pausedDL',
@@ -492,13 +593,6 @@ function TorrentRow({
 
   const showPause = isDownloading || isSeeding
   const showResume = isPaused
-
-  const handleDelete = useCallback(() => {
-    const withFiles = window.confirm(
-      `Delete "${torrent.name}"?\n\nClick OK to delete torrent only.\n(Hold Shift to also delete files — not supported in this dialog, use the torrent manager for that.)`
-    )
-    if (withFiles) onDelete(torrent.hash)
-  }, [torrent.hash, torrent.name, onDelete])
 
   return (
     <tr
@@ -589,7 +683,7 @@ function TorrentRow({
             </button>
           )}
           <button
-            onClick={handleDelete}
+            onClick={() => onRequestDelete(torrent.hash, torrent.name)}
             title="Delete"
             className="rounded px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50 hover:text-red-700 dark:text-red-400 dark:hover:bg-red-900/20 dark:hover:text-red-300"
           >
@@ -611,12 +705,28 @@ export default function DownloadsPage() {
   const { resumeTorrents, isPending: isResumingBulk } = useResumeTorrents()
   const { deleteTorrents, isPending: isDeletingBulk } = useDeleteTorrents()
 
+  // Load UI prefs from localStorage (A8-H3: wire Interface tab settings to this page)
+  const [uiPrefs, setUIPrefs] = useState<UIPrefs>(DEFAULT_UI_PREFS)
+  useEffect(() => {
+    setUIPrefs(loadUIPrefs())
+    // Re-load whenever settings are saved in the slide-over
+    const handler = () => setUIPrefs(loadUIPrefs())
+    window.addEventListener('storage', handler)
+    return () => window.removeEventListener('storage', handler)
+  }, [])
+
   const [activeTab, setActiveTab] = useState<FilterTab>('all')
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [showSettings, setShowSettings] = useState(false)
+  const settingsDialogRef = useRef<HTMLDivElement>(null)
+  const closeSettings = useCallback(() => setShowSettings(false), [])
+  useFocusTrap(settingsDialogRef, showSettings, closeSettings)
   // A7-04: surfaces a failed pause/resume/delete action (the action hooks now
   // throw on a non-2xx response). Announced via an aria-live region below.
   const [actionError, setActionError] = useState<string | null>(null)
+
+  // A7-05: delete confirm modal state (replaces window.confirm)
+  const [pendingDelete, setPendingDelete] = useState<{ hashes: string[]; name: string } | null>(null)
 
   // Speed history for the graph — capped at 60 samples (~2 min at 2s poll rate)
   const [speedHistory, setSpeedHistory] = useState<{ dl: number; ul: number }[]>([])
@@ -636,27 +746,36 @@ export default function DownloadsPage() {
   const isFirstLoad = !isConnected && !error
 
   // ---------------------------------------------------------------------------
-  // Filtering
+  // Filtering + sorting + pagination (A8-H3)
   // ---------------------------------------------------------------------------
 
   const filteredTorrents = useMemo(() => {
+    let result: Torrent[]
     switch (activeTab) {
       case 'downloading':
-        return torrents.filter((t) =>
+        result = torrents.filter((t) =>
           ['downloading', 'forcedDL', 'metaDL', 'forcedMetaDL', 'stalledDL', 'queuedDL', 'checkingDL', 'allocating'].includes(t.state)
         )
+        break
       case 'seeding':
-        return torrents.filter((t) =>
+        result = torrents.filter((t) =>
           ['uploading', 'forcedUP', 'stalledUP', 'queuedUP', 'checkingUP'].includes(t.state)
         )
+        break
       case 'paused':
-        return torrents.filter((t) =>
+        result = torrents.filter((t) =>
           ['pausedDL', 'pausedUP', 'stoppedDL', 'stoppedUP'].includes(t.state)
         )
+        break
       default:
-        return torrents
+        result = torrents
     }
-  }, [torrents, activeTab])
+    // Apply sort from Interface prefs
+    result = sortTorrents(result, uiPrefs.sortColumn, uiPrefs.sortReverse)
+    // Apply rowsPerPage limit
+    if (uiPrefs.rowsPerPage !== 'all') result = result.slice(0, uiPrefs.rowsPerPage)
+    return result
+  }, [torrents, activeTab, uiPrefs.sortColumn, uiPrefs.sortReverse, uiPrefs.rowsPerPage])
 
   // ---------------------------------------------------------------------------
   // Stats
@@ -705,12 +824,19 @@ export default function DownloadsPage() {
     },
     [resumeTorrents]
   )
-  const handleDelete = useCallback(
-    (hash: string) => {
-      setActionError(null)
-      deleteTorrents([hash], false).catch(() => setActionError('Failed to delete torrent.'))
+
+  // A7-05 + A8-H3: request delete opens the custom modal (skipped when confirmDelete=false)
+  const handleRequestDelete = useCallback(
+    (hash: string, name: string) => {
+      if (!uiPrefs.confirmDelete) {
+        // Skip confirm — delete immediately, no files
+        setActionError(null)
+        deleteTorrents([hash], false).catch(() => setActionError('Failed to delete torrent.'))
+        return
+      }
+      setPendingDelete({ hashes: [hash], name })
     },
-    [deleteTorrents]
+    [uiPrefs.confirmDelete, deleteTorrents]
   )
 
   const handleBulkPause = useCallback(() => {
@@ -727,11 +853,33 @@ export default function DownloadsPage() {
 
   const handleBulkDelete = useCallback(() => {
     const count = selected.size
-    if (!window.confirm(`Delete ${count} torrent${count !== 1 ? 's' : ''}?`)) return
-    setActionError(null)
-    deleteTorrents(Array.from(selected), false).catch(() => setActionError('Failed to delete selected torrents.'))
+    if (!uiPrefs.confirmDelete) {
+      setActionError(null)
+      deleteTorrents(Array.from(selected), false).catch(() =>
+        setActionError('Failed to delete selected torrents.')
+      )
+      clearSelection()
+      return
+    }
+    setPendingDelete({
+      hashes: Array.from(selected),
+      name: `${count} torrent${count !== 1 ? 's' : ''}`,
+    })
     clearSelection()
-  }, [selected, deleteTorrents, clearSelection])
+  }, [selected, deleteTorrents, clearSelection, uiPrefs.confirmDelete])
+
+  // Called by DeleteConfirmModal
+  const handleConfirmDelete = useCallback(
+    (deleteFiles: boolean) => {
+      if (!pendingDelete) return
+      setActionError(null)
+      deleteTorrents(pendingDelete.hashes, deleteFiles).catch(() =>
+        setActionError('Failed to delete torrent.')
+      )
+      setPendingDelete(null)
+    },
+    [pendingDelete, deleteTorrents]
+  )
 
   // ---------------------------------------------------------------------------
   // Render
@@ -966,7 +1114,7 @@ export default function DownloadsPage() {
                       onSelect={handleSelect}
                       onPause={handlePause}
                       onResume={handleResume}
-                      onDelete={handleDelete}
+                      onRequestDelete={handleRequestDelete}
                     />
                   ))
                 )}
@@ -1055,7 +1203,7 @@ export default function DownloadsPage() {
                       </button>
                     )}
                     <button
-                      onClick={() => handleDelete(torrent.hash)}
+                      onClick={() => handleRequestDelete(torrent.hash, torrent.name)}
                       className="min-h-[44px] flex-1 rounded-md border border-red-300 bg-red-50 px-3 text-sm font-medium text-red-700 hover:bg-red-100 dark:border-red-700 dark:bg-red-900/20 dark:text-red-400 dark:hover:bg-red-900/40"
                     >
                       Delete
@@ -1072,10 +1220,22 @@ export default function DownloadsPage() {
       {showSettings && (
         <div className="fixed inset-0 z-50 flex">
           <div className="flex-1 bg-black/60" onClick={() => setShowSettings(false)} />
-          <div className="w-full max-w-2xl bg-zinc-950 border-l border-zinc-800 overflow-y-auto flex flex-col">
-            <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800 sticky top-0 bg-zinc-950">
-              <h2 className="text-sm font-semibold text-white">UMT Settings</h2>
-              <button onClick={() => setShowSettings(false)} className="text-zinc-400 hover:text-white">✕</button>
+          <div
+            ref={settingsDialogRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="umt-settings-title"
+            className="w-full max-w-2xl bg-background border-l border-border overflow-y-auto flex flex-col"
+          >
+            <div className="flex items-center justify-between px-4 py-3 border-b border-border sticky top-0 bg-background">
+              <h2 id="umt-settings-title" className="text-sm font-semibold text-foreground">UMT Settings</h2>
+              <button
+                onClick={() => setShowSettings(false)}
+                className="text-muted-foreground hover:text-foreground"
+                aria-label="Close"
+              >
+                <span aria-hidden="true">✕</span>
+              </button>
             </div>
             <div className="flex-1 p-4">
               <TorrentSettingsClient />
@@ -1122,6 +1282,16 @@ export default function DownloadsPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* A7-05: delete confirm modal */}
+      {pendingDelete && (
+        <DeleteConfirmModal
+          name={pendingDelete.name}
+          allowDeleteFiles={uiPrefs.confirmDeleteFiles}
+          onConfirm={handleConfirmDelete}
+          onCancel={() => setPendingDelete(null)}
+        />
       )}
     </div>
   )

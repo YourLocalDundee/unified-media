@@ -101,7 +101,7 @@ export default async function DiscoverDetailPage({ params }: PageProps) {
   const backdropUrl = backdropPath ? `https://image.tmdb.org/t/p/w1280${backdropPath}` : null
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-white">
+    <div className="min-h-screen bg-background text-foreground">
       {/* Backdrop */}
       {backdropUrl && (
         <div className="relative h-64 sm:h-80 lg:h-96 w-full overflow-hidden">

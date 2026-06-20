@@ -1,9 +1,9 @@
 import { Suspense } from 'react'
 import type { Metadata } from 'next'
 import Link from 'next/link'
-import MediaCard from '@/components/media/MediaCard'
 import { getItemsByType, getCountByType, getAvailableFilters } from '@/lib/media-server/library'
 import { requireAuth } from '@/lib/dal'
+import { LibraryViewLayout } from './LibraryViewLayout'
 
 export const metadata: Metadata = {
   title: 'Library — minime',
@@ -24,7 +24,7 @@ const COUNT_OPTIONS = [25, 50, 100] as const
 type PageCount = typeof COUNT_OPTIONS[number]
 
 interface LibraryPageProps {
-  searchParams: Promise<{ type?: string; sort?: string; year?: string; page?: string; count?: string }>
+  searchParams: Promise<{ type?: string; sort?: string; year?: string; page?: string; count?: string; view?: string }>
 }
 
 // ---------------------------------------------------------------------------
@@ -37,23 +37,28 @@ async function LibraryGrid({
   year,
   page,
   count,
+  view,
 }: {
   itemType: string
   sort: SortKey
   year?: number
   page: number
   count: number
+  view: 'grid' | 'list'
 }) {
   const offset = (page - 1) * count
-  // Map the tab to a concrete type or the 'all' pseudo-type, then page entirely in
-  // SQL with a matching COUNT. The old 'all' branch fetched half a page of each
-  // type from offset 0, merged, re-sorted in JS, and forced totalPages=1 — so the
-  // default tab silently capped at ~count items with no pagination, and a
-  // year-filtered view misreported its total the same way (A3-08, A3-11).
   const dbType = itemType === 'movies' ? 'movie' : itemType === 'shows' ? 'series' : 'all'
   const items = getItemsByType(dbType, count, offset, year, sort)
   const totalCount = getCountByType(dbType, year)
   const totalPages = Math.max(1, Math.ceil(totalCount / count))
+
+  const viewItems = items.map((item) => ({
+    id: item.id,
+    title: item.title,
+    year: item.year ?? undefined,
+    imageUrl: item.poster_path ? `https://image.tmdb.org/t/p/w300${item.poster_path}` : undefined,
+    type: (item.type === 'movie' ? 'Movie' : 'Series') as 'Movie' | 'Series',
+  }))
 
   return (
     <div className="flex flex-col gap-6">
@@ -66,21 +71,7 @@ async function LibraryGrid({
           Nothing in library yet.
         </div>
       ) : (
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
-          {items.map((item) => (
-            <MediaCard
-              key={item.id}
-              id={item.id}
-              title={item.title}
-              year={item.year ?? undefined}
-              imageUrl={item.poster_path ? `https://image.tmdb.org/t/p/w300${item.poster_path}` : undefined}
-              type={item.type === 'movie' ? 'Movie' : 'Series'}
-              // Both movies and series open the info/detail page first (Watch Now plays from there)
-              // rather than jumping straight into playback.
-              href={`/library/${item.id}`}
-            />
-          ))}
-        </div>
+        <LibraryViewLayout items={viewItems} view={view} />
       )}
 
       {totalPages > 1 && (
@@ -91,6 +82,7 @@ async function LibraryGrid({
           sort={sort}
           count={count}
           year={year}
+          view={view}
         />
       )}
     </div>
@@ -108,6 +100,7 @@ function LibraryPagination({
   sort,
   count,
   year,
+  view,
 }: {
   currentPage: number
   totalPages: number
@@ -115,8 +108,9 @@ function LibraryPagination({
   sort: SortKey
   count: number
   year?: number
+  view: 'grid' | 'list'
 }) {
-  const extra = `&sort=${sort}&count=${count}${year ? `&year=${year}` : ''}`
+  const extra = `&sort=${sort}&count=${count}&view=${view}${year ? `&year=${year}` : ''}`
   const pageNums = Array.from({ length: totalPages }, (_, i) => i + 1).filter(
     (p) => p === 1 || p === totalPages || (p >= currentPage - 2 && p <= currentPage + 2)
   )
@@ -173,7 +167,7 @@ function LibraryGridSkeleton() {
 // Type tabs
 // ---------------------------------------------------------------------------
 
-function TypeTabs({ active, sort, count }: { active: string; sort: SortKey; count: number }) {
+function TypeTabs({ active, sort, count, view }: { active: string; sort: SortKey; count: number; view: 'grid' | 'list' }) {
   const tabs = [
     { value: 'all',    label: 'All' },
     { value: 'movies', label: 'Movies' },
@@ -184,7 +178,7 @@ function TypeTabs({ active, sort, count }: { active: string; sort: SortKey; coun
       {tabs.map((tab) => (
         <Link
           key={tab.value}
-          href={`/library?type=${tab.value}&sort=${sort}&count=${count}`}
+          href={`/library?type=${tab.value}&sort=${sort}&count=${count}&view=${view}`}
           className={`rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
             active === tab.value
               ? 'bg-white text-black'
@@ -217,15 +211,42 @@ export default async function LibraryPage({ searchParams }: LibraryPageProps) {
   const count: PageCount = (COUNT_OPTIONS as readonly number[]).includes(rawCount)
     ? (rawCount as PageCount)
     : 25
+  const view: 'grid' | 'list' = params.view === 'list' ? 'list' : 'grid'
 
   const filterType = itemType === 'movies' ? 'movie' : itemType === 'shows' ? 'series' : undefined
   const filters = getAvailableFilters(filterType)
 
+  const toggleViewHref = `/library?type=${itemType}&sort=${sort}&count=${count}&view=${view === 'grid' ? 'list' : 'grid'}${year ? `&year=${year}` : ''}`
+
   return (
-    <div className="min-h-screen bg-zinc-950 text-white">
+    <div className="min-h-screen bg-background text-foreground">
       <div className="mx-auto max-w-screen-2xl px-4 py-8 sm:px-6 lg:px-8">
         <div className="mb-8 flex flex-col gap-4">
-          <h1 className="text-3xl font-bold tracking-tight">Library</h1>
+          <div className="flex items-center justify-between gap-4">
+            <h1 className="text-3xl font-bold tracking-tight">Library</h1>
+            {/* defaultView toggle (A8-H1 posterSize wired via LibraryViewLayout) */}
+            <Link
+              href={toggleViewHref}
+              title={view === 'grid' ? 'Switch to list view' : 'Switch to grid view'}
+              className="flex items-center gap-1.5 rounded-lg bg-zinc-800 px-3 py-2 text-sm text-zinc-300 hover:bg-zinc-700 hover:text-white transition-colors"
+            >
+              {view === 'grid' ? (
+                <>
+                  <svg className="h-4 w-4" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+                    <path d="M1 2h6v6H1V2zm8 0h6v6H9V2zM1 10h6v4H1v-4zm8 0h6v4H9v-4z" />
+                  </svg>
+                  List
+                </>
+              ) : (
+                <>
+                  <svg className="h-4 w-4" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+                    <path d="M1 2h14v3H1V2zm0 5h14v3H1V7zm0 5h14v2H1v-2z" />
+                  </svg>
+                  Grid
+                </>
+              )}
+            </Link>
+          </div>
 
           <form method="GET" action="/library" className="flex flex-wrap items-center gap-2">
             {filters.years.length > 0 && (
@@ -260,6 +281,7 @@ export default async function LibraryPage({ searchParams }: LibraryPageProps) {
               ))}
             </select>
             <input type="hidden" name="type" value={itemType} />
+            <input type="hidden" name="view" value={view} />
             <button
               type="submit"
               className="rounded-lg bg-white px-4 py-2 text-sm font-medium text-black hover:bg-zinc-200"
@@ -268,7 +290,7 @@ export default async function LibraryPage({ searchParams }: LibraryPageProps) {
             </button>
             {year && (
               <Link
-                href={`/library?type=${itemType}&sort=${sort}&count=${count}`}
+                href={`/library?type=${itemType}&sort=${sort}&count=${count}&view=${view}`}
                 className="rounded-lg bg-zinc-800 px-3 py-2 text-sm text-white hover:bg-zinc-700"
               >
                 Clear
@@ -276,11 +298,11 @@ export default async function LibraryPage({ searchParams }: LibraryPageProps) {
             )}
           </form>
 
-          <TypeTabs active={itemType} sort={sort} count={count} />
+          <TypeTabs active={itemType} sort={sort} count={count} view={view} />
         </div>
 
         <Suspense fallback={<LibraryGridSkeleton />}>
-          <LibraryGrid itemType={itemType} sort={sort} year={year} page={page} count={count} />
+          <LibraryGrid itemType={itemType} sort={sort} year={year} page={page} count={count} view={view} />
         </Suspense>
       </div>
     </div>
