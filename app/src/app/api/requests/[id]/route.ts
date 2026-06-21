@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth } from '@/lib/dal'
 import { verifyOrigin } from '@/lib/csrf'
-import { getRequestById, deleteRequest } from '@/lib/requests/monitor'
+import { getRequestById } from '@/lib/requests/monitor'
+import { deleteRequestWithCascade } from '@/lib/requests/delete'
 
 export const dynamic = 'force-dynamic'
 
@@ -52,8 +53,10 @@ export async function DELETE(
     return NextResponse.json({ error: 'Request not found' }, { status: 404 })
   }
 
-  const deleted = deleteRequest(id)
-  if (!deleted) {
+  // Cascade: also remove the show's orphaned monitored_items + grab history and its torrents
+  // (torrent-only, no files) so a deleted request stops grabbing and leaves nothing in the client.
+  const summary = await deleteRequestWithCascade(id)
+  if (!summary.deleted) {
     return NextResponse.json({ error: 'Request not found' }, { status: 404 })
   }
 

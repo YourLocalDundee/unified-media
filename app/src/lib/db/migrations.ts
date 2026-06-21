@@ -343,6 +343,9 @@ export function runMigrations(db: Database.Database): void {
   `)
   // Seed defaults (INSERT OR IGNORE so re-runs are safe)
   db.prepare("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('auto_approve', '0')").run()
+  // Stalled-metadata reaper threshold in minutes (Regression 2). Tunable at runtime via setSetting
+  // without a redeploy; the reaper cron reads it each tick.
+  db.prepare("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('reaper_metadata_minutes', '60')").run()
 
   // Additive migrations for media_requests
   const requestCols = [

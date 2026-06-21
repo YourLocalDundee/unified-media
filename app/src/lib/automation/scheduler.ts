@@ -75,6 +75,18 @@ export function initScheduler(): void {
     await runImportCheck()
   })
 
+  // Stalled-metadata reaper (Regression 2): every 10 min, remove torrents stuck in metaDL/forcedMetaDL
+  // with 0 peers older than app_settings 'reaper_metadata_minutes' (default 60). Torrent-only, never
+  // touches data or anything with peers/downloading/seeding. Dynamic import keeps the qBit session
+  // module out of the initial graph.
+  cron.schedule('*/10 * * * *', async () => {
+    const { reapStalledMetadata } = await import('./reaper')
+    const count = await reapStalledMetadata()
+    if (count > 0) {
+      console.log(`[reaper] Removed ${count} stalled-metadata torrent(s)`)
+    }
+  })
+
   // Auto-delete: runs at the top of every hour; dynamic import keeps the fs-heavy
   // auto-delete module out of the initial module graph
   cron.schedule('0 * * * *', async () => {

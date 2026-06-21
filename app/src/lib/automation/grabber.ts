@@ -119,23 +119,30 @@ export function filterByScope(
 
     // Build scope-match pattern. When ep.e > 99 the episode number is TMDB absolute
     // (e.g. S13E422 for One Piece), so releases use bare absolute numbering on Nyaa:
-    // "[Group] One Piece - 422 [1080p]". Accept BOTH the S##E## form (for indexers that
-    // use it) AND a word-boundary-delimited bare number.
+    // "[Group] One Piece - 422 [1080p]". Accept BOTH the S##E## form AND a delimited bare number.
     const patterns = eps.map(ep => {
       const s = String(ep.s).padStart(2, '0')
       const e = String(ep.e).padStart(2, '0')
       const standard = `S${s}E${e}|${ep.s}x${String(ep.e).padStart(2, '0')}`
       if (ep.e > 99) {
-        // Bare absolute number. Left: not preceded by a digit (so "1422" doesn't match 422,
-        // while "EP422"/"E422" still do — P/E aren't digits). Right: not followed by a digit OR
-        // a hex char, so a CRC32 tag like "[422CDD99]" on an unrelated episode doesn't false-match,
-        // while real formats ("422-456", "422 ", "(422)") still do.
-        return `${standard}|(?<![0-9])${ep.e}(?![0-9a-fA-F])`
+        // Bare absolute number. Left: not preceded by a digit (so "1422" doesn't match 422, while
+        // "EP422"/"E422" still do). Right: not a digit, hex char, OR '-', so a CRC tag "[422CDD99]"
+        // and a range endpoint ("422-458") can't false-match this single episode. Real single forms
+        // ("422 ", "(422)", "422.") still match. Range/batch packs are also excluded outright below.
+        return `${standard}|(?<![0-9])${ep.e}(?![0-9a-fA-F-])`
       }
       return standard
     })
     const re = new RegExp(patterns.join('|'), 'i')
-    const filtered = candidatesForScope.filter(r => re.test(r.title))
+
+    // Regression 1(b): a single-episode item must NEVER match a multi-episode RANGE/BATCH pack — the
+    // "422 matching 422-458" substring bug. Exclude pack-shaped titles outright (numeric ranges like
+    // "422-458", season ranges "S01-S03", episode ranges "E01-E12", and batch/complete/season-pack
+    // markers), then match the exact episode in what remains. Covering packs are grabbed up front by
+    // the route's prefer-pack fan-out (findCoveringPacks); per-episode items only fill the true gaps.
+    const rangePackRe =
+      /(?<![0-9])\d{1,4}\s*[-–~]\s*\d{1,4}(?![0-9])|\bS\d{1,2}\s*[-–]\s*S?\d{1,2}\b|\bE\d{1,3}\s*[-–]\s*E?\d{1,3}\b|\b(?:batch|complete|season\s*pack)\b/i
+    const filtered = candidatesForScope.filter(r => !rangePackRe.test(r.title) && re.test(r.title))
     return filtered.length > 0 ? filtered : null
   }
 
@@ -314,6 +321,93 @@ export async function findArcPack(
   const pool = packs.length > 0 ? packs : numbered
   if (pool.length === 0) return null
   return findBestRelease(pool, profile, language)
+}
+
+// ---------------------------------------------------------------------------
+// findCoveringPacks — prefer-pack fan-out (Regression 1)
+// ---------------------------------------------------------------------------
+
+// A real pack names a numeric range in its title ("One Piece 422-458"). 2-4 digit endpoints, not
+// adjacent to other digits, so a CRC tag or resolution doesn't read as a range.
+const PACK_RANGE_RE = /(?<![0-9])(\d{2,4})\s*[-–~]\s*(\d{2,4})(?![0-9])/
+
+/**
+ * Pure pack-selection (Regression 1). Given the requested absolute episode numbers and a list of
+ * candidate releases (title + seeders + auto-pick score), pick a MINIMAL set of HEALTHY packs whose
+ * title range covers the most requested episodes — widest coverage first, ties broken by quality
+ * score. Dead (0-seed) releases and non-range singles are ignored. Returns the chosen packs (each
+ * with the requested episode numbers it covers) and the union of covered numbers; the caller fans
+ * out per-episode singles only for the rest. Exported pure so the coverage math is unit-verifiable.
+ */
+export function selectCoveringPacks<T>(
+  requestedNums: number[],
+  candidates: Array<{ title: string; seeders: number; score: number; release: T }>,
+): { chosen: Array<{ release: T; covers: number[] }>; covered: Set<number> } {
+  const req = [...new Set(requestedNums)].filter((n) => n > 0).sort((a, b) => a - b)
+  if (req.length === 0) return { chosen: [], covered: new Set() }
+
+  type Pack = { release: T; covers: number[]; score: number }
+  const packs: Pack[] = []
+  for (const c of candidates) {
+    if (c.seeders <= 0) continue // never auto-grab a dead pack
+    const m = c.title.match(PACK_RANGE_RE)
+    if (!m) continue
+    const lo = Math.min(parseInt(m[1], 10), parseInt(m[2], 10))
+    const hi = Math.max(parseInt(m[1], 10), parseInt(m[2], 10))
+    const covers = req.filter((n) => n >= lo && n <= hi)
+    if (covers.length >= 2) packs.push({ release: c.release, covers, score: c.score }) // a real multi-ep pack
+  }
+  // Widest coverage first so we grab "a pack or two", then highest quality on ties.
+  packs.sort((a, b) => b.covers.length - a.covers.length || b.score - a.score)
+
+  const covered = new Set<number>()
+  const chosen: Array<{ release: T; covers: number[] }> = []
+  for (const p of packs) {
+    if (!p.covers.some((n) => !covered.has(n))) continue // adds no new coverage — skip
+    chosen.push({ release: p.release, covers: p.covers })
+    for (const n of p.covers) covered.add(n)
+    if (covered.size >= req.length) break
+  }
+  return { chosen, covered }
+}
+
+/**
+ * Search indexers for PACKS that cover a requested absolute-episode range and select a minimal
+ * covering set (Regression 1). Mirrors findArcPack's queries but returns a SET of packs plus the
+ * episode numbers they cover, so the episode fan-out can grab the packs and only queue singles for
+ * the uncovered gaps. Read-only.
+ */
+export async function findCoveringPacks(
+  title: string,
+  episodes: Array<{ s: number; e: number }>,
+  profile: QualityProfile,
+  language = 'any',
+): Promise<{ chosen: Array<{ release: TorznabResult; covers: number[] }>; covered: Set<number> }> {
+  const nums = episodes.map((e) => e.e).filter((n) => typeof n === 'number' && n > 0).sort((a, b) => a - b)
+  if (nums.length === 0) return { chosen: [], covered: new Set() }
+  const start = nums[0]
+  const end = nums[nums.length - 1]
+
+  const seen = new Set<string>()
+  const raw: TorznabResult[] = []
+  for (const q of [`${title} ${start}-${end}`, `${title} ${start}`]) {
+    for (const r of await searchAllIndexers({ q, cats: '5000' })) {
+      const k = r.infoHash || r.title
+      if (!seen.has(k)) { seen.add(k); raw.push(r) }
+    }
+  }
+  if (raw.length === 0) return { chosen: [], covered: new Set() }
+
+  let conditions: QualityCondition[] = []
+  try { const p = JSON.parse(profile.conditions); if (Array.isArray(p)) conditions = p } catch {}
+
+  const candidates = raw.map((r) => ({
+    title: r.title,
+    seeders: r.seeders,
+    score: autoPickScore(r, conditions, profile.id, language),
+    release: r,
+  }))
+  return selectCoveringPacks(nums, candidates)
 }
 
 // ---------------------------------------------------------------------------

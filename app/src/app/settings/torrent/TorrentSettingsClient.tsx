@@ -359,7 +359,8 @@ const DEFAULT_UI_PREFS: TorrentUIPreferences = {
   visibleColumns: ['name', 'state', 'size', 'progress', 'dlspeed', 'upspeed', 'eta', 'ratio'],
   columnOrder: ALL_COLUMNS.map((c) => c.key),
   sortColumn: 'added_on',
-  sortReverse: false,
+  // reverse=true=descending under the downloads-page comparator → added_on newest-first (the default).
+  sortReverse: true,
   rowsPerPage: 50,
   refreshInterval: 5000,
   confirmDelete: true,

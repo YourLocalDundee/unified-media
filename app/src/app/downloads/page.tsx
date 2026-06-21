@@ -34,10 +34,12 @@ interface UIPrefs {
   confirmDeleteFiles: boolean
 }
 
+// Default sort is newest-first. Under the uniform comparator below reverse=false=ascending and
+// reverse=true=descending, so the added_on default carries reverse=true (descending = newest first).
 const DEFAULT_UI_PREFS: UIPrefs = {
   rowsPerPage: 50,
   sortColumn: 'added_on',
-  sortReverse: false,
+  sortReverse: true,
   confirmDelete: true,
   confirmDeleteFiles: true,
 }
@@ -47,26 +49,91 @@ function loadUIPrefs(): UIPrefs {
   try {
     const raw = localStorage.getItem(UI_PREFS_KEY)
     if (!raw) return DEFAULT_UI_PREFS
-    return { ...DEFAULT_UI_PREFS, ...JSON.parse(raw) }
+    const stored = JSON.parse(raw) as Partial<UIPrefs>
+    const prefs = { ...DEFAULT_UI_PREFS, ...stored }
+    // Migrate the legacy default: the pre-uniform-sort code stored {added_on,false} but sorted numbers
+    // descending when not reversed, so that meant newest-first. Under the new asc=reverse:false rule it
+    // would flip to oldest-first, so normalize the old default back to newest-first.
+    if (stored.sortColumn === 'added_on' && stored.sortReverse === false) prefs.sortReverse = true
+    return prefs
   } catch {
     return DEFAULT_UI_PREFS
   }
 }
 
-// Sort torrents by a field key. Numeric fields sort largest-first by default;
-// string fields sort A-Z. sortReverse inverts the comparison.
+// STATUS sort priority (feature): a downloads view reads best when problems and active transfers float
+// to the top and finished/paused sink — NOT alphabetical. Lower rank = higher when ascending. Cross-
+// checked against VueTorrent's TorrentState ordering; the one deviation is surfacing errors at the top
+// (rank 0) because they're actionable, where VueTorrent lists them last.
+const STATE_PRIORITY: Record<string, number> = {
+  error: 0, missingFiles: 0,
+  downloading: 1, forcedDL: 1,
+  metaDL: 2, forcedMetaDL: 2,
+  stalledDL: 3,
+  queuedDL: 4,
+  allocating: 5, checkingDL: 5, checkingResumeData: 5, moving: 5,
+  uploading: 6, forcedUP: 6,
+  stalledUP: 7,
+  queuedUP: 8, checkingUP: 8,
+  pausedDL: 9, pausedUP: 9, stoppedDL: 9, stoppedUP: 9,
+  unknown: 10,
+}
+const statePriority = (s: string): number => STATE_PRIORITY[s] ?? 10
+
+// Uniform comparator (feature). reverse=false=ascending, reverse=true=descending — matching the
+// Settings → Interface tab's asc/desc dropdown. State sorts by STATE_PRIORITY, name by locale, the
+// rest numerically. Ties break by name then hash so the 2s poll never reshuffles equal rows.
 function sortTorrents(torrents: Torrent[], column: string, reverse: boolean): Torrent[] {
-  return [...torrents].sort((a, b) => {
-    const av = (a as unknown as Record<string, unknown>)[column]
-    const bv = (b as unknown as Record<string, unknown>)[column]
-    let cmp = 0
-    if (typeof av === 'number' && typeof bv === 'number') {
-      cmp = bv - av // newest/highest first
-    } else if (typeof av === 'string' && typeof bv === 'string') {
-      cmp = av.localeCompare(bv)
+  const asc = (a: Torrent, b: Torrent): number => {
+    let c = 0
+    if (column === 'state') c = statePriority(a.state) - statePriority(b.state)
+    else if (column === 'name') c = a.name.localeCompare(b.name)
+    else {
+      const av = (a as unknown as Record<string, unknown>)[column]
+      const bv = (b as unknown as Record<string, unknown>)[column]
+      if (typeof av === 'number' && typeof bv === 'number') c = av - bv
+      else if (typeof av === 'string' && typeof bv === 'string') c = av.localeCompare(bv)
     }
-    return reverse ? -cmp : cmp
-  })
+    if (c === 0) c = a.name.localeCompare(b.name)
+    if (c === 0) c = a.hash.localeCompare(b.hash)
+    return c
+  }
+  return [...torrents].sort((a, b) => (reverse ? -asc(a, b) : asc(a, b)))
+}
+
+// Clickable column header that cycles sort on click (asc → desc → default) and shows the active
+// direction arrow (▲ ascending / ▼ descending). aria-sort is set for screen readers.
+function SortHeader({
+  label,
+  column,
+  sortColumn,
+  sortReverse,
+  onSort,
+  className = '',
+}: {
+  label: string
+  column: string
+  sortColumn: string
+  sortReverse: boolean
+  onSort: (column: string) => void
+  className?: string
+}) {
+  const active = sortColumn === column
+  return (
+    <th
+      className={`px-3 py-2.5 ${className}`}
+      aria-sort={active ? (sortReverse ? 'descending' : 'ascending') : 'none'}
+    >
+      <button
+        type="button"
+        onClick={() => onSort(column)}
+        className="inline-flex items-center gap-1 text-xs font-semibold uppercase tracking-wide text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+      >
+        {label}
+        <span className="w-2 text-[10px] leading-none">{active ? (sortReverse ? '▼' : '▲') : ''}</span>
+      </button>
+    </th>
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -757,6 +824,23 @@ export default function DownloadsPage() {
     return () => window.removeEventListener('storage', handler)
   }, [])
 
+  // Click-to-cycle header sort: 1st click ascending, 2nd descending, 3rd back to the default
+  // (added_on desc). Kept in uiPrefs state (so the 2s poll never clobbers it) and persisted to the
+  // same localStorage key (so it survives reload and stays in sync with the Settings Interface tab).
+  const cycleSort = useCallback((column: string) => {
+    setUIPrefs((prev) => {
+      let nextColumn = column
+      let nextReverse = false // ascending
+      if (prev.sortColumn === column) {
+        if (!prev.sortReverse) nextReverse = true // asc → desc
+        else { nextColumn = DEFAULT_UI_PREFS.sortColumn; nextReverse = DEFAULT_UI_PREFS.sortReverse } // desc → default
+      }
+      const next = { ...prev, sortColumn: nextColumn, sortReverse: nextReverse }
+      try { localStorage.setItem(UI_PREFS_KEY, JSON.stringify(next)) } catch { /* storage unavailable */ }
+      return next
+    })
+  }, [])
+
   const [activeTab, setActiveTab] = useState<FilterTab>('all')
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [expandedHash, setExpandedHash] = useState<string | null>(null)
@@ -1115,24 +1199,12 @@ export default function DownloadsPage() {
                       aria-label="Select all"
                     />
                   </th>
-                  <th className="px-3 py-2.5 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
-                    Name
-                  </th>
-                  <th className="px-3 py-2.5 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
-                    Size
-                  </th>
-                  <th className="min-w-[6rem] px-3 py-2.5 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
-                    Progress
-                  </th>
-                  <th className="px-3 py-2.5 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
-                    Speed
-                  </th>
-                  <th className="px-3 py-2.5 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
-                    ETA
-                  </th>
-                  <th className="px-3 py-2.5 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
-                    Status
-                  </th>
+                  <SortHeader label="Name" column="name" sortColumn={uiPrefs.sortColumn} sortReverse={uiPrefs.sortReverse} onSort={cycleSort} />
+                  <SortHeader label="Size" column="size" sortColumn={uiPrefs.sortColumn} sortReverse={uiPrefs.sortReverse} onSort={cycleSort} />
+                  <SortHeader label="Progress" column="progress" sortColumn={uiPrefs.sortColumn} sortReverse={uiPrefs.sortReverse} onSort={cycleSort} className="min-w-[6rem]" />
+                  <SortHeader label="Speed" column="dlspeed" sortColumn={uiPrefs.sortColumn} sortReverse={uiPrefs.sortReverse} onSort={cycleSort} />
+                  <SortHeader label="ETA" column="eta" sortColumn={uiPrefs.sortColumn} sortReverse={uiPrefs.sortReverse} onSort={cycleSort} />
+                  <SortHeader label="Status" column="state" sortColumn={uiPrefs.sortColumn} sortReverse={uiPrefs.sortReverse} onSort={cycleSort} />
                   <th className="px-3 py-2.5 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
                     Actions
                   </th>

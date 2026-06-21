@@ -24,7 +24,7 @@ import { requireAdmin } from '@/lib/dal'
 import { verifyOrigin } from '@/lib/csrf'
 import { getProfileById, createItem, recordGrab, updateItem } from '@/lib/automation/monitor'
 import { createRequest, updateRequestStatus, getRequestByTmdb } from '@/lib/requests/monitor'
-import { findSeasonPack, findArcPack, grabItem } from '@/lib/automation/grabber'
+import { findSeasonPack, findArcPack, findCoveringPacks } from '@/lib/automation/grabber'
 import { getSeasonEpisodeNumbers } from '@/lib/media-server/tmdb'
 import { getClient } from '@/lib/download-client/registry'
 import { getDb } from '@/lib/db/index'
@@ -168,7 +168,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ result: 'grabbed', release: { title: body.override.title ?? 'manual override', indexer: body.override.indexerName ?? 'manual' } })
     }
 
-    // --- Episode fan-out: one 'wanted' item per episode; the cron grabs each. ---------------------
+    // --- Episode fan-out (Regression 1: prefer packs, fan out singles only for gaps). -------------
     if (mode === 'episodes') {
       const episodes: Episode[] = arc
         ? arc.episodes
@@ -176,9 +176,35 @@ export async function POST(req: NextRequest) {
       if (episodes.length === 0) {
         return NextResponse.json({ error: 'No episodes found for this scope on TMDB' }, { status: 404 })
       }
+
+      // 1. Prefer packs: grab covering pack(s) first so we never fan out per-episode torrents for
+      //    episodes a pack already contains. Each chosen pack becomes its own 'grabbed' monitored
+      //    item (distinct scope_key) so the importer can locate every pack by its own info_hash.
+      const { chosen, covered } = await findCoveringPacks(title, episodes, profile, language)
+      let packsGrabbed = 0
+      for (const { release: pack, covers } of chosen) {
+        try {
+          await getClient().addTorrent({ urls: pack.magnetUrl || pack.downloadUrl, category: 'tv' })
+          const coveredEps = episodes.filter((ep) => covers.includes(ep.e))
+          const item = createItem({
+            type: 'tv', title, tmdb_id: tmdbId, year: year ?? undefined,
+            quality_profile_id: profileId, monitor_future: false, language,
+            scope_type: 'episodes', scope_episodes: coveredEps, scope_label: arc?.name ?? null,
+          })
+          recordGrab({ item_id: item.id, indexer: pack.indexerName, release_title: pack.title, info_hash: pack.infoHash })
+          updateItem(item.id, { status: 'grabbed' })
+          packsGrabbed++
+        } catch (err) {
+          const m = err instanceof Error ? err.message : String(err)
+          process.stderr.write(`[grab/season] ${title.replace(/[\r\n]/g, ' ')} pack "${pack.title.replace(/[\r\n]/g, ' ')}": ${m}\n`)
+        }
+      }
+
+      // 2. Fan out one 'wanted' item per UNCOVERED episode; the 5-min cron grabs each single.
+      const gaps = episodes.filter((ep) => !covered.has(ep.e))
       let queued = 0
       const failed: Episode[] = []
-      for (const ep of episodes) {
+      for (const ep of gaps) {
         try {
           createItem({
             type: 'tv', title, tmdb_id: tmdbId, year: year ?? undefined,
@@ -192,10 +218,19 @@ export async function POST(req: NextRequest) {
           process.stderr.write(`[grab/season] ${title.replace(/[\r\n]/g, ' ')} S${ep.s}E${ep.e}: createItem failed: ${msg}\n`)
         }
       }
+
       recordGrabRequest(session.userId, tmdbId, title, year, reqScope)
-      // status:'scheduled' makes it explicit to the client that these were queued for SEARCH, not
-      // downloaded — the toast must not imply a download started.
-      return NextResponse.json({ result: 'episodes_queued', status: 'scheduled', queued, failed: failed.length, total: episodes.length })
+      // status:'scheduled' makes it explicit that the GAP singles were queued for SEARCH, not
+      // downloaded; packsGrabbed/coveredByPacks report the packs that ARE downloading now.
+      return NextResponse.json({
+        result: 'episodes_queued',
+        status: 'scheduled',
+        packsGrabbed,
+        coveredByPacks: covered.size,
+        queued,
+        failed: failed.length,
+        total: episodes.length,
+      })
     }
 
     // --- Auto: one-shot pack search (season pack, or arc range pack). -----------------------------

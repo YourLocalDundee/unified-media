@@ -111,6 +111,7 @@ export function SeasonGrabControl({ tmdbId, title, year, seasonNumber, seasonNam
     const data = await res.json().catch(() => ({})) as {
       result?: string; error?: string; episodeCount?: number
       queued?: number; failed?: number; total?: number
+      packsGrabbed?: number; coveredByPacks?: number
       release?: { title: string; indexer: string }
     }
     if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`)
@@ -139,9 +140,16 @@ export function SeasonGrabControl({ tmdbId, title, year, seasonNumber, seasonNam
       const data = await postGrab({ mode: 'episodes' })
       const queued = data.queued ?? data.total ?? foundEpisodeCount
       const failed = data.failed ?? 0
+      const packs = data.packsGrabbed ?? 0
+      const coveredByPacks = data.coveredByPacks ?? 0
       setUi('queued')
+      // Prefer-pack fan-out: report what's downloading now (packs) vs queued for search (gaps).
+      const packLine = packs > 0
+        ? `Grabbed ${packs} pack${packs === 1 ? '' : 's'} covering ${coveredByPacks} episode${coveredByPacks === 1 ? '' : 's'} (downloading now). `
+        : ''
       setMsg(
-        `Scheduled ${queued} episode search${queued === 1 ? '' : 'es'}` +
+        packLine +
+        `Scheduled ${queued} gap episode search${queued === 1 ? '' : 'es'}` +
         (failed > 0 ? ` (${failed} could not be queued)` : '') +
         ` — these are queued for the grab cron (runs every 5 min) and are NOT downloading yet. ` +
         `Track progress in Admin → Automation.`,
