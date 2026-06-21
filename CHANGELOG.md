@@ -5,6 +5,63 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.9.10] — 2026-06-21
+
+### Added
+- **Story-arc grabs (TMDB episode_groups)** — long-running anime that TMDB bundles into multi-arc "seasons"
+  (e.g. One Piece S13 = "Impel Down & Marineford") can now be grabbed per **arc**. `getArcs(tmdbId)`
+  (`tmdb.ts`) reads TMDB episode_groups (type 5, preferring "Arcs (Official)"), returning each arc's real
+  episode range as a separate grabbable card (Impel Down 422–458, Marineford 459–516). Cached via Next's
+  fetch data cache + a per-process `Map`. Series TMDB doesn't arc-group fall back to plain season cards.
+- **Interactive admin grab** — the grab modal (`SeasonGrabControl`, season/arc-aware) gains a "Choose
+  release" action that lists the FULL `/api/torrent-search` candidate set (zero hard rejects, scorer-rejected
+  releases included) and grabs the chosen one through the same `/api/grab/season` enqueue path via a
+  `requireAdmin`-gated `override` mode.
+- **Manual search in the interactive chooser** — the "Choose release" chooser is now two tabs: **Auto
+  candidates** (the scored auto-query list, unchanged) and **Manual search**, a free-text box that queries the
+  same `/api/torrent-search` indexer path with the admin's typed query to find a specific release group,
+  uploader, or differently-named batch the arc/season query missed. Manual results render in the identical
+  release/seeds/size/score/Grab table and grab through the identical `override` enqueue path — no separate
+  indexer or grab path. They are scored and 0-seed-flagged like the auto list, and the Grab button is never
+  gated on score (a low/zero score never blocks a manual grab). Box seeds with the show title; manual results
+  are de-duped by infoHash and any row already in the auto list is tagged "in Auto" but stays grab-able.
+- **Per-torrent detail panel on `/downloads`** (`TorrentDetailPanel.tsx`) — click a torrent to expand
+  Overview / Files (with per-file priority) / Trackers / Peers, live-refreshing every 2s; fetch errors are
+  surfaced distinctly from a genuinely empty list.
+- **`scope_label` column** on `monitored_items` + `media_requests` — stores the arc name ("Impel Down") so
+  the Requests page shows the arc the user picked, not the merged TMDB season. Requester username now shows
+  inline on each Requests row (visible on all screen sizes).
+
+### Changed
+- **Grab cron interval 15 min → 5 min** (`automation/scheduler.ts`) for faster episode discovery.
+- **Seed-aware soft scoring (auto-pick)** — auto-pick now de-prioritizes instead of hard-rejecting:
+  `scoreReleaseSoft` + `autoPickScore` rank by quality (required-condition miss = −100 penalty, not removal)
+  + custom format + seed weighting (+min(seeders,100); 0-seed = −1000) + language preference (−100 on
+  mismatch). Result: healthy in-range releases beat dead "correct-quality" ones, a 0-seed release never
+  auto-grabs, and the interactive list keeps every release grab-able. The grab-results panel uses the same
+  rank and no longer shows a hard "Rejected" label.
+- **Request→item resolution** is now scope-aware: a request resolves to its active, narrowly-scoped
+  monitored item (the arc's wanted episode), not a stale `full`-series container — and the display and
+  re-search routes resolve identically.
+- **Episode-grab honesty** — `mode:'episodes'` returns `{queued, failed, total, status:'scheduled'}` with
+  per-episode failures logged + counted; the toast says episodes are scheduled for search, not downloading.
+
+### Fixed
+- **Anime absolute episode numbering** — for TMDB absolute episode numbers (>99) the grabber queries the
+  bare number ("One Piece 422") and matches a word-boundary'd absolute number (excluding CRC-hash tails),
+  so anime releases are found and arc/range packs match.
+- **Wrong-title contamination** — a year-pin in `filterByScope` (all scopes) rejects releases whose embedded
+  year contradicts the item's year (e.g. the 2023 live-action One Piece for the 1999 anime).
+- **Downloads "NaN undefined/s"** — qBittorrent uses `up_info_speed`/`up_info_data` (not `ul_*`); fixed
+  across `TransferInfo` and the UMT client; `formatBytes` is now NaN/undefined/≤0-safe.
+- **Files (0) on every torrent** — the detail panel called `/api/qbt/...` (404) instead of `/api/qbit/...`.
+- **qBittorrent `add` 409 (duplicate)** — treated as a successful no-op grab instead of an error that
+  retried the item every 5 min forever.
+- **Browse sort render crash** — the sort-direction toggle was an `onClick` in a Server Component; extracted
+  to a `'use client'` `SortDirButton`. Library gains date-added sort + `idx_media_added_at` index.
+
+---
+
 ## [0.9.2] — 2026-06-05
 
 ### Changed

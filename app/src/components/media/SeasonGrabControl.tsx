@@ -15,7 +15,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react'
-import { Download, Loader2, X, Check } from 'lucide-react'
+import { Download, Loader2, X, Check, Search } from 'lucide-react'
 import { ModalPortal } from '@/components/ui/ModalPortal'
 import { useFocusTrap } from '@/hooks/useFocusTrap'
 import { LANGUAGE_OPTIONS } from './RequestOptions'
@@ -54,6 +54,26 @@ interface Candidate {
 
 type UIState = 'idle' | 'searching' | 'no_pack' | 'grabbed' | 'queuing' | 'queued' | 'choosing' | 'error'
 
+// Live releases first, then by score. Everything is shown (dead included) and every row is grab-able.
+function sortCandidates(list: Candidate[]): Candidate[] {
+  return [...list].sort(
+    (a, b) => (b.seeders > 0 ? 1 : 0) - (a.seeders > 0 ? 1 : 0) || b.score - a.score,
+  )
+}
+
+// Indexers return the same release from multiple trackers, so collapse by infoHash and keep the
+// highest-seeded copy. Releases with no infoHash can't be matched and are left untouched.
+function dedupeByInfoHash(list: Candidate[]): Candidate[] {
+  const best = new Map<string, Candidate>()
+  const noHash: Candidate[] = []
+  for (const c of list) {
+    if (!c.infoHash) { noHash.push(c); continue }
+    const existing = best.get(c.infoHash)
+    if (!existing || c.seeders > existing.seeders) best.set(c.infoHash, c)
+  }
+  return [...best.values(), ...noHash]
+}
+
 export function SeasonGrabControl({ tmdbId, title, year, seasonNumber, seasonName, episodeCount, arc }: Props) {
   const [open, setOpen] = useState(false)
   const [language, setLanguage] = useState('en')
@@ -64,6 +84,13 @@ export function SeasonGrabControl({ tmdbId, title, year, seasonNumber, seasonNam
   const [foundEpisodeCount, setFoundEpisodeCount] = useState<number>(episodeCount ?? arc?.episodes.length ?? 0)
   const [candidates, setCandidates] = useState<Candidate[]>([])
   const [grabbingKey, setGrabbingKey] = useState<string | null>(null)
+  // Manual override search inside the chooser: a second, user-typed query against the same indexer path.
+  const [activeTab, setActiveTab] = useState<'auto' | 'manual'>('auto')
+  const [manualQuery, setManualQuery] = useState('')
+  const [manualCandidates, setManualCandidates] = useState<Candidate[]>([])
+  const [manualSearching, setManualSearching] = useState(false)
+  const [manualSearched, setManualSearched] = useState(false)
+  const [manualError, setManualError] = useState('')
 
   const dialogRef = useRef<HTMLDivElement>(null)
   useFocusTrap(dialogRef, open, () => setOpen(false))
@@ -84,6 +111,11 @@ export function SeasonGrabControl({ tmdbId, title, year, seasonNumber, seasonNam
     setUi('idle')
     setMsg('')
     setCandidates([])
+    setManualCandidates([])
+    setManualSearched(false)
+    setManualError('')
+    setActiveTab('auto')
+    setManualQuery(title)   // seed the manual box with the show title; editable and clearable
   }
 
   // Scope payload shared by every grab call: arc takes precedence over seasonNumber.
@@ -161,18 +193,34 @@ export function SeasonGrabControl({ tmdbId, title, year, seasonNumber, seasonNam
 
   // Interactive: pull the full candidate set (no hard rejects) for the admin to choose from.
   async function openChooser() {
-    setUi('choosing'); setMsg(''); setCandidates([])
+    setUi('choosing'); setMsg(''); setCandidates([]); setActiveTab('auto')
     try {
       const res = await fetch(`/api/torrent-search?q=${encodeURIComponent(searchQuery())}&type=tv`)
       const data = await res.json().catch(() => ({})) as { results?: Candidate[]; error?: string }
       if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`)
-      // Live releases first, then by score — but show everything (dead included), all grab-able.
-      const sorted = [...(data.results ?? [])].sort(
-        (a, b) => (b.seeders > 0 ? 1 : 0) - (a.seeders > 0 ? 1 : 0) || b.score - a.score,
-      )
-      setCandidates(sorted)
+      setCandidates(sortCandidates(data.results ?? []))
     } catch (err) {
       setUi('error'); setMsg(err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  // Manual override search: hits the SAME indexer path as the auto chooser with the admin's typed
+  // query, so any found release grabs through the identical enqueue path. Results are scored and
+  // 0-seed-flagged exactly like the auto list. Errors render inline and never tear down the chooser.
+  async function runManualSearch() {
+    const q = manualQuery.trim()
+    if (!q || manualSearching) return
+    setManualSearching(true); setManualSearched(true); setManualError('')
+    try {
+      const res = await fetch(`/api/torrent-search?q=${encodeURIComponent(q)}&type=tv`)
+      const data = await res.json().catch(() => ({})) as { results?: Candidate[]; error?: string }
+      if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`)
+      setManualCandidates(sortCandidates(dedupeByInfoHash(data.results ?? [])))
+    } catch (err) {
+      setManualCandidates([])
+      setManualError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setManualSearching(false)
     }
   }
 
@@ -189,6 +237,61 @@ export function SeasonGrabControl({ tmdbId, title, year, seasonNumber, seasonNam
     } finally {
       setGrabbingKey(null)
     }
+  }
+
+  // Shared candidate table for both the auto list and manual results, so a manually found release
+  // renders identically and grabs through the same path. markAuto tags any row whose infoHash is
+  // already in the auto list (orientation only; the row stays fully grab-able).
+  function renderCandidateTable(list: Candidate[], markAuto: boolean) {
+    const autoHashes = markAuto ? new Set(candidates.map((c) => c.infoHash).filter(Boolean)) : null
+    return (
+      <div className="max-h-72 overflow-y-auto rounded border border-zinc-800">
+        <table className="w-full text-left text-xs">
+          <thead className="sticky top-0 bg-zinc-900">
+            <tr className="border-b border-zinc-800 text-zinc-500">
+              <th className="py-1.5 px-2 font-medium">Release</th>
+              <th className="py-1.5 px-2 font-medium text-right">Seeds</th>
+              <th className="py-1.5 px-2 font-medium text-right">Size</th>
+              <th className="py-1.5 px-2 font-medium text-right">Score</th>
+              <th className="py-1.5 px-2 font-medium text-right"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {list.map((c, i) => {
+              const key = c.infoHash || c.title + i
+              const grabbing = grabbingKey === (c.infoHash || c.title)
+              const inAuto = !!(autoHashes && c.infoHash && autoHashes.has(c.infoHash))
+              return (
+                <tr key={key} className="border-b border-zinc-800/60 hover:bg-zinc-800/40">
+                  <td className="py-1.5 px-2 text-zinc-300 max-w-sm">
+                    <span className="line-clamp-2">{c.title}</span>
+                    {inAuto && (
+                      <span className="ml-1 align-middle rounded bg-zinc-800 px-1 py-0.5 text-[10px] text-zinc-500" title="Also in the auto candidate list">
+                        in Auto
+                      </span>
+                    )}
+                  </td>
+                  <td className="py-1.5 px-2 text-right">
+                    {c.seeders > 0 ? <span className="text-zinc-400">{c.seeders}</span> : <span className="text-red-400" title="0 seeds — dead">0 ⚠</span>}
+                  </td>
+                  <td className="py-1.5 px-2 text-right text-zinc-500">{formatBytes(c.size)}</td>
+                  <td className="py-1.5 px-2 text-right text-zinc-400">{Math.round(c.score)}</td>
+                  <td className="py-1.5 px-2 text-right">
+                    <button
+                      onClick={() => grabChosen(c)}
+                      disabled={grabbing}
+                      className="rounded bg-sky-700 px-2 py-0.5 text-xs font-medium text-white hover:bg-sky-600 disabled:opacity-50"
+                    >
+                      {grabbing ? '…' : 'Grab'}
+                    </button>
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+    )
   }
 
   const busy = ui === 'searching' || ui === 'queuing'
@@ -287,49 +390,62 @@ export function SeasonGrabControl({ tmdbId, title, year, seasonNumber, seasonNam
                   </div>
                 )}
 
-                {/* Interactive candidate list — full set, zero hard rejects, every row grab-able. */}
+                {/* Interactive candidate list — full set, zero hard rejects, every row grab-able.
+                    Two tabs: the scored auto candidates, and a manual override search. */}
                 {ui === 'choosing' && (
                   <div className="flex flex-col gap-2">
-                    {candidates.length === 0 ? (
-                      <p className="rounded-md bg-zinc-800 px-3 py-2 text-xs text-zinc-400">Searching indexers…</p>
-                    ) : (
-                      <div className="max-h-72 overflow-y-auto rounded border border-zinc-800">
-                        <table className="w-full text-left text-xs">
-                          <thead className="sticky top-0 bg-zinc-900">
-                            <tr className="border-b border-zinc-800 text-zinc-500">
-                              <th className="py-1.5 px-2 font-medium">Release</th>
-                              <th className="py-1.5 px-2 font-medium text-right">Seeds</th>
-                              <th className="py-1.5 px-2 font-medium text-right">Size</th>
-                              <th className="py-1.5 px-2 font-medium text-right">Score</th>
-                              <th className="py-1.5 px-2 font-medium text-right"></th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {candidates.map((c, i) => {
-                              const key = c.infoHash || c.title + i
-                              const grabbing = grabbingKey === (c.infoHash || c.title)
-                              return (
-                                <tr key={key} className="border-b border-zinc-800/60 hover:bg-zinc-800/40">
-                                  <td className="py-1.5 px-2 text-zinc-300 max-w-sm"><span className="line-clamp-2">{c.title}</span></td>
-                                  <td className="py-1.5 px-2 text-right">
-                                    {c.seeders > 0 ? <span className="text-zinc-400">{c.seeders}</span> : <span className="text-red-400" title="0 seeds — dead">0 ⚠</span>}
-                                  </td>
-                                  <td className="py-1.5 px-2 text-right text-zinc-500">{formatBytes(c.size)}</td>
-                                  <td className="py-1.5 px-2 text-right text-zinc-400">{Math.round(c.score)}</td>
-                                  <td className="py-1.5 px-2 text-right">
-                                    <button
-                                      onClick={() => grabChosen(c)}
-                                      disabled={grabbing}
-                                      className="rounded bg-sky-700 px-2 py-0.5 text-xs font-medium text-white hover:bg-sky-600 disabled:opacity-50"
-                                    >
-                                      {grabbing ? '…' : 'Grab'}
-                                    </button>
-                                  </td>
-                                </tr>
-                              )
-                            })}
-                          </tbody>
-                        </table>
+                    <div className="flex gap-1 rounded-md bg-zinc-800 p-0.5 text-xs">
+                      <button
+                        type="button"
+                        onClick={() => setActiveTab('auto')}
+                        className={`flex-1 rounded px-2 py-1 font-medium transition-colors ${activeTab === 'auto' ? 'bg-zinc-700 text-zinc-100' : 'text-zinc-400 hover:text-zinc-200'}`}
+                      >
+                        Auto candidates{candidates.length > 0 ? ` (${candidates.length})` : ''}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setActiveTab('manual')}
+                        className={`flex-1 rounded px-2 py-1 font-medium transition-colors ${activeTab === 'manual' ? 'bg-zinc-700 text-zinc-100' : 'text-zinc-400 hover:text-zinc-200'}`}
+                      >
+                        Manual search{manualSearched ? ` (${manualCandidates.length})` : ''}
+                      </button>
+                    </div>
+
+                    {activeTab === 'auto' && (
+                      candidates.length === 0
+                        ? <p className="rounded-md bg-zinc-800 px-3 py-2 text-xs text-zinc-400">Searching indexers…</p>
+                        : renderCandidateTable(candidates, false)
+                    )}
+
+                    {activeTab === 'manual' && (
+                      <div className="flex flex-col gap-2">
+                        <form onSubmit={(e) => { e.preventDefault(); runManualSearch() }} className="flex gap-2">
+                          <input
+                            type="text"
+                            value={manualQuery}
+                            onChange={(e) => setManualQuery(e.target.value)}
+                            placeholder="Search indexers (release group, uploader, batch name…)"
+                            className="flex-1 rounded-md bg-zinc-800 px-2 py-1.5 text-sm text-zinc-100 outline-none focus:ring-1 focus:ring-sky-600"
+                          />
+                          <button
+                            type="submit"
+                            disabled={manualSearching || !manualQuery.trim()}
+                            className="inline-flex items-center gap-1 rounded-md bg-sky-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-sky-600 disabled:opacity-50"
+                          >
+                            {manualSearching ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+                            Search
+                          </button>
+                        </form>
+                        {manualError && <p className="rounded-md bg-red-900/40 px-3 py-2 text-xs text-red-300">{manualError}</p>}
+                        {manualSearching ? (
+                          <p className="rounded-md bg-zinc-800 px-3 py-2 text-xs text-zinc-400">Searching indexers…</p>
+                        ) : manualSearched ? (
+                          manualCandidates.length > 0
+                            ? renderCandidateTable(manualCandidates, true)
+                            : <p className="rounded-md bg-zinc-800 px-3 py-2 text-xs text-zinc-400">No releases found for “{manualQuery}”.</p>
+                        ) : (
+                          <p className="rounded-md bg-zinc-800 px-3 py-2 text-xs text-zinc-400">Type a query and search to find releases the auto list missed.</p>
+                        )}
                       </div>
                     )}
                   </div>

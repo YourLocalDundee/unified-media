@@ -1,6 +1,6 @@
 # unified-frontend
 
-A single-pane-of-glass web app for the minime home server media stack (v0.9.9). Replaces the multi-tab workflow
+A single-pane-of-glass web app for the minime home server media stack (v0.9.10). Replaces the multi-tab workflow
 (Jellyfin + Seerr + qBittorrent) with one unified interface for browsing, requesting, watching, and
 monitoring downloads.
 
@@ -440,16 +440,51 @@ app/
   the typed tabs (Sort presets replaced them).
 - `RequestOptions` component handles per-card request UI — two buttons for old content, one for new. For **TV** it opens `SeriesScopeModal` so the user can grab the full series, specific seasons (e.g. just Season 1), or individual episodes before submitting. This is the path to "find Pokémon → grab Season 1".
 - `/browse/discover/[mediaType]/[tmdbId]` — full detail page for TMDB items not yet in library (same `RequestOptions` / season-scope flow via `RequestButton`).
-- **Admin per-season direct-grab (v0.9.7+):** on a TV detail page each season card shows a `SeasonGrabControl`
-  (admin only). Pick a language + quality profile, then `POST /api/grab/season` (`requireAdmin`+`verifyOrigin`):
-  - `mode:'auto'` → `findSeasonPack()` (`grabber.ts`) searches a season **pack** in that language/quality →
-    grabs it (creating a `scope:'seasons'` monitored item) or returns `no_pack`.
+- **Admin direct-grab — seasons AND arcs (v0.9.7+, arcs added v0.9.10):** on a TV detail page each season
+  (or **arc**) card shows a `SeasonGrabControl` (admin only). Pick a language + quality profile, then
+  `POST /api/grab/season` (`requireAdmin`+`verifyOrigin`). The body carries EITHER `seasonNumber` OR
+  `arc:{name,episodes}`; arc precedence handled server-side.
+  - **Arcs (v0.9.10, Bug 7):** TMDB bundles long-running anime into "seasons" that span multiple story
+    arcs (e.g. One Piece S13 = "Impel Down & Marineford", abs eps 422–522). `getArcs(tmdbId)` (`tmdb.ts`)
+    reads TMDB **episode_groups** (type 5, preferring "Arcs (Official)") and returns each arc's real
+    episode list (Impel Down 422–458, Marineford 459–516 as **separate** grabbable arcs). Cached via
+    Next's fetch data cache (`revalidate 86400`) + a per-process `Map<tmdbId, SeriesArc[]>`. Returns `[]`
+    for movies and any series TMDB doesn't arc-group (most non-anime) → the detail page falls back to plain
+    season cards. Normal shows are unaffected.
+  - `mode:'auto'` → `findSeasonPack()` / `findArcPack()` searches a **pack** in that language/quality →
+    grabs it or returns `no_pack`. `findArcPack` queries the absolute range ("One Piece 422-456") and keeps
+    releases whose title references an overlapping numeric range.
   - `no_pack` → the UI offers "Grab episode by episode" → `mode:'episodes'` fans out one **wanted** monitored
-    item per episode (`getSeasonEpisodeNumbers`); the 15-min grab cron then finds each until the season is full.
+    item per episode; the **5-min** grab cron then finds each. Per-episode `createItem` failures are logged
+    structured + counted; the response is `{queued, failed, total, status:'scheduled'}` and the toast says
+    "scheduled for search, NOT downloading yet" (no optimistic success).
+  - **Interactive grab (v0.9.10):** "Choose release (interactive)" → searches `/api/torrent-search` (FULL
+    candidate set, zero hard rejects) → admin grabs any row (including scorer-rejected ones) via the **same**
+    `/api/grab/season` enqueue path using `override:{magnetUrl,…}` (server `requireAdmin`-gated).
+  - **Manual search in the chooser (v0.9.10):** the interactive chooser is two tabs — **Auto candidates**
+    (the scored auto-query list, unchanged) and **Manual search**, a free-text box that hits the **same**
+    `/api/torrent-search` path with the admin's typed query to surface a specific release group, uploader, or
+    differently-named batch the arc/season query missed. Manual results render in the identical table (release
+    / seeds / size / score / Grab) and grab through the identical `override` enqueue path — there is **no**
+    separate indexer or grab path. They are scored and 0-seed-flagged exactly like the auto list, and the Grab
+    button is never gated on score (this is the override surface — a low/zero score never blocks a manual grab).
+    The box seeds with the bare show title (editable/clearable). Manual results are de-duped by infoHash
+    (highest-seeded copy kept); a manual row already in the auto list is tagged "in Auto" for orientation but
+    stays grab-able. A failed manual search shows inline and keeps the chooser open. All admin-gated client-side
+    (the control only renders for admins) with the same server `requireAdmin` gate on the grab.
+  - Every successful grab also writes a `media_requests` row (status `approved`) so it shows on the Requests
+    page with the exact scope: season number, or **arc episodes + `scope_label`** (the arc name, e.g.
+    "Impel Down"). Repeat grabs of the same show merge scope (union episodes, comma-join labels).
   - `GET /api/grab/season/status?tmdbId=&season=` reports `{total,grabbed}` for a progress badge.
-  - Bypasses the quick/long-term request system — this is a direct admin grab. Honored end-to-end because
-    `monitored_items` now has a **`language`** column and the cron passes it to `grabItem` (also fixes the
-    prior latent bug where a normal request's language was dropped on background grabs).
+  - Bypasses the quick/long-term request system — a direct admin grab. `monitored_items` and `media_requests`
+    both carry a **`language`** column (honored by the cron) and a **`scope_label`** column (the arc name).
+- **Grab scoring (v0.9.10, Bug 2):** auto-pick **de-prioritizes, never hard-rejects**. `scoreReleaseSoft` +
+  `autoPickScore` (`grabber.ts`) rank by quality (profile conditions + resolution/source bonuses; a missed
+  **required** condition is a −100 penalty, not removal) + custom format + **seed weighting** (+min(seeders,100);
+  a 0-seed/dead release gets −1000 so it sinks below any live release) + language preference (−100 on mismatch).
+  Ordering: healthy-correct-quality > healthy-wrong-quality > dead-correct-quality. `findBestRelease` refuses
+  to auto-grab a 0-seed release (recorded as `no_seeders`); the interactive list still shows + grabs it. The
+  grab-results panel uses the same rank and no longer prints a hard "Rejected" label.
 - **Prior behaviour (pre-v0.9.6):** the Movies/TV Shows tabs filtered the *local library*. That duplicated `/library` and blocked discovering un-owned content by type; they are now TMDB discovery.
 
 **`/browse/[id]` — Acquisition detail**
@@ -612,6 +647,29 @@ On a 403 response, re-authenticate and retry once.
   `session.ts` and `download-client/qbittorrent.ts` use the regex
   `/((?:QBT_SID_\d+|SID)=[^;]+)/` to capture the full `NAME=VALUE` pair from `Set-Cookie` and
   pass it directly as the `Cookie` header value, so v4 and v5 are handled by the same code path.
+
+### qBittorrent uses `up_` not `ul_` for upload (Bug 6)
+
+qBittorrent's `/transfer/info` and `/sync/maindata` `server_state` use **`up_info_speed`** /
+**`up_info_data`** / **`up_rate_limit`** for upload — NOT `ul_*`. Reading `ul_info_speed` returns
+`undefined`, which formatted as "NaN undefined/s" in the Downloads header (and, once band-aided with
+`?? 0`, silently showed `0`/`—`, hiding the real upload rate). `TransferInfo` (`qbittorrent/types.ts`) and
+`download-client/qbittorrent.ts` now read `up_*` (with a `ul_*` fallback for safety). `formatBytes`
+(`lib/utils.ts`) is NaN/undefined/≤0-safe (returns `0 B`) so a missing speed never prints "NaN undefined".
+
+### qBittorrent add returns 409 on a duplicate (Bug, v0.9.10)
+
+`POST /torrents/add` returns **409** when the infohash is already in the client. This happens when several
+per-episode `wanted` items resolve to the same range pack (the first add succeeds, the rest 409). A 409
+means the content is already downloading, so `download-client/qbittorrent.ts#addTorrent` swallows it as a
+no-op grab — otherwise the grabber treated it as an error and retried that item every 5 min forever.
+
+### qBittorrent proxy is `/api/qbit/...` (with an `i`)
+
+The browser-facing qBittorrent proxy route is `src/app/api/qbit/[...path]/route.ts` → call it at
+**`/api/qbit/...`**. `/api/qbt/...` (no `i`) is not a route and returns Next.js 404 HTML with status 200 —
+which, if a caller checks only `res.ok`, looks like an empty/garbage success (this is what made the detail
+panel's Files tab silently empty before the typo was fixed).
 
 ### Jellyfin network_mode: host
 
@@ -1186,11 +1244,19 @@ Full qBittorrent client UI. Key components:
 
 | Component | File |
 |---|---|
-| Main page | `src/app/downloads/page.tsx` |
-| Filter sidebar | `src/app/downloads/components/FilterSidebar.tsx` |
-| Torrent row | `src/app/downloads/components/TorrentRow.tsx` |
-| Detail panel | `src/app/downloads/components/DetailPanel.tsx` |
-| Add torrent modal | `src/app/downloads/components/AddTorrentModal.tsx` |
+| Main page (table, rows, add-torrent, speed graph, settings slide-over) | `src/app/downloads/page.tsx` |
+| Per-torrent detail panel (v0.9.10) | `src/app/downloads/TorrentDetailPanel.tsx` |
+
+**Per-torrent detail panel (v0.9.10):** click a torrent name in the list to expand an inline panel with
+four tabs — **Overview** (speeds, seeds/peers, ratio, save path…), **Files** (per-file list with a
+priority `<select>` Skip/Normal/High/Max + progress bars), **Trackers** (status/seeds/peers), **Peers**
+(IP/client/progress/speeds). All tabs live-refresh every 2s while open. Fetch failures are surfaced as an
+explicit error (distinct from a genuinely empty list) so a dead fetch never silently shows "0". Calls go to
+the `/api/qbit/...` proxy (note the **`qbit`** spelling — `/api/qbt` 404s).
+
+> The committed `src/app/downloads/components/*` (FilterSidebar/TorrentRow/DetailPanel/AddTorrentModal) are
+> a **dead alternate UI** from an earlier draft — not wired into the live page (see the 2026-06-13 audit
+> dead-code list). The live UI is `page.tsx` + `TorrentDetailPanel.tsx`.
 
 qBittorrent endpoints used:
 
