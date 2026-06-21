@@ -27,9 +27,9 @@ export function TorrentDetailPanel({ hash, colSpan, onClose }: Props) {
 
   const fetchOverview = useCallback(async () => {
     const [propsRes, filesRes, trackersRes] = await Promise.all([
-      fetch(`/api/qbt/torrents/properties?hash=${hash}`),
-      fetch(`/api/qbt/torrents/files?hash=${hash}`),
-      fetch(`/api/qbt/torrents/trackers?hash=${hash}`),
+      fetch(`/api/qbit/torrents/properties?hash=${hash}`),
+      fetch(`/api/qbit/torrents/files?hash=${hash}`),
+      fetch(`/api/qbit/torrents/trackers?hash=${hash}`),
     ])
     if (propsRes.ok) setProps(await propsRes.json() as QbtTorrentProperties)
     if (filesRes.ok) setFiles(await filesRes.json() as QbtFileInfo[])
@@ -37,7 +37,7 @@ export function TorrentDetailPanel({ hash, colSpan, onClose }: Props) {
   }, [hash])
 
   const fetchPeers = useCallback(async () => {
-    const res = await fetch(`/api/qbt/sync/torrentPeers?hash=${hash}`)
+    const res = await fetch(`/api/qbit/sync/torrentPeers?hash=${hash}`)
     if (res.ok) {
       const data = await res.json() as { peers?: Record<string, QbtPeerInfo> }
       setPeers(Object.values(data.peers ?? {}))
@@ -67,7 +67,7 @@ export function TorrentDetailPanel({ hash, colSpan, onClose }: Props) {
   }, [tab, fetchOverview, fetchPeers])
 
   async function setPriority(fileIndex: number, priority: 0 | 1 | 6 | 7) {
-    await fetch('/api/qbt/torrents/filePrio', {
+    await fetch('/api/qbit/torrents/filePrio', {
       method: 'POST',
       body: new URLSearchParams({ hash, id: String(fileIndex), priority: String(priority) }),
     })

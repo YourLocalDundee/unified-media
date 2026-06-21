@@ -18,6 +18,7 @@ import { requireAdmin } from '@/lib/dal'
 import { verifyOrigin } from '@/lib/csrf'
 import { getProfileById, createItem, recordGrab, updateItem } from '@/lib/automation/monitor'
 import { createRequest, updateRequestStatus, getRequestByTmdb } from '@/lib/requests/monitor'
+import { getDb } from '@/lib/db/index'
 import { findSeasonPack } from '@/lib/automation/grabber'
 import { getSeasonEpisodeNumbers } from '@/lib/media-server/tmdb'
 import { getClient } from '@/lib/download-client/registry'
@@ -27,12 +28,28 @@ export const dynamic = 'force-dynamic'
 
 const ANY_PROFILE: QualityProfile = { id: 0, name: 'Any', conditions: '[]' }
 
-// Creates a media_request row for an admin grab so it shows on the Requests page.
-// Silently skips if a request already exists for this user+tmdbId+mediaType.
+// Creates or updates a media_request row for an admin grab so it shows on the Requests page.
+// If a row already exists for this user+tmdbId+mediaType, the new seasonNumber is merged into
+// scope_seasons so a second season grab doesn't silently disappear.
 function recordGrabRequest(userId: string, tmdbId: number, title: string, year: number | undefined, seasonNumber: number) {
   try {
     const existing = getRequestByTmdb(userId, tmdbId, 'tv')
-    if (existing) return
+    if (existing) {
+      // Merge the new season into scope_seasons without duplicating.
+      let seasons: number[] = []
+      try {
+        const raw = (existing as { scope_seasons?: string | null }).scope_seasons
+        if (typeof raw === 'string') seasons = JSON.parse(raw) as number[]
+      } catch { /* malformed — reset */ }
+      if (!seasons.includes(seasonNumber)) {
+        seasons.push(seasonNumber)
+        seasons.sort((a, b) => a - b)
+        getDb()
+          .prepare('UPDATE media_requests SET scope_seasons = ?, scope_type = ?, updated_at = ? WHERE id = ?')
+          .run(JSON.stringify(seasons), 'seasons', Date.now(), existing.id)
+      }
+      return
+    }
     const req = createRequest({
       userId,
       tmdbId,

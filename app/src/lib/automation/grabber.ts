@@ -50,6 +50,12 @@ export function buildSearchParams(item: MonitoredItem): { q: string; cats: strin
       try { eps = JSON.parse(item.scope_episodes) } catch { /* malformed DB column — skip scope */ }
       if (Array.isArray(eps) && eps.length > 0) {
         const ep = eps[0]
+        // ep.e > 99 means TMDB is using absolute episode numbering (e.g. One Piece ep 422
+        // stored as S13E422 in TMDB, but released on Nyaa as "One Piece - 422").
+        // Build a bare absolute-number query so Nyaa/anime indexers find it.
+        if (ep.e > 99) {
+          return { q: `${item.title} ${ep.e}`, cats }
+        }
         const s = String(ep.s).padStart(2, '0')
         const e = String(ep.e).padStart(2, '0')
         return { q: `${item.title} S${s}E${e}`, cats }
@@ -94,15 +100,35 @@ export function filterByScope(
     let eps: Array<{ s: number; e: number }> = []
     try { const p = JSON.parse(item.scope_episodes); if (Array.isArray(p)) eps = p } catch { return null }
     if (eps.length === 0) return null
-    // Build a combined OR pattern for all requested episodes, e.g. S01E05|S01E06
+
+    // Year-mismatch guard: if the item has a known release year and a result's title
+    // contains a 4-digit year that differs, it's a different production (e.g. 2023 live-action
+    // One Piece vs the 1999 anime). Reject those before scope matching.
+    const itemYear = item.year ?? null
+    const yearRe = /\b(19|20)\d{2}\b/
+    const candidatesForScope = itemYear
+      ? results.filter(r => {
+          const m = r.title.match(yearRe)
+          return !m || parseInt(m[0], 10) === itemYear
+        })
+      : results
+
+    // Build scope-match pattern. When ep.e > 99 the episode number is TMDB absolute
+    // (e.g. S13E422 for One Piece), so releases use bare absolute numbering on Nyaa:
+    // "[Group] One Piece - 422 [1080p]". Accept BOTH the S##E## form (for indexers that
+    // use it) AND a word-boundary-delimited bare number.
     const patterns = eps.map(ep => {
       const s = String(ep.s).padStart(2, '0')
       const e = String(ep.e).padStart(2, '0')
-      // Accept SxxExx or x×xx (e.g. 1x05) notations
-      return `S${s}E${e}|${ep.s}x${String(ep.e).padStart(2, '0')}`
+      const standard = `S${s}E${e}|${ep.s}x${String(ep.e).padStart(2, '0')}`
+      if (ep.e > 99) {
+        // Bare absolute number: must be preceded and followed by non-digit chars
+        return `${standard}|(?<![0-9])${ep.e}(?![0-9])`
+      }
+      return standard
     })
     const re = new RegExp(patterns.join('|'), 'i')
-    const filtered = results.filter(r => re.test(r.title))
+    const filtered = candidatesForScope.filter(r => re.test(r.title))
     return filtered.length > 0 ? filtered : null
   }
 
