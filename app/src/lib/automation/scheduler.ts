@@ -48,7 +48,7 @@ export function initScheduler(): void {
 
   // Grab loop: search all indexers for every wanted item sequentially to avoid
   // hammering indexers with concurrent requests on large want lists
-  cron.schedule('*/15 * * * *', async () => {
+  cron.schedule('*/5 * * * *', async () => {
     const wanted = getWantedItems()
     if (wanted.length === 0) return
     console.log(`[automation] Poll tick: ${wanted.length} wanted items`)

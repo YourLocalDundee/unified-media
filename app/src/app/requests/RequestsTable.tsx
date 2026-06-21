@@ -876,6 +876,9 @@ function RequestRow({
           {scopeStr && (
             <span className="text-[10px] text-zinc-500 font-mono">{scopeStr}</span>
           )}
+          {adminMode && (
+            <p className="text-[10px] text-zinc-500 mt-0.5">by {request.username}</p>
+          )}
           {adminMode && canExpand && (
             <p className="text-xs text-zinc-600 mt-0.5">
               {expanded
@@ -924,37 +927,6 @@ function RequestRow({
             )}
           </div>
         </td>
-
-        {/* Requested By — only in admin mode */}
-        {adminMode && (
-          <td className="py-3 px-3 text-sm text-zinc-400 hidden md:table-cell">
-            <div className="flex flex-col gap-0.5">
-              <span>{request.username}</span>
-              {userSlots && (userSlots.movie > 0 || userSlots.tv > 0) && (
-                <div className="flex gap-1 flex-wrap mt-0.5">
-                  {userSlots.movie > 0 && (
-                    <span className={`text-[10px] rounded px-1.5 py-0.5 font-medium ${
-                      userSlots.movie >= QUICK_LIMITS.movie
-                        ? 'bg-red-900/50 text-red-400'
-                        : 'bg-zinc-800 text-zinc-500'
-                    }`}>
-                      Movie {userSlots.movie}/{QUICK_LIMITS.movie}
-                    </span>
-                  )}
-                  {userSlots.tv > 0 && (
-                    <span className={`text-[10px] rounded px-1.5 py-0.5 font-medium ${
-                      userSlots.tv >= QUICK_LIMITS.tv
-                        ? 'bg-red-900/50 text-red-400'
-                        : 'bg-amber-900/30 text-amber-400'
-                    }`}>
-                      TV {userSlots.tv}/{QUICK_LIMITS.tv}
-                    </span>
-                  )}
-                </div>
-              )}
-            </div>
-          </td>
-        )}
 
         {/* Date */}
         <td className="py-3 px-3 text-sm text-zinc-500 hidden lg:table-cell whitespace-nowrap">
@@ -1184,7 +1156,7 @@ export default function RequestsTable({
                 <th className="py-3 px-3 text-xs font-medium uppercase tracking-wide text-zinc-500 hidden sm:table-cell">Type</th>
                 <th className="py-3 px-3 text-xs font-medium uppercase tracking-wide text-zinc-500">Status</th>
                 <th className="py-3 px-3 text-xs font-medium uppercase tracking-wide text-zinc-500 hidden sm:table-cell">Req. Type</th>
-                {adminMode && <th className="py-3 px-3 text-xs font-medium uppercase tracking-wide text-zinc-500 hidden md:table-cell">Requested By</th>}
+
                 <th className="py-3 px-3 text-xs font-medium uppercase tracking-wide text-zinc-500 hidden lg:table-cell">Date</th>
                 <th className="py-3 pl-3 pr-4 text-xs font-medium uppercase tracking-wide text-zinc-500 text-right">Actions</th>
               </tr>

@@ -2,6 +2,7 @@
 
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react'
 import TorrentSettingsClient from '@/app/settings/torrent/TorrentSettingsClient'
+import { TorrentDetailPanel } from './TorrentDetailPanel'
 import { formatBytes } from '@/lib/utils'
 import { useFocusTrap } from '@/hooks/useFocusTrap'
 import {
@@ -551,22 +552,63 @@ function SkeletonRows() {
 // Torrent row
 // ---------------------------------------------------------------------------
 
+// Wraps TorrentRow + its optional TorrentDetailPanel. Needed because <tbody>
+// cannot contain a React fragment with a key in older JSX transforms — a function
+// component returning Fragment gets the key on the component boundary, not the DOM.
+function TorrentDetailFragment({
+  torrent,
+  selected,
+  expanded,
+  onSelect,
+  onPause,
+  onResume,
+  onRequestDelete,
+  onToggleDetail,
+  onCloseDetail,
+}: TorrentRowProps & { onCloseDetail: () => void }) {
+  return (
+    <>
+      <TorrentRow
+        torrent={torrent}
+        selected={selected}
+        expanded={expanded}
+        onSelect={onSelect}
+        onPause={onPause}
+        onResume={onResume}
+        onRequestDelete={onRequestDelete}
+        onToggleDetail={onToggleDetail}
+      />
+      {expanded && (
+        <TorrentDetailPanel
+          hash={torrent.hash}
+          colSpan={8}
+          onClose={onCloseDetail}
+        />
+      )}
+    </>
+  )
+}
+
 interface TorrentRowProps {
   torrent: Torrent
   selected: boolean
+  expanded: boolean
   onSelect: (hash: string, checked: boolean) => void
   onPause: (hash: string) => void
   onResume: (hash: string) => void
   onRequestDelete: (hash: string, name: string) => void
+  onToggleDetail: (hash: string) => void
 }
 
 function TorrentRow({
   torrent,
   selected,
+  expanded,
   onSelect,
   onPause,
   onResume,
   onRequestDelete,
+  onToggleDetail,
 }: TorrentRowProps) {
   const isPaused = [
     'pausedDL',
@@ -598,7 +640,7 @@ function TorrentRow({
     <tr
       className={`border-b border-gray-100 transition-colors hover:bg-gray-50 dark:border-gray-800 dark:hover:bg-gray-800/50 ${
         selected ? 'bg-blue-50 dark:bg-blue-900/10' : ''
-      }`}
+      } ${expanded ? 'border-b-0 bg-gray-50/80 dark:bg-gray-800/30' : ''}`}
     >
       {/* Checkbox */}
       <td className="w-8 px-3 py-2.5">
@@ -611,13 +653,13 @@ function TorrentRow({
         />
       </td>
 
-      {/* Name */}
-      <td className="max-w-xs px-3 py-2.5">
+      {/* Name — click to expand detail panel */}
+      <td className="max-w-xs px-3 py-2.5 cursor-pointer" onClick={() => onToggleDetail(torrent.hash)}>
         <span
           className="block truncate text-sm font-medium text-gray-900 dark:text-gray-100"
           title={torrent.name}
         >
-          {torrent.name}
+          {expanded ? '▼ ' : '▶ '}{torrent.name}
         </span>
         {torrent.category ? (
           <span className="text-xs text-gray-400">{torrent.category}</span>
@@ -717,6 +759,7 @@ export default function DownloadsPage() {
 
   const [activeTab, setActiveTab] = useState<FilterTab>('all')
   const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [expandedHash, setExpandedHash] = useState<string | null>(null)
   const [showSettings, setShowSettings] = useState(false)
   const settingsDialogRef = useRef<HTMLDivElement>(null)
   const closeSettings = useCallback(() => setShowSettings(false), [])
@@ -838,6 +881,10 @@ export default function DownloadsPage() {
     },
     [uiPrefs.confirmDelete, deleteTorrents]
   )
+
+  const handleToggleDetail = useCallback((hash: string) => {
+    setExpandedHash(prev => prev === hash ? null : hash)
+  }, [])
 
   const handleBulkPause = useCallback(() => {
     setActionError(null)
@@ -1107,14 +1154,17 @@ export default function DownloadsPage() {
                   </tr>
                 ) : (
                   filteredTorrents.map((torrent) => (
-                    <TorrentRow
+                    <TorrentDetailFragment
                       key={torrent.hash}
                       torrent={torrent}
                       selected={selected.has(torrent.hash)}
+                      expanded={expandedHash === torrent.hash}
                       onSelect={handleSelect}
                       onPause={handlePause}
                       onResume={handleResume}
                       onRequestDelete={handleRequestDelete}
+                      onToggleDetail={handleToggleDetail}
+                      onCloseDetail={() => setExpandedHash(null)}
                     />
                   ))
                 )}

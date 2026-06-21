@@ -17,6 +17,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireAdmin } from '@/lib/dal'
 import { verifyOrigin } from '@/lib/csrf'
 import { getProfileById, createItem, recordGrab, updateItem } from '@/lib/automation/monitor'
+import { createRequest, updateRequestStatus, getRequestByTmdb } from '@/lib/requests/monitor'
 import { findSeasonPack } from '@/lib/automation/grabber'
 import { getSeasonEpisodeNumbers } from '@/lib/media-server/tmdb'
 import { getClient } from '@/lib/download-client/registry'
@@ -26,8 +27,29 @@ export const dynamic = 'force-dynamic'
 
 const ANY_PROFILE: QualityProfile = { id: 0, name: 'Any', conditions: '[]' }
 
+// Creates a media_request row for an admin grab so it shows on the Requests page.
+// Silently skips if a request already exists for this user+tmdbId+mediaType.
+function recordGrabRequest(userId: string, tmdbId: number, title: string, year: number | undefined, seasonNumber: number) {
+  try {
+    const existing = getRequestByTmdb(userId, tmdbId, 'tv')
+    if (existing) return
+    const req = createRequest({
+      userId,
+      tmdbId,
+      mediaType: 'tv',
+      title,
+      year: year ?? null,
+      requestType: 'longterm',
+      scopeType: 'seasons',
+      scopeSeasons: [seasonNumber],
+      monitorFuture: false,
+    })
+    updateRequestStatus(req.id, 'approved')
+  } catch { /* ignore — grab should not fail because the requests row failed */ }
+}
+
 export async function POST(req: NextRequest) {
-  await requireAdmin()
+  const session = await requireAdmin()
   if (!verifyOrigin(req)) return NextResponse.json({ error: 'Invalid origin' }, { status: 403 })
 
   const body = (await req.json().catch(() => null)) as {
@@ -74,6 +96,7 @@ export async function POST(req: NextRequest) {
       })
       recordGrab({ item_id: item.id, indexer: pack.indexerName, release_title: pack.title, info_hash: pack.infoHash })
       updateItem(item.id, { status: 'grabbed' })
+      recordGrabRequest(session.userId, tmdbId, title, year, seasonNumber)
       return NextResponse.json({
         result: 'pack_grabbed',
         release: { title: pack.title, indexer: pack.indexerName, size: pack.size, seeders: pack.seeders },
@@ -98,6 +121,7 @@ export async function POST(req: NextRequest) {
         language,
       })
     }
+    recordGrabRequest(session.userId, tmdbId, title, year, seasonNumber)
     return NextResponse.json({ result: 'episodes_queued', count: episodes.length })
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
