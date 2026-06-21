@@ -12,8 +12,9 @@ export interface ScoredCandidate {
 export type SkipReason =
   | 'no_results'        // indexers returned zero hits
   | 'scope_mismatch'    // hits found, none matched the scope filter (S01E05, season pack)
-  | 'language_mismatch' // scope-matched hits exist, none passed the language constraint
-  | 'quality_reject'    // language passed, none survived the quality profile conditions
+  | 'language_mismatch' // (legacy) scope-matched hits exist, none passed the language constraint
+  | 'quality_reject'    // (legacy) language passed, none survived the quality profile conditions
+  | 'no_seeders'        // scope-matched hits exist but every one is dead (0 seeds) — auto won't grab
   | 'degenerate_scope'  // scope columns empty/malformed — bailed before querying indexers
 
 export interface GrabResultRow {

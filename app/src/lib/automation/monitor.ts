@@ -106,6 +106,8 @@ export function createItem(data: {
   scope_type?: 'full' | 'seasons' | 'episodes' | 'movie' | null
   scope_seasons?: number[] | null
   scope_episodes?: Array<{ s: number; e: number }> | null
+  // Human arc/saga label (e.g. "Impel Down") for episode-group grabs; null for plain scopes.
+  scope_label?: string | null
   monitor_future?: boolean
   // ISO 639-1 code or 'any' (default). Honored by the grab cron via grabItem.
   language?: string
@@ -130,6 +132,7 @@ export function createItem(data: {
     scope_type: scopeType,
     scope_seasons: scopeSeasons != null ? JSON.stringify(scopeSeasons) : null,
     scope_episodes: scopeEpisodes != null ? JSON.stringify(scopeEpisodes) : null,
+    scope_label: data.scope_label ?? null,
     scope_key: scopeKey,
     monitor_future: data.monitor_future ? 1 : 0,
     language: data.language ?? 'any',
@@ -147,11 +150,11 @@ export function createItem(data: {
     .prepare(
       `INSERT INTO monitored_items
         (type, title, tmdb_id, tvdb_id, year, quality_profile_id, root_path,
-         monitored, status, scope_type, scope_seasons, scope_episodes, scope_key, monitor_future,
+         monitored, status, scope_type, scope_seasons, scope_episodes, scope_label, scope_key, monitor_future,
          language, created_at, updated_at)
        VALUES
         (@type, @title, @tmdb_id, @tvdb_id, @year, @quality_profile_id, @root_path,
-         1, 'wanted', @scope_type, @scope_seasons, @scope_episodes, @scope_key, @monitor_future,
+         1, 'wanted', @scope_type, @scope_seasons, @scope_episodes, @scope_label, @scope_key, @monitor_future,
          @language, @created_at, @updated_at)
        ON CONFLICT(tmdb_id, type, scope_key) DO NOTHING`
     )

@@ -24,16 +24,28 @@ export function TorrentDetailPanel({ hash, colSpan, onClose }: Props) {
   const [trackers, setTrackers] = useState<QbtTrackerInfo[]>([])
   const [peers, setPeers] = useState<QbtPeerInfo[]>([])
   const [loading, setLoading] = useState(true)
+  // Bug 5: distinguish "the client returned an empty list" from "the fetch failed". A silent "0"
+  // sent us chasing a non-bug for a round; now a failed fetch shows an explicit error instead.
+  const [error, setError] = useState<string | null>(null)
 
   const fetchOverview = useCallback(async () => {
-    const [propsRes, filesRes, trackersRes] = await Promise.all([
-      fetch(`/api/qbit/torrents/properties?hash=${hash}`),
-      fetch(`/api/qbit/torrents/files?hash=${hash}`),
-      fetch(`/api/qbit/torrents/trackers?hash=${hash}`),
-    ])
-    if (propsRes.ok) setProps(await propsRes.json() as QbtTorrentProperties)
-    if (filesRes.ok) setFiles(await filesRes.json() as QbtFileInfo[])
-    if (trackersRes.ok) setTrackers(await trackersRes.json() as QbtTrackerInfo[])
+    try {
+      const [propsRes, filesRes, trackersRes] = await Promise.all([
+        fetch(`/api/qbit/torrents/properties?hash=${hash}`),
+        fetch(`/api/qbit/torrents/files?hash=${hash}`),
+        fetch(`/api/qbit/torrents/trackers?hash=${hash}`),
+      ])
+      if (!filesRes.ok) throw new Error(`files HTTP ${filesRes.status}`)
+      // A successful response that isn't JSON (e.g. the login HTML shell on an expired session)
+      // throws here and surfaces as an error rather than rendering a misleading empty list.
+      const filesJson = await filesRes.json() as QbtFileInfo[]
+      setFiles(Array.isArray(filesJson) ? filesJson : [])
+      if (propsRes.ok) setProps(await propsRes.json() as QbtTorrentProperties)
+      if (trackersRes.ok) setTrackers(await trackersRes.json() as QbtTrackerInfo[])
+      setError(null)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to load torrent detail')
+    }
   }, [hash])
 
   const fetchPeers = useCallback(async () => {
@@ -51,6 +63,7 @@ export function TorrentDetailPanel({ hash, colSpan, onClose }: Props) {
     setFiles([])
     setTrackers([])
     setPeers([])
+    setError(null)
     fetchOverview().finally(() => setLoading(false))
   }, [fetchOverview])
 
@@ -108,8 +121,15 @@ export function TorrentDetailPanel({ hash, colSpan, onClose }: Props) {
           <div className="max-h-72 overflow-y-auto p-4">
             {loading && <p className="text-xs text-gray-400">Loading…</p>}
 
+            {/* Fetch error — distinct from a genuinely-empty list (Bug 5). */}
+            {!loading && error && (
+              <p className="rounded bg-red-900/30 px-3 py-2 text-xs text-red-300">
+                Couldn’t load torrent detail from the client: {error}. Retrying…
+              </p>
+            )}
+
             {/* Overview */}
-            {!loading && tab === 'overview' && props && (
+            {!loading && !error && tab === 'overview' && props && (
               <div className="grid grid-cols-2 gap-x-8 gap-y-2 text-xs sm:grid-cols-3 lg:grid-cols-4">
                 {([
                   ['Download speed', fmtSpeed(props.dl_speed)],
@@ -138,9 +158,9 @@ export function TorrentDetailPanel({ hash, colSpan, onClose }: Props) {
             )}
 
             {/* Files */}
-            {!loading && tab === 'files' && (
+            {!loading && !error && tab === 'files' && (
               files.length === 0
-                ? <p className="text-xs text-gray-400">No file data available.</p>
+                ? <p className="text-xs text-gray-400">This torrent has no files reported by the client.</p>
                 : (
                   <table className="w-full text-xs">
                     <thead>
@@ -199,7 +219,7 @@ export function TorrentDetailPanel({ hash, colSpan, onClose }: Props) {
             )}
 
             {/* Trackers */}
-            {!loading && tab === 'trackers' && (
+            {!loading && !error && tab === 'trackers' && (
               <table className="w-full text-xs">
                 <thead>
                   <tr className="text-left">

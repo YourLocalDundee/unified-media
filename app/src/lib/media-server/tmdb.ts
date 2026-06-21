@@ -627,3 +627,62 @@ export async function getSeasonEpisodeNumbers(tmdbId: number, seasonNumber: numb
     .map((e) => e.episode_number)
     .filter((n) => typeof n === 'number' && n > 0)
 }
+
+// ---------------------------------------------------------------------------
+// Story arcs (Bug 7): TMDB groups long-running anime into "seasons" that bundle
+// multiple story arcs (e.g. One Piece S13 = "Impel Down & Marineford", 422–522).
+// The episode_groups API exposes true arc boundaries; we use the type-5 grouping,
+// preferring the one named "Arcs (Official)". Series without such a grouping (most
+// non-anime) return [] so callers fall back to plain season behavior.
+// ---------------------------------------------------------------------------
+
+export interface SeriesArc {
+  id: string                                // episode-group sub-group id (stable per arc)
+  order: number                             // 0-based position within the grouping
+  name: string                              // e.g. "Impel Down"
+  episodeCount: number
+  episodes: { s: number; e: number }[]      // season_number + (absolute) episode_number per episode
+}
+
+// In-process cache: arc structure is static, so the 2-step episode-group resolution runs once
+// per series per process. (Next's fetch data cache — revalidate 86400 on tmdbFetch — already
+// dedupes the underlying HTTP calls across requests; this Map additionally skips the re-parse.)
+const arcCache = new Map<number, SeriesArc[]>()
+
+export async function getArcs(tmdbId: number): Promise<SeriesArc[]> {
+  const cached = arcCache.get(tmdbId)
+  if (cached) return cached
+  try {
+    const groups = await tmdbFetch<{ results?: { id: string; name: string; type: number }[] }>(
+      `/tv/${tmdbId}/episode_groups`,
+    )
+    const list = groups.results ?? []
+    // type 5 = story-arc/saga groupings. Prefer the canonical "Arcs (Official)" set.
+    const arcGroup =
+      list.find((g) => g.type === 5 && /arcs?\s*\(official\)/i.test(g.name)) ??
+      list.find((g) => g.type === 5 && /\barc\b/i.test(g.name)) ??
+      list.find((g) => g.type === 5)
+    if (!arcGroup) { arcCache.set(tmdbId, []); return [] }
+
+    const detail = await tmdbFetch<{
+      groups?: { id: string; name: string; order: number; episodes?: { season_number: number; episode_number: number }[] }[]
+    }>(`/tv/episode_group/${arcGroup.id}`)
+
+    const arcs: SeriesArc[] = (detail.groups ?? [])
+      .map((g) => {
+        const episodes = (g.episodes ?? [])
+          .map((e) => ({ s: e.season_number, e: e.episode_number }))
+          .filter((x) => typeof x.e === 'number' && x.e > 0)
+        return { id: g.id, order: g.order ?? 0, name: g.name, episodes, episodeCount: episodes.length }
+      })
+      .filter((g) => g.episodeCount > 0)
+      .sort((a, b) => a.order - b.order)
+
+    arcCache.set(tmdbId, arcs)
+    return arcs
+  } catch {
+    // Network/parse failure → treat as "no arcs" so the caller falls back to seasons.
+    // Do NOT cache the failure, so a transient error retries on the next call.
+    return []
+  }
+}

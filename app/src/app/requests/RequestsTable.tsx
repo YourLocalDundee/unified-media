@@ -97,6 +97,7 @@ type AnyNativeRequest = NativeRequestWithUser & {
   scope_type?: string | null
   scope_seasons?: string | null
   scope_episodes?: string | null
+  scope_label?: string | null
 }
 
 function formatScope(req: AnyNativeRequest): string | null {
@@ -105,6 +106,11 @@ function formatScope(req: AnyNativeRequest): string | null {
   // Accept snake_case (from DB) or camelCase (from constructed objects)
   const scopeType = (req.scope_type ?? req.scopeType) as string | null | undefined
   if (!scopeType || scopeType === 'movie') return null
+
+  // Arc grabs (Bug 7) store a human label ("Impel Down") alongside an episode list — show it
+  // instead of the raw episode range so the user sees the arc they actually picked.
+  const label = (req.scope_label ?? null) as string | null
+  if (label) return label
 
   if (scopeType === 'full') return 'Full Series'
 
@@ -333,9 +339,10 @@ function DownloadProgress({ requestId }: { requestId: number }) {
 interface GrabResultsPanelProps {
   requestId: number
   status: RequestStatus
+  adminMode: boolean
 }
 
-function GrabResultsPanel({ requestId, status }: GrabResultsPanelProps) {
+function GrabResultsPanel({ requestId, status, adminMode }: GrabResultsPanelProps) {
   const [data, setData] = useState<GrabResultRow | null | undefined>(undefined) // undefined = not loaded
   const [loading, setLoading] = useState(false)
   const [researchBusy, setResearchBusy] = useState(false)
@@ -413,7 +420,9 @@ function GrabResultsPanel({ requestId, status }: GrabResultsPanelProps) {
     )
   }
 
-  const canSearch = status === 'approved'
+  // Bug 1: an admin can re-search / override regardless of request status (the server route is
+  // requireAdmin-gated). Non-admins keep the original approved-only behavior.
+  const canSearch = adminMode || status === 'approved'
 
   return (
     <tr>
@@ -484,26 +493,29 @@ function GrabResultsPanel({ requestId, status }: GrabResultsPanelProps) {
                           <span className="line-clamp-2 leading-tight">{c.result.title}</span>
                         </td>
                         <td className="py-2 px-2 text-zinc-500">{c.result.indexerName}</td>
-                        <td className="py-2 px-2 text-right text-zinc-400">{c.result.seeders}</td>
+                        <td className="py-2 px-2 text-right">
+                          {c.result.seeders > 0
+                            ? <span className="text-zinc-400">{c.result.seeders}</span>
+                            : <span className="text-red-400" title="0 seeds — dead, won't download">0 ⚠</span>}
+                        </td>
                         <td className="py-2 px-2 text-right text-zinc-500">{formatBytes(c.result.size)}</td>
                         <td className="py-2 px-2 text-right">
-                          <span className={c.score < 0 ? 'text-red-400' : 'text-zinc-400'}>
-                            {c.score < 0 ? 'Rejected' : c.score}
-                          </span>
+                          {/* Score is the soft auto-pick rank; releases are de-prioritized, never
+                              removed — so always show the number, never a hard "Rejected" label. */}
+                          <span className={c.score < 0 ? 'text-zinc-500' : 'text-zinc-300'}>{Math.round(c.score)}</span>
                         </td>
                         <td className="py-2 pl-2 pr-3 text-right">
-                          {!c.selected && canSearch && (
+                          {c.selected ? (
+                            <span className="text-blue-400 text-xs">Selected</span>
+                          ) : canSearch ? (
                             <button
                               onClick={() => void handleOverride(c)}
                               disabled={isOverriding || researchBusy}
                               className="bg-zinc-700 hover:bg-zinc-600 text-white rounded px-2 py-0.5 text-xs transition-colors disabled:opacity-50"
                             >
-                              {isOverriding ? '…' : 'Override'}
+                              {isOverriding ? '…' : 'Grab'}
                             </button>
-                          )}
-                          {c.selected && (
-                            <span className="text-blue-400 text-xs">Selected</span>
-                          )}
+                          ) : null}
                         </td>
                       </tr>
                     )
@@ -985,7 +997,7 @@ function RequestRow({
         />
       )}
       {expanded && adminMode && (effectiveStatus === 'approved' || effectiveStatus === 'available') && (
-        <GrabResultsPanel requestId={request.id} status={effectiveStatus} />
+        <GrabResultsPanel requestId={request.id} status={effectiveStatus} adminMode={adminMode} />
       )}
     </>
   )

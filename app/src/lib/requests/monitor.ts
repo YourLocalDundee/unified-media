@@ -66,6 +66,7 @@ export function createRequest(data: {
   scopeType?: 'full' | 'seasons' | 'episodes' | 'movie' | null
   scopeSeasons?: number[] | null
   scopeEpisodes?: Array<{ s: number; e: number }> | null
+  scopeLabel?: string | null
   monitorFuture?: boolean
 }): NativeRequest {
   const db = getDb()
@@ -80,11 +81,11 @@ export function createRequest(data: {
     const result = db.prepare(`
       INSERT INTO media_requests
         (user_id, tmdb_id, media_type, title, year, poster_path, overview, seasons, status, request_type,
-         scope_type, scope_seasons, scope_episodes, monitor_future,
+         scope_type, scope_seasons, scope_episodes, scope_label, monitor_future,
          created_at, updated_at)
       VALUES
         (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?,
-         ?, ?, ?, ?,
+         ?, ?, ?, ?, ?,
          ?, ?)
     `).run(
       data.userId,
@@ -99,6 +100,7 @@ export function createRequest(data: {
       resolvedScopeType,
       scopeSeasonsJson,
       scopeEpisodesJson,
+      data.scopeLabel ?? null,
       data.monitorFuture ? 1 : 0,
       now,
       now

@@ -21,9 +21,9 @@ export async function POST(
 
   const request = getRequestById(id)
   if (!request) return NextResponse.json({ error: 'Not found' }, { status: 404 })
-  if (request.status !== 'approved') {
-    return NextResponse.json({ error: 'Request must be approved before searching' }, { status: 422 })
-  }
+  // Bug 1: this whole route is requireAdmin()-gated, so an admin may re-search / override on a
+  // request in ANY status (e.g. an 'available' One Piece request where the arc never actually
+  // grabbed). The old 'approved'-only block left the candidate-list Action column dead.
 
   // Resolve to the active, narrowly-scoped item (e.g. the arc's wanted episode), NOT the stale
   // 'full' container — and resolve identically to the grab-results display route so a re-search

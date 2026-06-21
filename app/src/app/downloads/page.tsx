@@ -778,7 +778,7 @@ export default function DownloadsPage() {
     setSpeedHistory((prev) => {
       const next = [
         ...prev,
-        { dl: transferInfo.dl_info_speed ?? 0, ul: transferInfo.ul_info_speed ?? 0 },
+        { dl: transferInfo.dl_info_speed ?? 0, ul: transferInfo.up_info_speed ?? 0 },
       ]
       return next.length > 60 ? next.slice(next.length - 60) : next
     })
@@ -997,7 +997,7 @@ export default function DownloadsPage() {
                     ↓ {formatSpeed(transferInfo.dl_info_speed ?? 0)}
                   </span>
                   <span className="text-green-600 dark:text-green-400">
-                    ↑ {formatSpeed(transferInfo.ul_info_speed ?? 0)}
+                    ↑ {formatSpeed(transferInfo.up_info_speed ?? 0)}
                   </span>
                   <span className="text-gray-600 dark:text-gray-400">
                     {activeTorrentCount} active

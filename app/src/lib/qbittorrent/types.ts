@@ -77,12 +77,15 @@ export interface Torrent {
 }
 
 export interface TransferInfo {
+  // NOTE: qBittorrent's /transfer/info and /sync/maindata server_state use the UP_ prefix for
+  // upload (up_info_speed / up_info_data / up_rate_limit), NOT ul_. Reading ul_* returned
+  // undefined → the header showed "NaN undefined/s" (then "—" after a ?? 0 band-aid). (Bug 6)
   dl_info_speed: number   // bytes/s
-  ul_info_speed: number   // bytes/s
+  up_info_speed: number   // bytes/s
   dl_info_data: number    // total bytes downloaded this session
-  ul_info_data: number    // total bytes uploaded this session
+  up_info_data: number    // total bytes uploaded this session
   dl_rate_limit: number
-  ul_rate_limit: number
+  up_rate_limit: number
   dht_nodes: number
   connection_status: 'connected' | 'firewalled' | 'disconnected'
   free_space_on_disk?: number  // bytes free on the save path's disk

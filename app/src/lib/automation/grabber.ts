@@ -14,7 +14,7 @@
 
 import { getClient } from '@/lib/download-client/registry'
 import { searchAllIndexers } from '@/lib/indexer/index'
-import { parseReleaseName, parseLanguage, scoreRelease } from './parser'
+import { parseReleaseName, parseLanguage, scoreReleaseSoft } from './parser'
 import { scoreWithProfile } from './quality'
 import { getProfileById, recordGrab, updateItem } from './monitor'
 import { recordGrabResults, type ScoredCandidate, type SkipReason } from './grab-results'
@@ -166,21 +166,59 @@ export function filterByScope(
 }
 
 // ---------------------------------------------------------------------------
-// findBestRelease
+// Auto-pick scoring (Bug 2: de-prioritize, never hard-reject)
 // ---------------------------------------------------------------------------
 
+// A dead release (0 seeds) is ungrabbable, so it must sink below ANY live release regardless of
+// quality. Live releases rank by quality (scoreReleaseSoft: profile conditions + resolution +
+// source bonuses, with REQUIRED_MISS_PENALTY for a missed required condition) plus a language
+// preference penalty, plus a seed bonus capped so seeds never dominate quality among live releases.
+//
+// Worked ordering for a "1080p-required" profile (matched cond +10, res: 1080p +30/720p +20/480p +10,
+// source: WEB-DL +8/WEBRip +6, REQUIRED_MISS_PENALTY -100):
+//   A healthy in-range 1080p WEB-DL, 7 seeds  = +10 +30 +8 +7            = +55
+//   B healthy in-range 480p  WEBRip, 7 seeds  = -100 +10 +6 +7           = -77
+//   C dead   in-range 1080p WEB-DL, 0 seeds   = +10 +30 +8 -1000         = -952
+//   => A > B > C  (healthy-correct > healthy-wrong > dead-correct), and among live releases a
+//      720p miss (-73) still ranks above a 480p miss (-77), so higher quality wins when alive.
+const SEED_DEAD_PENALTY = -1000   // 0-seed sink; dominates the entire quality range
+const SEED_CAP = 100              // cap seed contribution so seeds never out-weigh quality among live releases
+const LANG_MISS_PENALTY = -100    // language mismatch when a preference is set (soften: was a hard skip)
+
+function seedScore(seeders: number): number {
+  return seeders > 0 ? Math.min(seeders, SEED_CAP) : SEED_DEAD_PENALTY
+}
+
+function languagePenalty(title: string, language: string): number {
+  if (language === 'any') return 0
+  return parseLanguage(title) === language ? 0 : LANG_MISS_PENALTY
+}
+
 /**
- * Given a list of Torznab results and a quality profile, return the result
- * that passes all required conditions and has the highest score, or null if
- * none qualify.
+ * Full auto-pick rank for one release: soft quality + custom-format + seeds + language preference.
+ * NEVER hard-rejects — a release that fails a required condition or the language preference is
+ * de-prioritized, not removed. Exported so the grab-results display and the cron rank identically.
+ */
+export function autoPickScore(
+  result: TorznabResult,
+  conditions: QualityCondition[],
+  profileId: number,
+  language: string,
+): number {
+  const meta = parseReleaseName(result.title)
+  const quality = scoreReleaseSoft(meta, conditions)
+  const fmt = scoreWithProfile(result.title, profileId).totalScore
+  return quality + fmt + seedScore(result.seeders) + languagePenalty(result.title, language)
+}
+
+/**
+ * Pick the highest-ranked release for AUTO-grab, or null if none is grabbable.
  *
- * scoreRelease returns null (not 0) for hard rejections so a zero-score release
- * that passes all conditions still beats a result that fails a required condition.
- *
- * language: ISO 639-1 code or 'any'. When not 'any', releases with a detected
- * language that doesn't match are hard-rejected. Untagged releases (parseLanguage
- * returns null) are also rejected unless language is 'any' — callers that want
- * to accept unlabeled releases should pass 'any'.
+ * Uses autoPickScore (soft, never hard-rejects). Because SEED_DEAD_PENALTY dominates the quality
+ * range, every live (seeders>0) release out-ranks every dead one — so if the best result is still
+ * dead, EVERY scope-matched candidate is dead and we return null (auto must not enqueue an
+ * undownloadable 0-seed torrent). Those releases remain in the interactive admin list and stay
+ * grab-able by manual override.
  */
 export function findBestRelease(
   results: TorznabResult[],
@@ -188,31 +226,20 @@ export function findBestRelease(
   language = 'any',
 ): TorznabResult | null {
   let conditions: QualityCondition[] = []
-  try { const p = JSON.parse(profile.conditions); if (Array.isArray(p)) conditions = p } catch { return null }
+  try { const p = JSON.parse(profile.conditions); if (Array.isArray(p)) conditions = p } catch { conditions = [] }
 
   let bestResult: TorznabResult | null = null
   let bestScore = -Infinity
 
   for (const result of results) {
-    const meta = parseReleaseName(result.title)
-
-    // Language hard constraint — applied before quality scoring
-    if (language !== 'any') {
-      const detected = parseLanguage(result.title)
-      if (detected !== language) continue // null (unknown) also rejected when language is set
-    }
-
-    const base = scoreRelease(meta, conditions)
-    if (base === null) continue // hard reject from a required condition
-    // Add custom format score on top of the base quality/source score
-    const fmt = scoreWithProfile(result.title, profile.id)
-    const combined = base + fmt.totalScore
-    if (combined > bestScore) {
-      bestScore = combined
+    const s = autoPickScore(result, conditions, profile.id, language)
+    if (s > bestScore) {
+      bestScore = s
       bestResult = result
     }
   }
 
+  if (bestResult && bestResult.seeders <= 0) return null // best is dead → nothing grabbable for auto
   return bestResult
 }
 
@@ -240,6 +267,53 @@ export async function findSeasonPack(
   const packs = raw.filter((r) => seasonRe.test(r.title) && !episodeRe.test(r.title))
   if (packs.length === 0) return null
   return findBestRelease(packs, profile, language)
+}
+
+/**
+ * Search indexers for an ARC PACK covering a TMDB-episode-group arc (Bug 7), e.g. One Piece
+ * "Impel Down" = absolute eps 422–456. Anime arcs are released as absolute-numbered range packs
+ * ("One Piece 422-456"), so we query the range and the start episode, then keep releases that
+ * reference an overlapping numeric range (or, failing that, any of the arc's episode numbers).
+ * Read-only — mirrors findSeasonPack; the caller decides pack vs. episode fan-out.
+ */
+export async function findArcPack(
+  title: string,
+  episodes: Array<{ s: number; e: number }>,
+  profile: QualityProfile,
+  language = 'any',
+): Promise<TorznabResult | null> {
+  const nums = episodes.map((e) => e.e).filter((n) => typeof n === 'number' && n > 0).sort((a, b) => a - b)
+  if (nums.length === 0) return null
+  const start = nums[0]
+  const end = nums[nums.length - 1]
+
+  // De-duplicated union of the range query and the start-episode query.
+  const seen = new Set<string>()
+  const raw: TorznabResult[] = []
+  for (const q of [`${title} ${start}-${end}`, `${title} ${start}`]) {
+    for (const r of await searchAllIndexers({ q, cats: '5000' })) {
+      const k = r.infoHash || r.title
+      if (!seen.has(k)) { seen.add(k); raw.push(r) }
+    }
+  }
+  if (raw.length === 0) return null
+
+  // Prefer releases that name a numeric range overlapping the arc (a real pack).
+  const rangeRe = /(?<![0-9])(\d{2,4})\s*[-–]\s*(\d{2,4})(?![0-9])/
+  const packs = raw.filter((r) => {
+    const m = r.title.match(rangeRe)
+    if (!m) return false
+    const a = parseInt(m[1], 10), b = parseInt(m[2], 10)
+    return a <= end && b >= start // overlaps the arc range
+  })
+  // Fallback: any release whose title contains one of the arc's absolute episode numbers
+  // (bare number, not a CRC hex tail).
+  const numbered = raw.filter((r) =>
+    nums.some((n) => new RegExp(`(?<![0-9])${n}(?![0-9a-fA-F])`).test(r.title)),
+  )
+  const pool = packs.length > 0 ? packs : numbered
+  if (pool.length === 0) return null
+  return findBestRelease(pool, profile, language)
 }
 
 // ---------------------------------------------------------------------------
@@ -359,28 +433,23 @@ export async function grabItem(
     }
     const results = scopeFiltered
 
-    // 4. Score ALL (scope-filtered) results for UI display (combined base + custom format score)
+    // 4. Score ALL (scope-filtered) results for UI display using the SAME soft auto-pick rank
+    //    the cron uses, so the displayed order matches the pick and nothing is shown as a hard
+    //    "Rejected" anymore — dead (0-seed) releases simply sink via SEED_DEAD_PENALTY.
     let conditions: QualityCondition[] = []
     try { const p = JSON.parse(profile.conditions); if (Array.isArray(p)) conditions = p } catch {}
-    const scored: ScoredCandidate[] = results.map(r => {
-      const meta = parseReleaseName(r.title)
-      const base = scoreRelease(meta, conditions)
-      const fmt  = scoreWithProfile(r.title, profile.id)
-      const combined = base === null ? -1 : base + fmt.totalScore
-      return { result: r, score: combined, selected: false }
-    })
+    const scored: ScoredCandidate[] = results.map(r => ({
+      result: r,
+      score: autoPickScore(r, conditions, profile.id, language),
+      selected: false,
+    }))
 
-    // 5. Pick the best result according to the quality profile (language is a hard constraint).
-    //    Determine skip reason before calling findBestRelease so the reason is specific:
-    //    - language_mismatch: all scope-filtered results fail the language check
-    //    - quality_reject:    some pass language but none survive the quality conditions
-    let skipReason: SkipReason = 'quality_reject'
-    if (language !== 'any') {
-      const passesLang = results.some(r => parseLanguage(r.title) === language)
-      if (!passesLang) skipReason = 'language_mismatch'
-    }
-
+    // 5. Pick the best release for AUTO-grab. findBestRelease returns null only when every
+    //    scope-matched candidate is dead (0 seeds) — record that distinctly so the admin sees
+    //    "found releases but all dead" rather than a generic miss. (Quality/language are now
+    //    de-prioritizations, not hard rejects, so those skip reasons no longer apply here.)
     const result = findBestRelease(results, profile, language)
+    const skipReason: SkipReason | undefined = result ? undefined : 'no_seeders'
 
     // Mark the winning candidate and record all results before touching the download client
     if (result) {
@@ -388,7 +457,7 @@ export async function grabItem(
       if (idx >= 0) scored[idx].selected = true
     }
 
-    recordGrabResults(item.id, scored, result?.infoHash ?? null, result ? undefined : skipReason)
+    recordGrabResults(item.id, scored, result?.infoHash ?? null, skipReason)
 
     if (!result) { releaseClaim(); return 'not_found' }
 

@@ -49,9 +49,13 @@ interface RawTorrent {
 }
 
 interface RawServerState {
+  // qBittorrent uses the up_ prefix for upload (NOT ul_). Both spellings are declared optional and
+  // read with up_* preferred + ul_* fallback so a future/legacy variant can't zero out upload. (Bug 6)
   dl_info_speed?: number
+  up_info_speed?: number
   ul_info_speed?: number
   dl_info_data?: number
+  up_info_data?: number
   ul_info_data?: number
   free_space_on_disk?: number
   [key: string]: unknown
@@ -146,10 +150,12 @@ function normalisePartialTorrent(raw: RawTorrent): Partial<Torrent> {
 function normaliseServerState(raw: RawServerState | undefined): Partial<TransferInfo> {
   if (!raw) return {}
   const out: Partial<TransferInfo> = {}
+  const upSpeed = raw.up_info_speed ?? raw.ul_info_speed
+  const upTotal = raw.up_info_data ?? raw.ul_info_data
   if (raw.dl_info_speed !== undefined) out.dlSpeed = raw.dl_info_speed
-  if (raw.ul_info_speed !== undefined) out.upSpeed = raw.ul_info_speed
+  if (upSpeed !== undefined) out.upSpeed = upSpeed
   if (raw.dl_info_data !== undefined) out.dlTotal = raw.dl_info_data
-  if (raw.ul_info_data !== undefined) out.upTotal = raw.ul_info_data
+  if (upTotal !== undefined) out.upTotal = upTotal
   if (raw.free_space_on_disk !== undefined) out.freeSpace = raw.free_space_on_disk
   return out
 }
@@ -286,9 +292,9 @@ export class QBittorrentClient implements DownloadClient {
     const raw = await this.apiFetch<RawServerState>('/api/v2/transfer/info')
     return {
       dlSpeed: raw.dl_info_speed ?? 0,
-      upSpeed: raw.ul_info_speed ?? 0,
+      upSpeed: raw.up_info_speed ?? raw.ul_info_speed ?? 0,
       dlTotal: raw.dl_info_data ?? 0,
-      upTotal: raw.ul_info_data ?? 0,
+      upTotal: raw.up_info_data ?? raw.ul_info_data ?? 0,
       freeSpace: raw.free_space_on_disk ?? 0,
     }
   }

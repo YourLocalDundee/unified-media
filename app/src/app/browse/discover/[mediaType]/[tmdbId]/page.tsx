@@ -1,7 +1,7 @@
 import Image from 'next/image'
 import { notFound } from 'next/navigation'
 import { requireAuth } from '@/lib/dal'
-import { getMovieDetail, getTVDetail } from '@/lib/media-server/tmdb'
+import { getMovieDetail, getTVDetail, getArcs } from '@/lib/media-server/tmdb'
 import { getItemsByTmdbIds } from '@/lib/media-server/library'
 import { getRequestByTmdb } from '@/lib/requests/monitor'
 import RequestButton from './RequestButton'
@@ -68,11 +68,14 @@ export default async function DiscoverDetailPage({ params }: PageProps) {
   const tmdbId = parseInt(tmdbIdStr, 10)
   if (isNaN(tmdbId)) notFound()
 
-  const [detail, libraryMap] = await Promise.all([
+  const [detail, libraryMap, arcs] = await Promise.all([
     mediaType === 'movie'
       ? getMovieDetail(tmdbId).catch(() => null)
       : getTVDetail(tmdbId).catch(() => null),
     Promise.resolve(getItemsByTmdbIds([tmdbId])),
+    // Bug 7: TMDB story arcs (episode_groups). [] for movies and any series TMDB doesn't group
+    // into arcs (most non-anime) — in which case we fall back to plain season cards below.
+    mediaType === 'tv' ? getArcs(tmdbId).catch(() => []) : Promise.resolve([]),
   ])
 
   if (!detail) notFound()
@@ -228,8 +231,42 @@ export default async function DiscoverDetailPage({ params }: PageProps) {
           </section>
         )}
 
-        {/* TV Seasons */}
-        {tv?.seasons && tv.seasons.length > 0 && (
+        {/* TV Arcs (Bug 7) — when TMDB groups this series into story arcs, show those instead of
+            the merged "seasons" so each arc (e.g. Impel Down) is separately grabbable with its
+            own true episode range. */}
+        {arcs.length > 0 && (
+          <section className="pb-12">
+            <h2 className="mb-1 text-lg font-semibold">Arcs</h2>
+            <p className="mb-4 text-xs text-zinc-500">Story arcs from TMDB — each grabs only its own episode range.</p>
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
+              {arcs.map((a) => {
+                const nums = a.episodes.map((e) => e.e).filter((n) => n > 0).sort((x, y) => x - y)
+                const range = nums.length > 0 ? (nums[0] === nums[nums.length - 1] ? `Ep ${nums[0]}` : `Eps ${nums[0]}–${nums[nums.length - 1]}`) : null
+                return (
+                  <div key={a.id} className="flex flex-col justify-between overflow-hidden rounded-lg bg-zinc-900 p-3 ring-1 ring-white/5">
+                    <div>
+                      <p className="text-xs font-semibold text-white line-clamp-2">{a.name}</p>
+                      <p className="mt-0.5 text-[10px] text-zinc-400">{a.episodeCount} episodes{range ? ` · ${range}` : ''}</p>
+                    </div>
+                    {isAdmin && (
+                      <SeasonGrabControl
+                        tmdbId={tmdbId}
+                        title={title}
+                        year={year}
+                        seasonName={a.name}
+                        episodeCount={a.episodeCount}
+                        arc={{ name: a.name, episodes: a.episodes }}
+                      />
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          </section>
+        )}
+
+        {/* TV Seasons — shown only when the series has no TMDB arc grouping (fallback). */}
+        {arcs.length === 0 && tv?.seasons && tv.seasons.length > 0 && (
           <section className="pb-12">
             <h2 className="mb-4 text-lg font-semibold">Seasons</h2>
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">

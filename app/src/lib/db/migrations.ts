@@ -579,6 +579,11 @@ export function runMigrations(db: Database.Database): void {
     'ALTER TABLE media_requests ADD COLUMN scope_seasons TEXT',
     'ALTER TABLE media_requests ADD COLUMN scope_episodes TEXT',
     'ALTER TABLE media_requests ADD COLUMN monitor_future INTEGER DEFAULT 0',
+    // scope_label — human arc/saga name for a TMDB episode-group ("arc") grab, e.g. "Impel Down".
+    // NULL for plain season/full/movie scopes. Lets the Requests UI show the arc the user picked
+    // rather than the merged TMDB season that bundles multiple arcs (Bug 7). Stored on both tables.
+    'ALTER TABLE monitored_items ADD COLUMN scope_label TEXT',
+    'ALTER TABLE media_requests ADD COLUMN scope_label TEXT',
     // media_items — enrichment fields from TMDB
     'ALTER TABLE media_items ADD COLUMN episode_title TEXT',
     'ALTER TABLE media_items ADD COLUMN genres TEXT',

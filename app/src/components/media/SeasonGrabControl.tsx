@@ -1,12 +1,15 @@
 'use client'
 
 /**
- * SeasonGrabControl — admin-only "grab this season" control on a discover detail
- * season card (Part B). Opens a modal to pick language + quality profile, then:
- *   1. tries a season pack (POST /api/grab/season mode:auto)
- *   2. if no pack exists for that season+language, offers an episode-by-episode grab
- *      (mode:episodes) — one wanted item per episode, which the 15-min grab cron then
- *      finds until the season is complete.
+ * SeasonGrabControl — admin-only direct-grab control on a discover detail page. Grabs either a
+ * plain TV season OR a TMDB story arc (Bug 7), depending on which props are passed.
+ *
+ * Three actions in the modal:
+ *   1. "Grab pack"      — POST /api/grab/season mode:auto → one-shot season/arc pack search.
+ *   2. "Choose release" — admin interactive pick: searches /api/torrent-search (FULL candidate set,
+ *      zero hard rejects) and grabs the chosen release via the SAME enqueue path (override mode).
+ *   3. "Grab episode by episode" (fallback when no pack) — mode:episodes fans out one wanted item
+ *      per episode for the 5-min grab cron. These are SCHEDULED for search, not downloading yet.
  *
  * Rendered only when the viewer is an admin (the parent gates on session.role).
  */
@@ -16,14 +19,21 @@ import { Download, Loader2, X, Check } from 'lucide-react'
 import { ModalPortal } from '@/components/ui/ModalPortal'
 import { useFocusTrap } from '@/hooks/useFocusTrap'
 import { LANGUAGE_OPTIONS } from './RequestOptions'
+import { formatBytes } from '@/lib/utils'
+
+interface ArcScope {
+  name: string
+  episodes: { s: number; e: number }[]
+}
 
 interface Props {
   tmdbId: number
   title: string
   year: number | null
-  seasonNumber: number
-  seasonName: string
+  seasonNumber?: number          // plain-season grab
+  seasonName: string             // display label ("Season 13" or arc name)
   episodeCount: number | null
+  arc?: ArcScope                 // when set, this is an arc grab (overrides seasonNumber)
 }
 
 interface QualityProfile {
@@ -31,28 +41,33 @@ interface QualityProfile {
   name: string
 }
 
-type UIState = 'idle' | 'searching' | 'no_pack' | 'grabbed' | 'queuing' | 'queued' | 'error'
-
-interface AutoResult {
-  result: 'pack_grabbed' | 'no_pack'
-  episodeCount?: number
-  release?: { title: string; indexer: string }
-  error?: string
+interface Candidate {
+  title: string
+  infoHash: string
+  magnetUrl: string
+  downloadUrl: string
+  size: number
+  seeders: number
+  indexerName: string
+  score: number
 }
 
-export function SeasonGrabControl({ tmdbId, title, year, seasonNumber, seasonName, episodeCount }: Props) {
+type UIState = 'idle' | 'searching' | 'no_pack' | 'grabbed' | 'queuing' | 'queued' | 'choosing' | 'error'
+
+export function SeasonGrabControl({ tmdbId, title, year, seasonNumber, seasonName, episodeCount, arc }: Props) {
   const [open, setOpen] = useState(false)
   const [language, setLanguage] = useState('en')
   const [profiles, setProfiles] = useState<QualityProfile[]>([])
   const [profileId, setProfileId] = useState<number>(1)
   const [ui, setUi] = useState<UIState>('idle')
   const [msg, setMsg] = useState('')
-  const [foundEpisodeCount, setFoundEpisodeCount] = useState<number>(episodeCount ?? 0)
+  const [foundEpisodeCount, setFoundEpisodeCount] = useState<number>(episodeCount ?? arc?.episodes.length ?? 0)
+  const [candidates, setCandidates] = useState<Candidate[]>([])
+  const [grabbingKey, setGrabbingKey] = useState<string | null>(null)
 
   const dialogRef = useRef<HTMLDivElement>(null)
   useFocusTrap(dialogRef, open, () => setOpen(false))
 
-  // Load quality profiles when the modal opens.
   useEffect(() => {
     if (!open || profiles.length > 0) return
     fetch('/api/quality-profiles')
@@ -68,50 +83,108 @@ export function SeasonGrabControl({ tmdbId, title, year, seasonNumber, seasonNam
   function reset() {
     setUi('idle')
     setMsg('')
+    setCandidates([])
   }
 
-  async function post(mode: 'auto' | 'episodes') {
+  // Scope payload shared by every grab call: arc takes precedence over seasonNumber.
+  function scopeBody(): Record<string, unknown> {
+    return arc ? { arc } : { seasonNumber }
+  }
+
+  // Interactive search query: arc → absolute range "Title 422-456"; season → "Title S13".
+  function searchQuery(): string {
+    if (arc) {
+      const nums = arc.episodes.map((e) => e.e).filter((n) => n > 0).sort((a, b) => a - b)
+      if (nums.length === 0) return title
+      const start = nums[0], end = nums[nums.length - 1]
+      return start === end ? `${title} ${start}` : `${title} ${start}-${end}`
+    }
+    return `${title} S${String(seasonNumber ?? 1).padStart(2, '0')}`
+  }
+
+  async function postGrab(extra: Record<string, unknown>) {
     const res = await fetch('/api/grab/season', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ tmdbId, title, year, seasonNumber, language, qualityProfileId: profileId, mode }),
+      body: JSON.stringify({ tmdbId, title, year, language, qualityProfileId: profileId, ...scopeBody(), ...extra }),
     })
-    const data = await res.json().catch(() => ({})) as AutoResult & { result?: string; count?: number }
+    const data = await res.json().catch(() => ({})) as {
+      result?: string; error?: string; episodeCount?: number
+      queued?: number; failed?: number; total?: number
+      release?: { title: string; indexer: string }
+    }
     if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`)
     return data
   }
 
   async function grabAuto() {
-    setUi('searching')
-    setMsg('')
+    setUi('searching'); setMsg('')
     try {
-      const data = await post('auto')
+      const data = await postGrab({ mode: 'auto' })
       if (data.result === 'pack_grabbed') {
         setUi('grabbed')
-        setMsg(data.release ? `${data.release.title} · ${data.release.indexer}` : 'Season pack sent to downloads.')
+        setMsg(data.release ? `${data.release.title} · ${data.release.indexer}` : 'Pack sent to your download client.')
       } else {
-        setFoundEpisodeCount(data.episodeCount ?? episodeCount ?? 0)
+        setFoundEpisodeCount(data.episodeCount ?? foundEpisodeCount)
         setUi('no_pack')
       }
     } catch (err) {
-      setUi('error')
-      setMsg(err instanceof Error ? err.message : String(err))
+      setUi('error'); setMsg(err instanceof Error ? err.message : String(err))
     }
   }
 
   async function grabEpisodes() {
     setUi('queuing')
     try {
-      const data = await post('episodes')
+      const data = await postGrab({ mode: 'episodes' })
+      const queued = data.queued ?? data.total ?? foundEpisodeCount
+      const failed = data.failed ?? 0
       setUi('queued')
-      setMsg(`${data.count ?? foundEpisodeCount} episodes queued — the grab cron searches every 15 min. Check Admin → Automation to track progress and see why any episode isn't finding results.`)
+      setMsg(
+        `Scheduled ${queued} episode search${queued === 1 ? '' : 'es'}` +
+        (failed > 0 ? ` (${failed} could not be queued)` : '') +
+        ` — these are queued for the grab cron (runs every 5 min) and are NOT downloading yet. ` +
+        `Track progress in Admin → Automation.`,
+      )
     } catch (err) {
-      setUi('error')
-      setMsg(err instanceof Error ? err.message : String(err))
+      setUi('error'); setMsg(err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  // Interactive: pull the full candidate set (no hard rejects) for the admin to choose from.
+  async function openChooser() {
+    setUi('choosing'); setMsg(''); setCandidates([])
+    try {
+      const res = await fetch(`/api/torrent-search?q=${encodeURIComponent(searchQuery())}&type=tv`)
+      const data = await res.json().catch(() => ({})) as { results?: Candidate[]; error?: string }
+      if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`)
+      // Live releases first, then by score — but show everything (dead included), all grab-able.
+      const sorted = [...(data.results ?? [])].sort(
+        (a, b) => (b.seeders > 0 ? 1 : 0) - (a.seeders > 0 ? 1 : 0) || b.score - a.score,
+      )
+      setCandidates(sorted)
+    } catch (err) {
+      setUi('error'); setMsg(err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  async function grabChosen(c: Candidate) {
+    setGrabbingKey(c.infoHash || c.title)
+    try {
+      const data = await postGrab({
+        override: { magnetUrl: c.magnetUrl, downloadUrl: c.downloadUrl, title: c.title, indexerName: c.indexerName, infoHash: c.infoHash },
+      })
+      setUi('grabbed')
+      setMsg(data.release ? `${data.release.title} · ${data.release.indexer}` : 'Sent to your download client.')
+    } catch (err) {
+      setUi('error'); setMsg(err instanceof Error ? err.message : String(err))
+    } finally {
+      setGrabbingKey(null)
     }
   }
 
   const busy = ui === 'searching' || ui === 'queuing'
+  const kind = arc ? 'arc' : 'season'
 
   return (
     <>
@@ -134,11 +207,11 @@ export function SeasonGrabControl({ tmdbId, title, year, seasonNumber, seasonNam
               role="dialog"
               aria-modal="true"
               aria-labelledby="season-grab-title"
-              className="w-full max-w-sm rounded-xl border border-zinc-700 bg-zinc-900 p-5 shadow-2xl"
+              className={`w-full ${ui === 'choosing' ? 'max-w-2xl' : 'max-w-sm'} rounded-xl border border-zinc-700 bg-zinc-900 p-5 shadow-2xl`}
             >
               <div className="mb-4 flex items-start justify-between">
                 <div>
-                  <h2 id="season-grab-title" className="text-base font-semibold text-zinc-100">Grab season</h2>
+                  <h2 id="season-grab-title" className="text-base font-semibold text-zinc-100">Grab {kind}</h2>
                   <p className="mt-0.5 text-xs text-zinc-400 line-clamp-1">{title} — {seasonName}</p>
                 </div>
                 <button onClick={() => setOpen(false)} className="text-zinc-500 hover:text-zinc-300" aria-label="Close">
@@ -178,7 +251,7 @@ export function SeasonGrabControl({ tmdbId, title, year, seasonNumber, seasonNam
               <div className="mt-4">
                 {ui === 'grabbed' && (
                   <p className="flex items-start gap-1.5 rounded-md bg-green-900/40 px-3 py-2 text-xs text-green-300">
-                    <Check className="mt-0.5 h-3.5 w-3.5 shrink-0" /> Season pack grabbed. {msg}
+                    <Check className="mt-0.5 h-3.5 w-3.5 shrink-0" /> Sent to your download client — downloading now. {msg}
                   </p>
                 )}
                 {ui === 'queued' && (
@@ -187,31 +260,91 @@ export function SeasonGrabControl({ tmdbId, title, year, seasonNumber, seasonNam
                 {ui === 'error' && (
                   <p className="rounded-md bg-red-900/40 px-3 py-2 text-xs text-red-300">{msg || 'Something went wrong.'}</p>
                 )}
+
                 {ui === 'no_pack' && (
                   <div className="flex flex-col gap-2">
                     <p className="rounded-md bg-amber-900/30 px-3 py-2 text-xs text-amber-200">
-                      No season pack found in {LANGUAGE_OPTIONS.find((l) => l.value === language)?.label ?? language}.
-                      {foundEpisodeCount > 0 && ` Grab the ${foundEpisodeCount} episodes individually?`} They'll keep
-                      searching until the season is complete.
+                      No {kind} pack found in {LANGUAGE_OPTIONS.find((l) => l.value === language)?.label ?? language}.
+                      {foundEpisodeCount > 0 && ` Grab the ${foundEpisodeCount} episodes individually`} (they’ll keep
+                      searching), or choose a release manually.
                     </p>
-                    <button
-                      onClick={grabEpisodes}
-                      className="rounded-md bg-amber-700 px-3 py-2 text-sm font-medium text-white hover:bg-amber-600"
-                    >
-                      Grab episode by episode
-                    </button>
+                    <div className="flex gap-2">
+                      <button onClick={grabEpisodes} className="flex-1 rounded-md bg-amber-700 px-3 py-2 text-sm font-medium text-white hover:bg-amber-600">
+                        Grab episode by episode
+                      </button>
+                      <button onClick={openChooser} className="flex-1 rounded-md bg-zinc-700 px-3 py-2 text-sm font-medium text-white hover:bg-zinc-600">
+                        Choose release
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Interactive candidate list — full set, zero hard rejects, every row grab-able. */}
+                {ui === 'choosing' && (
+                  <div className="flex flex-col gap-2">
+                    {candidates.length === 0 ? (
+                      <p className="rounded-md bg-zinc-800 px-3 py-2 text-xs text-zinc-400">Searching indexers…</p>
+                    ) : (
+                      <div className="max-h-72 overflow-y-auto rounded border border-zinc-800">
+                        <table className="w-full text-left text-xs">
+                          <thead className="sticky top-0 bg-zinc-900">
+                            <tr className="border-b border-zinc-800 text-zinc-500">
+                              <th className="py-1.5 px-2 font-medium">Release</th>
+                              <th className="py-1.5 px-2 font-medium text-right">Seeds</th>
+                              <th className="py-1.5 px-2 font-medium text-right">Size</th>
+                              <th className="py-1.5 px-2 font-medium text-right">Score</th>
+                              <th className="py-1.5 px-2 font-medium text-right"></th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {candidates.map((c, i) => {
+                              const key = c.infoHash || c.title + i
+                              const grabbing = grabbingKey === (c.infoHash || c.title)
+                              return (
+                                <tr key={key} className="border-b border-zinc-800/60 hover:bg-zinc-800/40">
+                                  <td className="py-1.5 px-2 text-zinc-300 max-w-sm"><span className="line-clamp-2">{c.title}</span></td>
+                                  <td className="py-1.5 px-2 text-right">
+                                    {c.seeders > 0 ? <span className="text-zinc-400">{c.seeders}</span> : <span className="text-red-400" title="0 seeds — dead">0 ⚠</span>}
+                                  </td>
+                                  <td className="py-1.5 px-2 text-right text-zinc-500">{formatBytes(c.size)}</td>
+                                  <td className="py-1.5 px-2 text-right text-zinc-400">{Math.round(c.score)}</td>
+                                  <td className="py-1.5 px-2 text-right">
+                                    <button
+                                      onClick={() => grabChosen(c)}
+                                      disabled={grabbing}
+                                      className="rounded bg-sky-700 px-2 py-0.5 text-xs font-medium text-white hover:bg-sky-600 disabled:opacity-50"
+                                    >
+                                      {grabbing ? '…' : 'Grab'}
+                                    </button>
+                                  </td>
+                                </tr>
+                              )
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
                   </div>
                 )}
 
                 {(ui === 'idle' || ui === 'searching' || ui === 'queuing') && (
-                  <button
-                    onClick={grabAuto}
-                    disabled={busy}
-                    className="flex w-full items-center justify-center gap-2 rounded-md bg-sky-700 px-4 py-2 text-sm font-medium text-white hover:bg-sky-600 disabled:opacity-60"
-                  >
-                    {busy && <Loader2 className="h-4 w-4 animate-spin" />}
-                    {ui === 'searching' ? 'Searching for season pack…' : ui === 'queuing' ? 'Queuing episodes…' : 'Grab season pack'}
-                  </button>
+                  <div className="flex flex-col gap-2">
+                    <button
+                      onClick={grabAuto}
+                      disabled={busy}
+                      className="flex w-full items-center justify-center gap-2 rounded-md bg-sky-700 px-4 py-2 text-sm font-medium text-white hover:bg-sky-600 disabled:opacity-60"
+                    >
+                      {busy && <Loader2 className="h-4 w-4 animate-spin" />}
+                      {ui === 'searching' ? `Searching for ${kind} pack…` : ui === 'queuing' ? 'Queuing episodes…' : `Grab ${kind} pack`}
+                    </button>
+                    <button
+                      onClick={openChooser}
+                      disabled={busy}
+                      className="w-full rounded-md bg-zinc-700 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-600 disabled:opacity-60"
+                    >
+                      Choose release (interactive)
+                    </button>
+                  </div>
                 )}
               </div>
             </div>

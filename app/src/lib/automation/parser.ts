@@ -228,6 +228,8 @@ function conditionMatches(meta: ReleaseMeta, cond: QualityCondition): boolean {
 
 // Returns null on hard rejection (failed required condition); caller must treat null as "skip",
 // not as a low score — a null result must never win over a zero-scored result.
+// Kept for callers that still want strict pass/fail semantics; auto-pick now uses
+// scoreReleaseSoft (below), which de-prioritizes instead of removing.
 export function scoreRelease(
   meta: ReleaseMeta,
   conditions: QualityCondition[],
@@ -244,6 +246,35 @@ export function scoreRelease(
   score += meta.resolution ? (RESOLUTION_BONUS[meta.resolution] ?? 5) : 5
 
   // Source bonus: unknown source gets 0 (omitted from SOURCE_BONUS is intentional — CAM/TS etc.)
+  score += meta.source ? (SOURCE_BONUS[meta.source] ?? 0) : 0
+
+  return score
+}
+
+// Penalty (not removal) for a failed REQUIRED condition under the soft auto-pick model.
+// Large enough that a clean match (each matched required condition = +10, plus resolution/
+// source bonuses) reliably out-ranks a miss, but small relative to SEED_DEAD_PENALTY so a
+// healthy out-of-spec release still beats a dead in-spec one. See grabber.ts for the full
+// weight table and ordering proof.
+export const REQUIRED_MISS_PENALTY = -100
+
+// Soft variant of scoreRelease for auto-pick ranking: NEVER returns null. A failed required
+// condition applies REQUIRED_MISS_PENALTY (de-prioritize) instead of hard-rejecting, so the
+// release stays rankable and grab-able. Returns the QUALITY component only — the caller layers
+// on seed and language weighting (which aren't derivable from the parsed title meta alone).
+export function scoreReleaseSoft(
+  meta: ReleaseMeta,
+  conditions: QualityCondition[],
+): number {
+  let score = 0
+
+  for (const cond of conditions) {
+    const matched = conditionMatches(meta, cond)
+    if (matched) score += 10
+    else if (cond.required) score += REQUIRED_MISS_PENALTY
+  }
+
+  score += meta.resolution ? (RESOLUTION_BONUS[meta.resolution] ?? 5) : 5
   score += meta.source ? (SOURCE_BONUS[meta.source] ?? 0) : 0
 
   return score
