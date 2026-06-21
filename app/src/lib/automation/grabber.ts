@@ -94,24 +94,28 @@ export function filterByScope(
 ): TorznabResult[] | null {
   const scopeType = item.scope_type ?? (item.type === 'movie' ? 'movie' : 'full')
 
-  if (scopeType === 'full' || scopeType === 'movie') return results
+  // Title/year pin for ALL scopes: a release whose embedded 4-digit year contradicts the
+  // item's known year is a different production (e.g. the 2023 live-action One Piece vs the
+  // 1999 anime). Applied before every scope branch so full/seasons/episodes all exclude it.
+  // A 'full' or 'seasons' search is title-only, so without this guard the 2023 live-action
+  // releases sail straight through and tie on score with the real anime.
+  const itemYear = item.year ?? null
+  const yearRe = /\b(19|20)\d{2}\b/
+  const pool = itemYear
+    ? results.filter(r => {
+        const m = r.title.match(yearRe)
+        return !m || parseInt(m[0], 10) === itemYear
+      })
+    : results
+
+  if (scopeType === 'full' || scopeType === 'movie') return pool
 
   if (scopeType === 'episodes' && item.scope_episodes) {
     let eps: Array<{ s: number; e: number }> = []
     try { const p = JSON.parse(item.scope_episodes); if (Array.isArray(p)) eps = p } catch { return null }
     if (eps.length === 0) return null
 
-    // Year-mismatch guard: if the item has a known release year and a result's title
-    // contains a 4-digit year that differs, it's a different production (e.g. 2023 live-action
-    // One Piece vs the 1999 anime). Reject those before scope matching.
-    const itemYear = item.year ?? null
-    const yearRe = /\b(19|20)\d{2}\b/
-    const candidatesForScope = itemYear
-      ? results.filter(r => {
-          const m = r.title.match(yearRe)
-          return !m || parseInt(m[0], 10) === itemYear
-        })
-      : results
+    const candidatesForScope = pool
 
     // Build scope-match pattern. When ep.e > 99 the episode number is TMDB absolute
     // (e.g. S13E422 for One Piece), so releases use bare absolute numbering on Nyaa:
@@ -122,8 +126,11 @@ export function filterByScope(
       const e = String(ep.e).padStart(2, '0')
       const standard = `S${s}E${e}|${ep.s}x${String(ep.e).padStart(2, '0')}`
       if (ep.e > 99) {
-        // Bare absolute number: must be preceded and followed by non-digit chars
-        return `${standard}|(?<![0-9])${ep.e}(?![0-9])`
+        // Bare absolute number. Left: not preceded by a digit (so "1422" doesn't match 422,
+        // while "EP422"/"E422" still do — P/E aren't digits). Right: not followed by a digit OR
+        // a hex char, so a CRC32 tag like "[422CDD99]" on an unrelated episode doesn't false-match,
+        // while real formats ("422-456", "422 ", "(422)") still do.
+        return `${standard}|(?<![0-9])${ep.e}(?![0-9a-fA-F])`
       }
       return standard
     })
@@ -147,7 +154,7 @@ export function filterByScope(
     // Individual episode pattern — used to partition results into packs vs. episodes
     const episodeRe = /S\d{2}E\d{2}/i
 
-    const matching = results.filter(r => seasonRe.test(r.title))
+    const matching = pool.filter(r => seasonRe.test(r.title))
     if (matching.length === 0) return null
 
     // Prefer season packs (no S##E## pattern); fall back to individual episodes only if no packs found
@@ -155,7 +162,7 @@ export function filterByScope(
     return packs.length > 0 ? packs : matching
   }
 
-  return results
+  return pool
 }
 
 // ---------------------------------------------------------------------------

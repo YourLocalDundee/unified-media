@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireAdmin } from '@/lib/dal'
 import { verifyOrigin } from '@/lib/csrf'
 import { getRequestById } from '@/lib/requests/monitor'
-import { getAllItems, recordGrab, updateItem } from '@/lib/automation/monitor'
+import { recordGrab, updateItem } from '@/lib/automation/monitor'
+import { resolveMonitoredItemForRequest } from '@/lib/automation/grab-results'
 import { grabItem } from '@/lib/automation/grabber'
 import { getClient } from '@/lib/download-client/registry'
 
@@ -24,9 +25,12 @@ export async function POST(
     return NextResponse.json({ error: 'Request must be approved before searching' }, { status: 422 })
   }
 
-  const items = getAllItems()
-  const item = items.find(
-    i => i.tmdb_id === request.tmdb_id && i.type === (request.media_type === 'movie' ? 'movie' : 'tv')
+  // Resolve to the active, narrowly-scoped item (e.g. the arc's wanted episode), NOT the stale
+  // 'full' container — and resolve identically to the grab-results display route so a re-search
+  // hits the same item whose candidates the admin is looking at.
+  const item = resolveMonitoredItemForRequest(
+    request.tmdb_id,
+    request.media_type === 'movie' ? 'movie' : 'tv',
   )
   if (!item) return NextResponse.json({ error: 'No monitored item found for this request' }, { status: 404 })
 

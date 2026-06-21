@@ -1,5 +1,6 @@
 import { getDb } from '@/lib/db/index'
 import type { TorznabResult } from '@/lib/indexer/types'
+import type { MonitoredItem } from './types'
 
 // A candidate result with its computed quality score attached
 export interface ScoredCandidate {
@@ -60,18 +61,48 @@ export function getLatestGrabResults(monitoredItemId: number): GrabResultRow | u
   }
 }
 
-// Get the monitored_item_id for a request by joining through tmdb_id + type.
-// Returns null if no monitored_item exists for this request.
-// A6-10: ORDER BY id makes the pick deterministic. With the A6-02 unique index there is at most
-// one row per (tmdb_id, type, scope_key); multiple scopes can still exist for one tmdb_id (e.g. a
-// full-series item plus episode fan-out rows), so the oldest row (the one created when the request
-// was first made) is the stable choice rather than an arbitrary LIMIT 1.
+// Resolve the single most relevant monitored_item for a request.
+//
+// A TV request can fan out to many monitored_items: a leftover 'full'-scope series container
+// (often left 'imported' from an earlier full-series grab) PLUS one episode row per episode of
+// an arc grab. The old "ORDER BY id ASC LIMIT 1" returned the oldest row — almost always that
+// stale 'full' container, whose grab_results come from a title-only "One Piece" search with no
+// episode or year constraint (311 candidates, every score tied, the newest episode auto-picked).
+//
+// Rank instead by (status, scope) so an actively-wanted, narrowly-scoped row wins:
+//   status: wanted > grabbing > grabbed > imported > ignored
+//   scope:  episodes > seasons > full/movie
+// This makes the displayed candidates and the re-search target reflect what was actually
+// requested (e.g. the arc's episode 422), not a stale whole-series pool. Used by BOTH the
+// grab-results display route and the /grab re-search route so they never disagree.
+const STATUS_RANK: Record<string, number> = { wanted: 0, grabbing: 1, grabbed: 2, imported: 3, ignored: 4 }
+const SCOPE_RANK: Record<string, number> = { episodes: 0, seasons: 1, full: 2, movie: 2 }
+
+export function resolveMonitoredItemForRequest(
+  tmdbId: number,
+  mediaType: 'movie' | 'tv',
+): MonitoredItem | undefined {
+  const items = getDb().prepare(
+    `SELECT * FROM monitored_items WHERE tmdb_id = ? AND type = ?`
+  ).all(tmdbId, mediaType === 'tv' ? 'tv' : 'movie') as MonitoredItem[]
+  if (items.length === 0) return undefined
+
+  return [...items].sort((a, b) => {
+    const sa = STATUS_RANK[a.status] ?? 9
+    const sb = STATUS_RANK[b.status] ?? 9
+    if (sa !== sb) return sa - sb
+    const ca = SCOPE_RANK[a.scope_type ?? 'full'] ?? 9
+    const cb = SCOPE_RANK[b.scope_type ?? 'full'] ?? 9
+    if (ca !== cb) return ca - cb
+    return a.id - b.id // stable tie-break: oldest of the equally-ranked rows
+  })[0]
+}
+
+// Get the monitored_item_id for a request — thin wrapper over resolveMonitoredItemForRequest
+// so the grab-results display and the re-search route resolve to the same item.
 export function getMonitoredItemIdForRequest(
   tmdbId: number,
   mediaType: 'movie' | 'tv',
 ): number | null {
-  const row = getDb().prepare(
-    `SELECT id FROM monitored_items WHERE tmdb_id = ? AND type = ? ORDER BY id ASC LIMIT 1`
-  ).get(tmdbId, mediaType === 'tv' ? 'tv' : 'movie') as { id: number } | undefined
-  return row?.id ?? null
+  return resolveMonitoredItemForRequest(tmdbId, mediaType)?.id ?? null
 }
