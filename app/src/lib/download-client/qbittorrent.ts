@@ -329,7 +329,16 @@ export class QBittorrentClient implements DownloadClient {
       body.set('stopped', String(payload.paused))
       body.set('paused', String(payload.paused))
     }
-    await this.apiFetch<string>('/api/v2/torrents/add', { method: 'POST', body })
+    try {
+      await this.apiFetch<string>('/api/v2/torrents/add', { method: 'POST', body })
+    } catch (err) {
+      // 409 = the torrent is already in the client (a duplicate add). This happens when several
+      // per-episode 'wanted' items resolve to the same range pack: the first add succeeds, the
+      // rest 409. For our purposes that's success — the content is already downloading — so treat
+      // it as a no-op grab instead of erroring and retrying forever.
+      if (err instanceof Error && /:\s*409$/.test(err.message)) return
+      throw err
+    }
   }
 
   async deleteTorrents(hashes: string[], deleteFiles: boolean): Promise<void> {
