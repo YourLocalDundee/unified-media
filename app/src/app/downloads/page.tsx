@@ -947,10 +947,10 @@ export default function DownloadsPage() {
               {transferInfo && (
                 <>
                   <span className="text-blue-600 dark:text-blue-400">
-                    ↓ {formatSpeed(transferInfo.dl_info_speed)}
+                    ↓ {formatSpeed(transferInfo.dl_info_speed ?? 0)}
                   </span>
                   <span className="text-green-600 dark:text-green-400">
-                    ↑ {formatSpeed(transferInfo.ul_info_speed)}
+                    ↑ {formatSpeed(transferInfo.ul_info_speed ?? 0)}
                   </span>
                   <span className="text-gray-600 dark:text-gray-400">
                     {activeTorrentCount} active

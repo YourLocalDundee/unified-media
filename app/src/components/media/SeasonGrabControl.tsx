@@ -104,7 +104,7 @@ export function SeasonGrabControl({ tmdbId, title, year, seasonNumber, seasonNam
     try {
       const data = await post('episodes')
       setUi('queued')
-      setMsg(`Queued ${data.count ?? foundEpisodeCount} episodes — they'll grab in the background until the season is full.`)
+      setMsg(`${data.count ?? foundEpisodeCount} episodes queued — the grab cron searches every 15 min. Check Admin → Automation to track progress and see why any episode isn't finding results.`)
     } catch (err) {
       setUi('error')
       setMsg(err instanceof Error ? err.message : String(err))

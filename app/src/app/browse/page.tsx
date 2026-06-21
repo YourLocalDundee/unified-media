@@ -30,6 +30,7 @@ import type { RequestStatus, RequestType } from '@/lib/requests/types'
 import DiscoverResults from './DiscoverResults'
 import type { DiscoverItem } from './DiscoverResults'
 import RescanButton from './RescanButton'
+import SortDirButton from './SortDirButton'
 
 export const metadata: Metadata = {
   title: 'Browse — unified-frontend',
@@ -197,22 +198,7 @@ function FilterBar({ f }: { f: FilterState }) {
         </select>
         {/* Direction toggle — submits as a hidden field; clicking flips the value then submits */}
         <input type="hidden" name="dir" id="dir-input" defaultValue={f.sortDir} />
-        <button
-          type="button"
-          title={f.sortDir === 'desc' ? 'Descending — click for ascending' : 'Ascending — click for descending'}
-          className="flex items-center justify-center rounded-lg bg-zinc-800 px-2 py-2 text-white hover:bg-zinc-700 focus:outline-none focus:ring-2 focus:ring-white/20"
-          onClick={(e) => {
-            const form = (e.currentTarget as HTMLElement).closest('form') as HTMLFormElement
-            const input = form.querySelector('#dir-input') as HTMLInputElement
-            input.value = input.value === 'desc' ? 'asc' : 'desc'
-            form.requestSubmit()
-          }}
-        >
-          {f.sortDir === 'desc'
-            ? <svg className="h-4 w-4" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 12L3 6h10z"/></svg>
-            : <svg className="h-4 w-4" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 4l5 6H3z"/></svg>
-          }
-        </button>
+        <SortDirButton sortDir={f.sortDir} />
       </div>
 
       <select name="year" defaultValue={f.year?.toString() ?? ''} className={select} title="Year">

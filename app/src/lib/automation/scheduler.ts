@@ -19,6 +19,25 @@ import { getWantedItems } from './monitor'
 import { grabItem } from './grabber'
 import { checkAvailability } from './availability'
 import { runImportCheck } from './importer'
+import type { MonitoredItem } from './types'
+
+// Produce a short scope suffix like " S13E521" or " S02+03" for log lines so
+// 101 identical "One Piece: not_found" entries are distinguishable per episode.
+function fmtScope(item: MonitoredItem): string {
+  try {
+    if (item.scope_episodes) {
+      const eps = JSON.parse(item.scope_episodes) as Array<{ s: number; e: number }>
+      if (Array.isArray(eps) && eps.length > 0)
+        return ` S${String(eps[0].s).padStart(2, '0')}E${String(eps[0].e).padStart(2, '0')}`
+    }
+    if (item.scope_seasons) {
+      const ss = JSON.parse(item.scope_seasons) as number[]
+      if (Array.isArray(ss) && ss.length > 0)
+        return ` S${ss.map((n) => String(n).padStart(2, '0')).join('+')}`
+    }
+  } catch { /* malformed DB column — emit no suffix */ }
+  return ''
+}
 
 // Module-level flag prevents double-scheduling if initScheduler is called more than once
 let started = false
@@ -36,7 +55,7 @@ export function initScheduler(): void {
     for (const item of wanted) {
       // Honor the item's chosen language on background grabs (defaults to 'any').
       const result = await grabItem(item, { language: item.language })
-      console.log(`[automation] ${item.title}: ${result}`)
+      console.log(`[automation] ${item.title}${fmtScope(item)}: ${result}`)
     }
   })
 

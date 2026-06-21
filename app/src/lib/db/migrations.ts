@@ -738,4 +738,8 @@ export function runMigrations(db: Database.Database): void {
       )
     } catch { /* duplicates somehow remained — leave index absent rather than crash startup */ }
   }
+
+  // Additive: index on media_items(added_at) for ORDER BY added_at sort on /library.
+  // Not present in the original media_items block, so existing DBs need the explicit exec.
+  db.exec('CREATE INDEX IF NOT EXISTS idx_media_added_at ON media_items(added_at)')
 }
