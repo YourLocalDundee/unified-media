@@ -1,6 +1,6 @@
 # unified-frontend
 
-A single-pane-of-glass web app for the minime home server media stack (v0.9.10). Replaces the multi-tab workflow
+A single-pane-of-glass web app for the minime home server media stack (v0.9.11). Replaces the multi-tab workflow
 (Jellyfin + Seerr + qBittorrent) with one unified interface for browsing, requesting, watching, and
 monitoring downloads.
 
@@ -1150,6 +1150,49 @@ On switch, the player captures `video.currentTime` into `pendingSeekRef`, swaps 
 
 The user preference already existed (`/settings/playback` → `usePlaybackPrefs`, localStorage `unified-playback-prefs`): `audioLang` (default `'en'`), `subtitleLang` (default `''` = off). The player now reads it. `usePlaybackPrefs` exposes a `ready` flag so the one-time default applies on the *hydrated* value, not the pre-hydration default. `selectPreferredAudioRel` picks the matching audio track (else server default); `selectPreferredSubtitleIndex` picks the matching subtitle **preferring the full track over signs-and-songs / forced**, and returns -1 (off) when no subtitle language is set. ffprobe 3-letter codes are normalised to ISO 639-1 via `normalizeLang`/`languageMatches`.
 
+### On-demand subtitle search + live `<track>` injection (v0.9.11)
+
+The background subtitle system (Phase 4) writes `subtitle_wants` rows from a nightly library scan and a
+download pass; `getNativePlaybackData` reads `status='downloaded'` rows back into `downloadedSubtitles`, which
+the player renders as `<track>`s at page-load. v0.9.11 adds the **mid-playback** path so a viewer can fetch a
+subtitle that doesn't exist yet, without a reload.
+
+Player surface: `SubtitleSearchPanel` (`src/components/player/SubtitleSearchPanel.tsx`), opened from the
+subtitle menu's "Search online…" entry. The captions button now renders even when a title has **zero** tracks
+(gated on `subtitleApiBase`) so the search is reachable when there's nothing to toggle.
+
+Routes (all under the player's existing `subtitleApiBase` = `/api/media/subtitles`):
+
+| Route | Auth | Role |
+|---|---|---|
+| `GET …/search?mediaId=&language=&hi=` | `requireAuth` | Resolves the item's IMDB id **server-side** (never from the client), queries OpenSubtitles (title-query fallback when no IMDB id), returns trimmed candidates. Does **not** spend the daily download quota. |
+| `POST …/grab` | `requireAuth` + `verifyOrigin`, 10/hr/user | Downloads the picked file, `upsertSubtitleWant` (heals an existing `wanted`/`skipped`/`failed` row via the `(item,lang,forced,hi)` UNIQUE index), writes the `.srt` next to the media with language/HI/forced markers, sets `status='downloaded'`. Returns the stable `wantId` + remaining quota; OpenSubtitles 406 → "daily limit reached". |
+| `GET …/want/[wantId]` | `requireAuth` | Serves a downloaded sub by immutable `subtitle_wants.id` as WebVTT. |
+
+**Why a by-id serving route.** The pre-existing `…/{id}/{index}` route keys by *positional* index into the
+ordered downloaded query. Adding a sub can reorder that query, shifting the URL of an already-rendered track —
+fine at page-load (the list is rebuilt) but wrong for a track injected live. So session grabs are served by
+the immutable row id instead. In `VideoPlayer`, session grabs live in `extraTracks` state, appended **after**
+the server-provided embedded + downloaded tracks (`subtitleTracks = [...embedded, ...downloaded, ...extra]`),
+so existing track indices and `activeSubIndex` never shift; `handleSubtitleAdded` selects the new track by its
+appended index. `srtToVtt` is shared from `src/lib/subtitle/vtt.ts`. Requires `OPENSUBTITLES_API_KEY` +
+`SUBTITLE_MEDIA_ROOT` (the grab returns a clear 503 if either is unset). Any authenticated viewer can search
+and grab; the OpenSubtitles daily download quota is shared (plan-dependent: 5/day free, 1000/day VIP), so the
+grab route is rate-limited per user (20/hr) and the panel surfaces the remaining count after each grab.
+
+**OpenSubtitles auth model (two quota buckets — important).** The static `Api-Key` alone draws on a low
+**anonymous ~100/day** bucket. The **VIP 1000/day** quota is only reached by logging in: the client
+(`opensubtitles.ts`) does `POST /login` with `OPENSUBTITLES_USERNAME` + `OPENSUBTITLES_PASSWORD`, caches the
+returned JWT (~24h, refreshed on expiry / 401) and its `base_url`, and sends it as `Authorization: Bearer` on
+`/download` and `/infos/user`. Without the credentials the feature still works but is capped at ~100/day (a
+warning is logged). `GET /api/subtitle/account` (admin) returns the live `/infos/user` quota so a login/auth
+failure can be told apart from a subscription problem — if it shows `allowed_downloads: 1000, vip: true`, auth
+is fine. `VIP_DAILY_DOWNLOAD_CEILING = 1000` documents the plan ceiling (the live value comes from
+`/infos/user`). **Bug fixed in passing:** `searchSubtitles` used to filter on `attributes.format`, which the
+v3 search response leaves `undefined` for every result — so it silently returned **zero** candidates and made
+the whole subtitle feature appear dead. The filter is removed; format is normalised at download time via
+`sub_format: 'srt'`, and the written file is content-validated.
+
 ---
 
 ## 11. Profile and Account Settings (v0.5.2+)
@@ -1319,7 +1362,11 @@ Eight tabs — first 7 read/write from qBittorrent via `/app/preferences` → `/
 
 **Mobile PWA** — `manifest.json` and a service worker enabling home screen install on iOS and Android. Offline metadata browsing via cache-first strategy for library data. Already has a standalone-capable layout.
 
-**Subtitle search** — OpenSubtitles API queried by IMDB ID. SRT or VTT loaded directly into the player as an additional `<track>` element. The IMDB ID is available from Jellyfin's `ProviderIds.Imdb` field on item detail.
+**Subtitle search** — DONE (v0.9.11). Background auto-download (Phase 4) plus **on-demand search from the
+player**: the subtitle menu's "Search online…" entry hits `GET /api/media/subtitles/search` (IMDB id resolved
+server-side from the media id), the viewer picks a result, `POST /api/media/subtitles/grab` downloads + persists
+it, and the player injects a live `<track>` served by stable `subtitle_wants.id` at
+`GET /api/media/subtitles/want/[wantId]` — no reload. See section 10b.
 
 **Admin tools** — per-user watch history, sessions, audit log, and login history are now implemented at `/admin/users/[id]` (v0.5.3). Remaining backlog: bulk session revoke across all users and audit log CSV export.
 
@@ -1367,7 +1414,9 @@ Overview → User Monitoring → User Management → Invites → Requests → Wa
 |---|---|---|---|
 | `JELLYFIN_USER_ID` | 3 | Yes | Admin user UUID — `GET /Users/Me` → `Id` field |
 | `SEERR_WEBHOOK_SECRET` | 3 | Optional | Verifies `X-Webhook-Signature` on webhook POSTs |
-| `OPENSUBTITLES_API_KEY` | 4 | Yes | OpenSubtitles v3 key (free: 5/day) |
+| `OPENSUBTITLES_API_KEY` | 4 | Yes | OpenSubtitles v3 **static API key** from the Consumers page (not the JWT) |
+| `OPENSUBTITLES_USERNAME` | 4 | For VIP | Account username — required to reach the VIP 1000/day quota (see below) |
+| `OPENSUBTITLES_PASSWORD` | 4 | For VIP | Account password — the client mints its own JWT via `POST /login` |
 | `SUBTITLE_LANGUAGES` | 4 | Optional | Comma-separated codes, default `en` |
 | `SUBTITLE_MEDIA_ROOT` | 4 | Optional | Container path to media; required for .srt disk writes |
 | `TMDB_ACCESS_TOKEN` | 5 | Yes | TMDB API v3 Bearer token |

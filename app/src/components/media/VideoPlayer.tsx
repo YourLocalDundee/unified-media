@@ -16,11 +16,13 @@ import {
   Captions,
   Languages,
   Check,
+  Search,
 } from 'lucide-react'
 import type { PlaybackData } from '@/lib/media-server/types'
 import { useAudioChain } from '@/components/player/useAudioChain'
 import { MediaToolsPanel } from '@/components/player/MediaToolsPanel'
 import { MediaQualitySelector } from '@/components/player/MediaQualitySelector'
+import SubtitleSearchPanel from '@/components/player/SubtitleSearchPanel'
 import type { AspectRatioMode, QualityOption } from '@/components/player/types'
 import { usePlaybackPrefs } from '@/hooks/useSettings'
 import { selectPreferredAudioRel, selectPreferredSubtitleIndex } from '@/lib/media-server/codecs'
@@ -162,6 +164,11 @@ export default function VideoPlayer(props: PlaybackData) {
   // Subtitle track state (-1 = Off)
   const [activeSubIndex, setActiveSubIndex] = useState<number>(-1)
   const [showSubMenu, setShowSubMenu] = useState(false)
+  // On-demand subtitle search overlay + tracks grabbed during this session. Session
+  // tracks are appended after the server-provided embedded/downloaded tracks and are
+  // served by stable subtitle_wants id, so a live grab injects a <track> with no reload.
+  const [showSubSearch, setShowSubSearch] = useState(false)
+  const [extraTracks, setExtraTracks] = useState<Array<{ wantId: number; label: string; srcLang: string }>>([])
 
   // Audio track state. The active audio-relative index; the server default is whichever
   // audio stream matches defaultAudioIndex (an absolute ffprobe index).
@@ -708,7 +715,7 @@ export default function VideoPlayer(props: PlaybackData) {
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       const tag = (e.target as HTMLElement)?.tagName
-      if (tag === 'INPUT' || tag === 'TEXTAREA') return
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
 
       const video = videoRef.current
       // Party-aware helpers. In party mode play/pause/seek become intents and the
@@ -1163,9 +1170,42 @@ export default function VideoPlayer(props: PlaybackData) {
         isDownloaded: true,
       }))
     : []
-  // Combined list — order must match the rendered <track> elements (embedded first, then downloaded).
-  const subtitleTracks = [...embeddedTracks, ...downloadedTracks]
+  // Tracks grabbed live this session (via SubtitleSearchPanel). Served by stable
+  // subtitle_wants id rather than positional index, so adding one never shifts the
+  // URL of another. Treated as downloaded tracks in the menu.
+  const extraTrackList = subtitleApiBase
+    ? extraTracks.map((t) => ({
+        src: `${subtitleApiBase}/want/${t.wantId}`,
+        label: t.label,
+        srcLang: t.srcLang,
+        extractable: true,
+        isDownloaded: true,
+      }))
+    : []
+  // Combined list — order must match the rendered <track> elements
+  // (embedded first, then downloaded, then session grabs).
+  const subtitleTracks = [...embeddedTracks, ...downloadedTracks, ...extraTrackList]
   const totalSubCount = subtitleTracks.length
+
+  // Append a freshly grabbed subtitle as a live <track> and select it. extraTracks is
+  // read from the current render closure (the handler is recreated each render), and
+  // de-dupes by wantId so re-adding the same pick just re-selects it.
+  const handleSubtitleAdded = (track: { wantId: number; label: string; language: string }) => {
+    const existingExtra = extraTracks.findIndex((t) => t.wantId === track.wantId)
+    if (existingExtra >= 0) {
+      setActiveSubIndex(embeddedTracks.length + downloadedTracks.length + existingExtra)
+    } else {
+      const newIndex = embeddedTracks.length + downloadedTracks.length + extraTracks.length
+      setExtraTracks((prev) =>
+        prev.some((t) => t.wantId === track.wantId)
+          ? prev
+          : [...prev, { wantId: track.wantId, label: track.label, srcLang: track.language }]
+      )
+      setActiveSubIndex(newIndex)
+    }
+    setShowSubSearch(false)
+    setShowSubMenu(false)
+  }
 
   // ---------------------------------------------------------------------------
   // Derived subtitle cue styles from user prefs
@@ -1422,8 +1462,9 @@ export default function VideoPlayer(props: PlaybackData) {
             </div>
           )}
 
-          {/* Subtitle track picker — visible when any embedded or downloaded tracks exist */}
-          {totalSubCount > 0 && (
+          {/* Subtitle track picker — also shown with zero tracks so the viewer can
+              search online for one (when the native subtitle proxy is available). */}
+          {(totalSubCount > 0 || subtitleApiBase) && (
             <div className="relative">
               <button
                 onClick={() => setShowSubMenu((v) => !v)}
@@ -1442,7 +1483,7 @@ export default function VideoPlayer(props: PlaybackData) {
                     <span className={`${activeSubIndex === -1 ? 'text-white font-medium' : 'text-zinc-300'} ${activeSubIndex !== -1 ? 'ml-5' : ''}`}>Off</span>
                   </button>
                   {/* Embedded tracks */}
-                  {embeddedTracks.length > 0 && downloadedTracks.length > 0 && (
+                  {embeddedTracks.length > 0 && (downloadedTracks.length + extraTrackList.length) > 0 && (
                     <p className="px-3 pt-2 pb-0.5 text-[10px] uppercase tracking-wider text-zinc-500">Embedded</p>
                   )}
                   {embeddedTracks.map((track, i) => (
@@ -1459,11 +1500,11 @@ export default function VideoPlayer(props: PlaybackData) {
                       </span>
                     </button>
                   ))}
-                  {/* Downloaded tracks (from subtitle_wants) */}
-                  {downloadedTracks.length > 0 && (
+                  {/* Downloaded tracks (subtitle_wants + session grabs) */}
+                  {(downloadedTracks.length + extraTrackList.length) > 0 && (
                     <p className="px-3 pt-2 pb-0.5 text-[10px] uppercase tracking-wider text-zinc-500">Downloaded</p>
                   )}
-                  {downloadedTracks.map((track, di) => {
+                  {[...downloadedTracks, ...extraTrackList].map((track, di) => {
                     const i = embeddedTracks.length + di
                     return (
                       <button
@@ -1478,6 +1519,19 @@ export default function VideoPlayer(props: PlaybackData) {
                       </button>
                     )
                   })}
+                  {/* Search online (OpenSubtitles) */}
+                  {subtitleApiBase && (
+                    <>
+                      <div className="my-1 border-t border-zinc-800" />
+                      <button
+                        onClick={() => { setShowSubSearch(true); setShowSubMenu(false) }}
+                        className="flex items-center gap-2 w-full px-3 py-1.5 text-sm text-left text-zinc-300 hover:bg-zinc-800 transition-colors"
+                      >
+                        <Search className="h-3.5 w-3.5 shrink-0" />
+                        Search online…
+                      </button>
+                    </>
+                  )}
                 </div>
               )}
             </div>
@@ -1592,6 +1646,17 @@ export default function VideoPlayer(props: PlaybackData) {
             error={party.lastError}
           />
         </div>
+      )}
+
+      {/* On-demand subtitle search */}
+      {showSubSearch && subtitleApiBase && (
+        <SubtitleSearchPanel
+          itemId={itemId}
+          subtitleApiBase={subtitleApiBase}
+          defaultLanguage={prefs.subtitleLang || 'en'}
+          onClose={() => setShowSubSearch(false)}
+          onAdded={handleSubtitleAdded}
+        />
       )}
 
       {/* Tools panel */}

@@ -1,8 +1,9 @@
 // Subtitle downloader for the native subtitle system (Independence Build Phase 4).
 // Processes all 'wanted' rows from the subtitle_wants table one at a time,
 // with a 1-second delay between downloads to respect OpenSubtitles rate limits.
-// The free tier allows only 5 downloads per day — skipping (no results found)
-// does not consume a quota slot, but a successful getDownloadLink call does.
+// The daily download quota is plan-dependent (5/day free, 1000/day VIP) — skipping
+// (no results found) does not consume a quota slot, but a successful getDownloadLink
+// call does.
 import fs from 'fs/promises'
 import path from 'path'
 import { getWantedSubtitles, updateSubtitleStatus } from './monitor'

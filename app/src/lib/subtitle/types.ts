@@ -95,6 +95,38 @@ export interface OSDownloadResponse {
   reset_time_utc: string
 }
 
+// Response from POST /login. The `token` is a JWT (valid ~24h) that must be sent as
+// `Authorization: Bearer <token>` on download/infos requests to draw on the logged-in
+// user's quota (VIP 1000/day) rather than the anonymous Api-Key bucket (100/day).
+// `base_url` is the host to direct subsequent authenticated requests at (VIP users may
+// be routed to a dedicated host).
+export interface OSLoginResponse {
+  user: {
+    allowed_downloads: number
+    allowed_translations: number
+    level: string
+    user_id: number
+    ext_installed: boolean
+    vip: boolean
+  }
+  token: string
+  status: number
+  base_url?: string
+}
+
+// Response from GET /infos/user (the authoritative, live quota for the logged-in user).
+export interface OSUserInfo {
+  allowed_downloads: number
+  allowed_translations: number
+  level: string
+  user_id: number
+  ext_installed: boolean
+  vip: boolean
+  downloads_count: number
+  remaining_downloads: number
+  username?: string
+}
+
 // imdb_id must be the numeric portion only — strip the "tt" prefix before passing.
 // The OpenSubtitles API rejects IDs with the prefix.
 export interface SubtitleSearchParams {

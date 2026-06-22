@@ -3,6 +3,7 @@ import { requireAuth } from '@/lib/dal'
 import { getItemById } from '@/lib/media-server/library'
 import { getDb } from '@/lib/db/index'
 import { readFile } from 'fs/promises'
+import { srtToVtt, isAlreadyVtt } from '@/lib/subtitle/vtt'
 
 export const dynamic = 'force-dynamic'
 
@@ -10,16 +11,6 @@ interface SubtitleWant {
   subtitle_path: string | null
   language: string
   status: string
-}
-
-// Convert SRT to WebVTT. The two formats differ in:
-//   1. VTT requires a "WEBVTT" header line
-//   2. VTT uses '.' as the millisecond separator; SRT uses ','
-// Simple SRT content (no SSA/ASS override tags) converts cleanly this way.
-function srtToVtt(srt: string): string {
-  const normalized = srt.trim().replace(/\r\n/g, '\n').replace(/\r/g, '\n')
-  const body = normalized.replace(/(\d{2}:\d{2}:\d{2}),(\d{3})/g, '$1.$2')
-  return `WEBVTT\n\n${body}\n`
 }
 
 export async function GET(
@@ -57,7 +48,7 @@ export async function GET(
     const raw = await readFile(subtitle.subtitle_path, 'utf-8')
     // Convert SRT to VTT if the file doesn't already have a WEBVTT header.
     // The downloader saves files as .srt; the <track> element requires WebVTT.
-    const content = raw.trimStart().startsWith('WEBVTT') ? raw : srtToVtt(raw)
+    const content = isAlreadyVtt(raw) ? raw : srtToVtt(raw)
     return new NextResponse(content, {
       headers: {
         'Content-Type': 'text/vtt; charset=utf-8',

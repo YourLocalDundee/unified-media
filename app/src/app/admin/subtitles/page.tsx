@@ -213,7 +213,7 @@ export default function AdminSubtitlesPage() {
           </div>
         ) : items.length === 0 ? (
           <div className="text-center p-12 text-muted-foreground text-sm">
-            No subtitle entries found. Run "Scan Library" to populate.
+            No subtitle entries found. Run &quot;Scan Library&quot; to populate.
           </div>
         ) : (
           <table className="w-full text-sm">

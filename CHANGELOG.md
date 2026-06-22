@@ -5,6 +5,53 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.9.11] — 2026-06-21
+
+### Added
+- **On-demand subtitle search in the player** — the subtitle menu gains a "Search online…" entry that
+  searches OpenSubtitles for the title currently open and injects the picked subtitle as a **live `<track>`**
+  with no page reload. This closes the loop on Phase 4: background auto-download already served subtitles to
+  the player at page-load; viewers can now also fetch one mid-playback when none exists yet.
+  - **`GET /api/media/subtitles/search?mediaId=&language=&hi=`** (`requireAuth`) — resolves the item's IMDB id
+    **server-side** from the media id (never trusts it from the browser) and queries OpenSubtitles; falls back
+    to a title query when the item has no IMDB id. Returns trimmed candidates (release, language, HI, trusted,
+    download count, uploader). Search does **not** spend the OpenSubtitles daily *download* quota.
+  - **`POST /api/media/subtitles/grab`** (`requireAuth` + `verifyOrigin`, rate-limited 10/hr/user) — downloads
+    the chosen file, persists it like an auto-download (`upsertSubtitleWant` → writes the `.srt` next to the
+    media file with language/HI/forced markers so variants don't clobber → `status='downloaded'`), and returns
+    the stable `subtitle_wants.id`. Surfaces remaining daily quota; maps OpenSubtitles 406 → a clear
+    "daily limit reached" message.
+  - **`GET /api/media/subtitles/want/[wantId]`** (`requireAuth`) — serves a downloaded subtitle by its
+    immutable `subtitle_wants.id` as WebVTT. The existing `/{id}/{index}` route keys by *positional* index,
+    which shifts when a sub is added — unsafe for a live-injected track — so live grabs use this stable URL.
+  - The captions button now shows even when a title has **zero** tracks (when the native subtitle proxy is
+    available) so a viewer can open the search. `srtToVtt` was extracted to `src/lib/subtitle/vtt.ts` and shared
+    by both serving routes. The keyboard-shortcut guard now also ignores `<select>` focus.
+
+### Fixed
+- **OpenSubtitles search returned zero results (feature was dead).** `searchSubtitles` filtered candidates on
+  `attributes.format`, which the v3 search API leaves `undefined` for every row — so it silently discarded all
+  matches. Confirmed against the live API (145 results → 0 kept). The filter is removed; format is normalised at
+  download time via `sub_format: 'srt'` and the written file is content-validated. This had masked the feature
+  entirely (auto-download included), hidden only by the never-configured API key.
+- **OpenSubtitles login for the VIP quota.** The client only sent the static `Api-Key`, which draws on a low
+  ~100/day anonymous bucket — never the VIP 1000/day. It now does `POST /login` with `OPENSUBTITLES_USERNAME` +
+  `OPENSUBTITLES_PASSWORD`, caches the JWT (~24h, refreshed on expiry/401) and `base_url`, and sends it as a
+  Bearer token on `/download` and `/infos/user`. New `GET /api/subtitle/account` (admin) surfaces the live
+  `/infos/user` quota (`allowed_downloads`, `remaining_downloads`, `vip`). New env: `OPENSUBTITLES_USERNAME`,
+  `OPENSUBTITLES_PASSWORD` (blank = run at ~100/day). `VIP_DAILY_DOWNLOAD_CEILING = 1000` documents the ceiling.
+
+### Tooling / Housekeeping
+- **`next lint` fixed for Next 16.** Next 16 removed the `next lint` command and there was no ESLint config in
+  the repo, so linting was completely broken. Added a flat `app/eslint.config.mjs` (spreads `eslint-config-next`),
+  switched the script to `eslint .`, fixed 2 pre-existing unescaped-entity errors, and set the new strict
+  `react-hooks` v6 rules (`set-state-in-effect`/`purity`/`immutability`/`refs`) to `warn` so the ~50 pre-existing
+  hits don't hard-fail the migration. `npm run lint` now exits 0.
+- **`app/package.json` version bumped 0.9.9 → 0.9.11** to match the CHANGELOG and CLAUDE header (it had lagged
+  two releases behind).
+
+---
+
 ## [0.9.10] — 2026-06-21
 
 ### Added
