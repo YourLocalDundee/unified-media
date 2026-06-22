@@ -198,10 +198,24 @@ export default function VideoPlayer(props: PlaybackData) {
   const [partyPanelOpen, setPartyPanelOpen] = useState(true)
   const partyJoinAttempted = useRef(false)
 
+  // Auto-advance navigation: when the server advances the shared queue, every client
+  // navigates to the next item (same party, re-joined via ?party=). router.push keeps the
+  // same document so playback autoplay stays permitted.
+  const handleQueueAdvance = useCallback(
+    (nextMediaId: string, joinCode: string) => {
+      if (!nextMediaId) return
+      const suffix = joinCode ? `?party=${joinCode}` : ''
+      router.push(`/play/${nextMediaId}${suffix}`)
+    },
+    [router],
+  )
+
   const party = usePartySync(partyId, {
     videoRef,
     selfUserId,
     enabled: !!partyId,
+    mediaId: itemId,
+    onQueueAdvance: handleQueueAdvance,
   })
 
   // Auto-join from a ?party={code} link on mount.
@@ -1638,6 +1652,10 @@ export default function VideoPlayer(props: PlaybackData) {
             connectionState={party.connectionState}
             onLeave={handlePartyLeave}
             onEnd={handlePartyEnd}
+            queue={party.queue}
+            onAddToQueue={party.addToQueue}
+            onRemoveFromQueue={party.removeFromQueue}
+            onPlayNext={party.playNext}
           />
           <ChatPanelMemo
             messages={party.chatMessages}

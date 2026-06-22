@@ -95,6 +95,11 @@ export const MAX_SOCKETS_PER_USER = 5
 export const MAX_MEMBERS_PER_PARTY = 50
 export const MAX_TOTAL_PARTIES = 200
 
+// --- shared queue (feature 3) ---
+// Upper bound on items queued per party, so a runaway "add whole series" can't grow unbounded
+// in memory / the broadcast payload. Generous enough for a full long-running season.
+export const MAX_QUEUE_LENGTH = 200
+
 // --- socket session liveness (audit H2) ---
 // Re-validate the unified-session on each live socket at least this often; close on failure.
 export const SESSION_RECHECK_INTERVAL_MS = 60_000

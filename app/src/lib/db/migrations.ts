@@ -214,6 +214,18 @@ export function runMigrations(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_grab_results_item ON grab_results(monitored_item_id, searched_at);
   `)
 
+  // Decision gate-chain (feature 1) — releases that must never be (auto-)grabbed again.
+  // Keyed by lowercased info_hash. Populated by the metadata reaper (dead stuck torrents)
+  // and by the admin "block release" action; the grabber gates every candidate against it.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS grab_blocklist (
+      info_hash  TEXT PRIMARY KEY,
+      title      TEXT,
+      reason     TEXT,
+      blocked_at INTEGER NOT NULL
+    );
+  `)
+
   // PIECE 1: new quality system tables
   db.exec(`
     CREATE TABLE IF NOT EXISTS quality_tiers (
@@ -540,6 +552,21 @@ export function runMigrations(db: Database.Database): void {
       FOREIGN KEY (user_id)  REFERENCES users(id)
     );
     CREATE INDEX IF NOT EXISTS idx_watch_party_members_party ON watch_party_members(party_id);
+
+    -- Party Play shared queue (feature 3). Durable mirror of the in-memory queue so a server
+    -- restart rehydrates "up next". Ordered by position (0-based, gap-free after each mutation).
+    CREATE TABLE IF NOT EXISTS watch_party_queue (
+      id           TEXT PRIMARY KEY,                  -- queue item id (uuid)
+      party_id     TEXT NOT NULL,
+      media_id     TEXT NOT NULL,
+      title        TEXT,
+      position     INTEGER NOT NULL,
+      added_by     TEXT NOT NULL,
+      added_by_name TEXT,
+      added_at     INTEGER NOT NULL,
+      FOREIGN KEY (party_id) REFERENCES watch_parties(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_watch_party_queue_party ON watch_party_queue(party_id, position);
   `)
 
   // --------------------------------------------------------------------------

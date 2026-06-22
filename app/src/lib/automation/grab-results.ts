@@ -1,12 +1,17 @@
 import { getDb } from '@/lib/db/index'
 import type { TorznabResult } from '@/lib/indexer/types'
 import type { MonitoredItem } from './types'
+import type { GateReason } from './gates'
 
 // A candidate result with its computed quality score attached
 export interface ScoredCandidate {
   result: TorznabResult
   score: number        // from scoreRelease(); 0 if 'Any' profile; null is converted to -1
   selected: boolean    // true only for the result that was sent to qBittorrent
+  // Hard-gate failures (feature 1). Empty/absent = passed all gates and is auto-grabbable.
+  // A non-empty list means auto-pick skipped it; the interactive picker still lists it with
+  // these reasons so the admin can see "why didn't this download" and override-grab anyway.
+  gates?: GateReason[]
 }
 
 export type SkipReason =
@@ -15,6 +20,7 @@ export type SkipReason =
   | 'language_mismatch' // (legacy) scope-matched hits exist, none passed the language constraint
   | 'quality_reject'    // (legacy) language passed, none survived the quality profile conditions
   | 'no_seeders'        // scope-matched hits exist but every one is dead (0 seeds) — auto won't grab
+  | 'gated'             // scope-matched hits exist but every one failed a hard gate (sample/oversize/blocklist/dead)
   | 'degenerate_scope'  // scope columns empty/malformed — bailed before querying indexers
 
 export interface GrabResultRow {

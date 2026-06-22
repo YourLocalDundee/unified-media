@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth } from '@/lib/dal'
 import { searchAllIndexers } from '@/lib/indexer/index'
 import { parseReleaseName, scoreRelease } from '@/lib/automation/parser'
+import { getGateConfig, evaluateGates, loadBlocklist, type GateReason } from '@/lib/automation/gates'
 import type { TorznabResult } from '@/lib/indexer/types'
 
 export const dynamic = 'force-dynamic'
@@ -19,13 +20,9 @@ export interface TorrentSearchResult {
   categories: string[]
   imdbId?: string
   score: number   // additive quality score (resolution + source bonuses); user picks manually so no hard rejects
-}
-
-function scoredResult(r: TorznabResult): TorrentSearchResult {
-  const meta = parseReleaseName(r.title)
-  // Empty conditions = no hard rejects; score reflects resolution/source bonuses only
-  const raw = scoreRelease(meta, [])
-  return { ...r, score: raw ?? 0 }
+  // Hard-gate failures (feature 1) — informational here. The interactive picker still lets the
+  // admin override-grab a gated release; this just shows WHY auto-pick would have skipped it.
+  gates: GateReason[]
 }
 
 export async function GET(req: NextRequest) {
@@ -39,8 +36,17 @@ export async function GET(req: NextRequest) {
   const cats = type === 'movie' ? '2000' : type === 'tv' ? '5000' : undefined
   const results = await searchAllIndexers({ q: q.trim(), ...(cats ? { cats } : {}) })
 
-  const scored = results
-    .map(scoredResult)
+  // Evaluate gates once per search (config + blocklist loaded a single time).
+  const gateConfig = getGateConfig(type === 'movie' ? 'movie' : 'tv')
+  const blocked = loadBlocklist()
+
+  const scored: TorrentSearchResult[] = results
+    .map((r): TorrentSearchResult => {
+      const meta = parseReleaseName(r.title)
+      // Empty conditions = no hard rejects; score reflects resolution/source bonuses only
+      const raw = scoreRelease(meta, [])
+      return { ...r, score: raw ?? 0, gates: evaluateGates(r, gateConfig, blocked) }
+    })
     .sort((a, b) => b.seeders - a.seeders)  // default: most seeded first
 
   return NextResponse.json({ results: scored })

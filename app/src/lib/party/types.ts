@@ -69,6 +69,16 @@ export interface ChatMessage {
   ts: number
 }
 
+/** One item in a party's shared "up next" queue (live in memory, mirrored to SQLite). */
+export interface QueueItem {
+  id: string
+  mediaId: string
+  title: string
+  addedByUserId: string
+  addedByDisplayName: string
+  addedAt: number
+}
+
 /** A connected (or briefly disconnected) party member, live in memory. */
 export interface PartyMemberLive {
   userId: string
@@ -98,6 +108,9 @@ export interface PartyLiveState {
   pendingPlay: PendingPlay | null
   lastActor: LastActor | null
   members: Map<string, PartyMemberLive>
+  /** Shared "up next" queue (feature 3). Any member may add/remove/reorder; auto-advance
+   *  on item end shifts the head. Mirrored to SQLite on every mutation for restart recovery. */
+  queue: QueueItem[]
   chatBacklog: ChatMessage[]
   /** Server wall clock when this party last had zero connected members (for empty-party idle end). null when occupied. */
   emptySince: number | null
@@ -121,6 +134,13 @@ export interface ChatMessageDTO {
   from: { userId: string; displayName: string }
   text: string
   ts: number
+}
+
+export interface QueueItemDTO {
+  id: string
+  mediaId: string
+  title: string
+  addedBy: { userId: string; displayName: string }
 }
 
 // ---------------------------------------------------------------------------
@@ -169,6 +189,32 @@ export interface LeaveMessage {
   type: 'leave'
   partyId: string
 }
+// --- shared queue (feature 3) ---
+export interface QueueAddMessage {
+  type: 'queue_add'
+  partyId: string
+  mediaId: string
+  title?: string
+}
+export interface QueueRemoveMessage {
+  type: 'queue_remove'
+  partyId: string
+  itemId: string
+}
+export interface QueueReorderMessage {
+  type: 'queue_reorder'
+  partyId: string
+  itemId: string
+  toIndex: number
+}
+/** Advance to the next queued item. fromMediaId is the item the sender believes is current —
+ *  the server honours the advance only if it still matches, so concurrent end/Next presses
+ *  advance exactly once. */
+export interface QueueAdvanceRequest {
+  type: 'queue_advance'
+  partyId: string
+  fromMediaId: string
+}
 
 export type ClientMessage =
   | JoinMessage
@@ -179,6 +225,10 @@ export type ClientMessage =
   | ChatSendMessage
   | ReactionSendMessage
   | LeaveMessage
+  | QueueAddMessage
+  | QueueRemoveMessage
+  | QueueReorderMessage
+  | QueueAdvanceRequest
 
 // ---------------------------------------------------------------------------
 // Server -> Client messages
@@ -237,6 +287,22 @@ export interface PartyEndedMessage {
   type: 'party_ended'
   partyId: string
 }
+// --- shared queue (feature 3) ---
+/** Full queue snapshot — sent on join and after every queue mutation. */
+export interface QueueBroadcastMessage {
+  type: 'queue'
+  partyId: string
+  items: QueueItemDTO[]
+}
+/** Auto-advance: every client navigates to mediaId (using joinCode to re-join the same party).
+ *  The remaining queue is included so the panel updates without waiting for the post-nav join. */
+export interface QueueAdvanceBroadcast {
+  type: 'queue_advance'
+  partyId: string
+  mediaId: string
+  joinCode: string
+  items: QueueItemDTO[]
+}
 export interface ErrorMessage {
   type: 'error'
   code: string
@@ -252,6 +318,8 @@ export type ServerMessage =
   | ReactionBroadcastMessage
   | PongMessage
   | PartyEndedMessage
+  | QueueBroadcastMessage
+  | QueueAdvanceBroadcast
   | ErrorMessage
 
 // ---------------------------------------------------------------------------

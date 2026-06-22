@@ -50,6 +50,18 @@ interface Candidate {
   seeders: number
   indexerName: string
   score: number
+  // Hard-gate failures from the search API (feature 1). Shown as badges; the row stays grab-able
+  // because this is the override surface.
+  gates?: string[]
+}
+
+// Client-side labels for gate reasons (mirrors GATE_REASON_LABELS in lib/automation/gates.ts;
+// that module is server-only, so the strings are duplicated here for the badge display).
+const GATE_LABELS: Record<string, string> = {
+  blocklisted: 'blocklisted',
+  dead: 'no seeders',
+  sample: 'sample',
+  oversize: 'oversize',
 }
 
 type UIState = 'idle' | 'searching' | 'no_pack' | 'grabbed' | 'queuing' | 'queued' | 'choosing' | 'error'
@@ -270,6 +282,15 @@ export function SeasonGrabControl({ tmdbId, title, year, seasonNumber, seasonNam
                         in Auto
                       </span>
                     )}
+                    {c.gates?.map((g) => (
+                      <span
+                        key={g}
+                        className="ml-1 align-middle rounded bg-amber-900/50 px-1 py-0.5 text-[10px] text-amber-300"
+                        title="Auto-pick would skip this release for this reason; you can still grab it manually."
+                      >
+                        {GATE_LABELS[g] ?? g}
+                      </span>
+                    ))}
                   </td>
                   <td className="py-1.5 px-2 text-right">
                     {c.seeders > 0 ? <span className="text-zinc-400">{c.seeders}</span> : <span className="text-red-400" title="0 seeds — dead">0 ⚠</span>}

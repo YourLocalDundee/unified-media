@@ -18,7 +18,8 @@ import { parseReleaseName, parseLanguage, scoreReleaseSoft } from './parser'
 import { scoreWithProfile } from './quality'
 import { getProfileById, recordGrab, updateItem } from './monitor'
 import { recordGrabResults, type ScoredCandidate, type SkipReason } from './grab-results'
-import type { MonitoredItem, QualityProfile, QualityCondition } from './types'
+import { partitionByGates, gateKey, loadBlocklist, getGateConfig, evaluateGates } from './gates'
+import type { MonitoredItem, QualityProfile, QualityCondition, MediaType } from './types'
 import type { TorznabResult } from '@/lib/indexer/types'
 import { getDb } from '@/lib/db/index'
 
@@ -214,7 +215,8 @@ export function autoPickScore(
 ): number {
   const meta = parseReleaseName(result.title)
   const quality = scoreReleaseSoft(meta, conditions)
-  const fmt = scoreWithProfile(result.title, profileId).totalScore
+  // Pass the release size so 'size' custom formats can match (other format types ignore it).
+  const fmt = scoreWithProfile(result.title, profileId, result.size).totalScore
   return quality + fmt + seedScore(result.seeders) + languagePenalty(result.title, language)
 }
 
@@ -231,14 +233,22 @@ export function findBestRelease(
   results: TorznabResult[],
   profile: QualityProfile,
   language = 'any',
+  // When provided, releases that fail a hard gate (blocklist/sample/oversize/dead) are excluded
+  // from the auto-pick. Callers that have already gate-filtered their pool can omit it.
+  gateOpts?: { type: MediaType; blocked?: Set<string> },
 ): TorznabResult | null {
   let conditions: QualityCondition[] = []
   try { const p = JSON.parse(profile.conditions); if (Array.isArray(p)) conditions = p } catch { conditions = [] }
+
+  const gateConfig = gateOpts ? getGateConfig(gateOpts.type) : null
+  const blocked = gateConfig ? gateOpts!.blocked ?? loadBlocklist() : null
 
   let bestResult: TorznabResult | null = null
   let bestScore = -Infinity
 
   for (const result of results) {
+    // Hard gates exclude a release from auto-pick entirely (it stays in the interactive list).
+    if (gateConfig && blocked && evaluateGates(result, gateConfig, blocked).length > 0) continue
     const s = autoPickScore(result, conditions, profile.id, language)
     if (s > bestScore) {
       bestScore = s
@@ -273,7 +283,7 @@ export async function findSeasonPack(
   const episodeRe = /S\d{2}E\d{2}/i
   const packs = raw.filter((r) => seasonRe.test(r.title) && !episodeRe.test(r.title))
   if (packs.length === 0) return null
-  return findBestRelease(packs, profile, language)
+  return findBestRelease(packs, profile, language, { type: 'tv' })
 }
 
 /**
@@ -320,7 +330,7 @@ export async function findArcPack(
   )
   const pool = packs.length > 0 ? packs : numbered
   if (pool.length === 0) return null
-  return findBestRelease(pool, profile, language)
+  return findBestRelease(pool, profile, language, { type: 'tv' })
 }
 
 // ---------------------------------------------------------------------------
@@ -401,7 +411,11 @@ export async function findCoveringPacks(
   let conditions: QualityCondition[] = []
   try { const p = JSON.parse(profile.conditions); if (Array.isArray(p)) conditions = p } catch {}
 
-  const candidates = raw.map((r) => ({
+  // Drop hard-gated releases (blocklist/sample/oversize/dead) before pack selection so a covering
+  // pack is never auto-grabbed if it's a sample, oversized, or a previously-failed (blocklisted) hash.
+  const { passing } = partitionByGates(raw, 'tv')
+
+  const candidates = passing.map((r) => ({
     title: r.title,
     seeders: r.seeders,
     score: autoPickScore(r, conditions, profile.id, language),
@@ -527,23 +541,37 @@ export async function grabItem(
     }
     const results = scopeFiltered
 
+    // 3c. Decision gate-chain (feature 1): split scope-matched results into those that PASS every
+    //     hard gate (blocklist/sample/oversize/dead) and those that fail. Only passing releases are
+    //     eligible for auto-pick; the gated ones are still recorded (with reasons) so the admin can
+    //     see "why didn't this download" in the interactive picker.
+    const blocked = loadBlocklist()
+    const { passing, gatesByKey } = partitionByGates(results, item.type, blocked)
+
     // 4. Score ALL (scope-filtered) results for UI display using the SAME soft auto-pick rank
-    //    the cron uses, so the displayed order matches the pick and nothing is shown as a hard
-    //    "Rejected" anymore — dead (0-seed) releases simply sink via SEED_DEAD_PENALTY.
+    //    the cron uses, so the displayed order matches the pick. Gated releases carry their reasons.
     let conditions: QualityCondition[] = []
     try { const p = JSON.parse(profile.conditions); if (Array.isArray(p)) conditions = p } catch {}
     const scored: ScoredCandidate[] = results.map(r => ({
       result: r,
       score: autoPickScore(r, conditions, profile.id, language),
       selected: false,
+      gates: gatesByKey.get(gateKey(r)) ?? [],
     }))
 
-    // 5. Pick the best release for AUTO-grab. findBestRelease returns null only when every
-    //    scope-matched candidate is dead (0 seeds) — record that distinctly so the admin sees
-    //    "found releases but all dead" rather than a generic miss. (Quality/language are now
-    //    de-prioritizations, not hard rejects, so those skip reasons no longer apply here.)
-    const result = findBestRelease(results, profile, language)
-    const skipReason: SkipReason | undefined = result ? undefined : 'no_seeders'
+    // 5. Pick the best release for AUTO-grab from the gate-passing pool only. result is null when
+    //    nothing survived the gates — distinguish "all dead" (every gate failure was a seed floor)
+    //    from "all gated" (sample/oversize/blocklist also involved) so the admin gets a clear reason.
+    const result = findBestRelease(passing, profile, language)
+    let skipReason: SkipReason | undefined
+    if (!result) {
+      if (passing.length === 0 && gatesByKey.size > 0) {
+        const allReasons = [...gatesByKey.values()].flat()
+        skipReason = allReasons.every(r => r === 'dead') ? 'no_seeders' : 'gated'
+      } else {
+        skipReason = 'no_seeders'
+      }
+    }
 
     // Mark the winning candidate and record all results before touching the download client
     if (result) {

@@ -118,7 +118,19 @@ function FormatScoreRow({
 
 // ── Add custom format modal ───────────────────────────────────────────────────
 
-const SPEC_TYPES: CustomFormatSpec['type'][] = ['title_regex', 'resolution', 'source', 'codec']
+const SPEC_TYPES: CustomFormatSpec['type'][] = ['title_regex', 'resolution', 'source', 'codec', 'language', 'release_group', 'size', 'flag']
+
+// Per-type hint shown in the value input so the admin knows the expected format.
+const SPEC_VALUE_HINT: Record<CustomFormatSpec['type'], string> = {
+  title_regex: 'regex pattern…',
+  resolution: '1080p, 2160p…',
+  source: 'web-dl, bluray…',
+  codec: 'x265, x264…',
+  language: 'ISO code: en, fr, ja…',
+  release_group: 'scene group, e.g. NTb',
+  size: 'GB range: 2-8, -25, 4-',
+  flag: 'proper, repack, hdr, dv, atmos…',
+}
 
 function AddFormatModal({
   onClose,
@@ -183,7 +195,7 @@ function AddFormatModal({
               <input
                 value={spec.value}
                 onChange={e => updateSpec(i, { value: e.target.value })}
-                placeholder={spec.type === 'title_regex' ? 'regex pattern…' : 'value…'}
+                placeholder={SPEC_VALUE_HINT[spec.type] ?? 'value…'}
                 className="flex-1 rounded bg-zinc-800 px-2 py-1.5 text-xs text-white outline-none"
               />
               <label className="flex items-center gap-1 text-xs text-zinc-400 whitespace-nowrap">

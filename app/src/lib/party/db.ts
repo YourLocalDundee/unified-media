@@ -6,7 +6,7 @@
  * position/heartbeat state lives in the in-memory PartyStateStore.
  */
 import { getDb } from '@/lib/db/index'
-import type { WatchPartyRow } from './types'
+import type { WatchPartyRow, QueueItem } from './types'
 
 // Friendly join code: 6 chars from the invite-code alphabet (uppercase + digits).
 const UPPER = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
@@ -164,6 +164,78 @@ export function checkpointParty(partyId: string, positionTicks: number, paused: 
       `UPDATE watch_parties SET last_position_ticks = ?, last_paused = ?, updated_at = ? WHERE id = ? AND status = 'active'`
     )
     .run(Math.round(positionTicks), paused ? 1 : 0, now, partyId)
+}
+
+// ---------------------------------------------------------------------------
+// Shared queue (feature 3)
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolve a playable media item (non-NULL file_path). Returns id + title, or null when the
+ * item doesn't exist or is a series container. Used to validate queue adds and party advance.
+ */
+export function getPlayableMedia(mediaId: string): { id: string; title: string } | null {
+  const row = getDb()
+    .prepare('SELECT id, title, file_path FROM media_items WHERE id = ?')
+    .get(mediaId) as { id: string; title: string | null; file_path: string | null } | undefined
+  if (!row || !row.file_path) return null
+  return { id: row.id, title: row.title ?? 'Untitled' }
+}
+
+/**
+ * Replace the durable queue for a party with the given ordered items (positions reassigned
+ * 0..n-1). Queue mutations are infrequent (add/remove/reorder/advance), so a delete+reinsert
+ * in one transaction is simplest and keeps positions gap-free.
+ */
+export function persistQueue(partyId: string, items: QueueItem[]): void {
+  const db = getDb()
+  const tx = db.transaction(() => {
+    db.prepare('DELETE FROM watch_party_queue WHERE party_id = ?').run(partyId)
+    const ins = db.prepare(
+      `INSERT INTO watch_party_queue (id, party_id, media_id, title, position, added_by, added_by_name, added_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    items.forEach((it, i) => {
+      ins.run(it.id, partyId, it.mediaId, it.title, i, it.addedByUserId, it.addedByDisplayName, it.addedAt)
+    })
+  })
+  tx()
+}
+
+/** Load a party's durable queue ordered by position, for startup rehydration. */
+export function loadQueue(partyId: string): QueueItem[] {
+  const rows = getDb()
+    .prepare(
+      `SELECT id, media_id, title, added_by, added_by_name, added_at
+       FROM watch_party_queue WHERE party_id = ? ORDER BY position ASC`,
+    )
+    .all(partyId) as {
+    id: string
+    media_id: string
+    title: string | null
+    added_by: string
+    added_by_name: string | null
+    added_at: number
+  }[]
+  return rows.map((r) => ({
+    id: r.id,
+    mediaId: r.media_id,
+    title: r.title ?? 'Untitled',
+    addedByUserId: r.added_by,
+    addedByDisplayName: r.added_by_name ?? 'Someone',
+    addedAt: r.added_at,
+  }))
+}
+
+/** Point a party at a new current media item and reset its checkpoint to the start (auto-advance). */
+export function setPartyMedia(partyId: string, mediaId: string): void {
+  const now = Date.now()
+  getDb()
+    .prepare(
+      `UPDATE watch_parties SET media_id = ?, last_position_ticks = 0, last_paused = 1, updated_at = ?
+       WHERE id = ? AND status = 'active'`,
+    )
+    .run(mediaId, now, partyId)
 }
 
 /** Active parties with their last checkpoint, for startup rehydration. */

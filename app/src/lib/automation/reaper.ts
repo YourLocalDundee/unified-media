@@ -15,6 +15,7 @@
  */
 
 import { getSetting } from '@/lib/settings'
+import { addToBlocklist } from './gates'
 
 const REAPER_SETTING_KEY = 'reaper_metadata_minutes'
 const DEFAULT_REAPER_MINUTES = 60
@@ -69,8 +70,11 @@ export async function reapStalledMetadata(): Promise<number> {
 
   for (const t of dead) {
     const ageMin = Math.round((Date.now() - t.added_on * 1000) / 60000)
+    // Blocklist the reaped hash so the grab cron never re-grabs this dead release next tick
+    // (its indexer-claimed seeders never materialised — gate-chain feature 1).
+    addToBlocklist(t.hash, t.name.replace(/[\r\n]/g, ' '), 'reaped: stalled metadata, 0 peers')
     process.stderr.write(
-      `[reaper] removed stalled-metadata torrent "${t.name.replace(/[\r\n]/g, ' ')}" (${t.hash}) — 0 peers, age ${ageMin}min\n`,
+      `[reaper] removed stalled-metadata torrent "${t.name.replace(/[\r\n]/g, ' ')}" (${t.hash}) — 0 peers, age ${ageMin}min; blocklisted\n`,
     )
   }
   return dead.length

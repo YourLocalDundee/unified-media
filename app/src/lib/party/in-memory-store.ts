@@ -48,6 +48,7 @@ export class InMemoryPartyStateStore implements PartyStateStore {
       pendingPlay: null,
       lastActor: null,
       members: new Map(),
+      queue: [],
       chatBacklog: [],
       emptySince: now,
       lastCheckpointAt: 0,

@@ -18,10 +18,50 @@ import type { ReleaseMeta } from './types'
 // ── types ─────────────────────────────────────────────────────────────────────
 
 export interface CustomFormatSpec {
-  type: 'title_regex' | 'resolution' | 'source' | 'codec'
+  // title_regex   — arbitrary regex against the raw release title
+  // resolution    — exact resolution match (e.g. '1080p')
+  // source        — substring of the parsed source (e.g. 'web-dl')
+  // codec         — exact codec match (e.g. 'x265')
+  // language      — ISO 639-1 code parsed from the title (e.g. 'fr')
+  // release_group — exact scene group match (e.g. 'NTb')
+  // size          — size range in GB: "min-max", "min-", or "-max" (e.g. "2-8", "-25")
+  // flag          — a named release flag (proper/repack/internal/hdr/dv/atmos/remux/…)
+  type: 'title_regex' | 'resolution' | 'source' | 'codec' | 'language' | 'release_group' | 'size' | 'flag'
   value: string
   required: boolean
   negate: boolean
+}
+
+// Named release flags → detection regex. The 'flag' spec value is one of these keys; an unknown
+// key falls back to a word-boundary match of the value itself so new tags still work.
+const FLAG_PATTERNS: Record<string, RegExp> = {
+  proper: /\bproper\b/i,
+  repack: /\brepack\b/i,
+  internal: /\binternal\b/i,
+  real: /\breal\b/i,
+  extended: /\bextended\b/i,
+  uncut: /\buncut\b/i,
+  remux: /\bremux\b/i,
+  hybrid: /\bhybrid\b/i,
+  hdr10plus: /\bhdr10\+|\bhdr10plus\b/i,
+  hdr: /\bhdr\b/i,
+  dv: /\b(?:dv|dovi|dolby[\s.]?vision)\b/i,
+  atmos: /\batmos\b/i,
+  imax: /\bimax\b/i,
+}
+
+// Known flag keys, exported so the admin UI can offer them as a dropdown.
+export const CUSTOM_FORMAT_FLAGS = Object.keys(FLAG_PATTERNS)
+
+// Match a size against a "min-max" GB range. Empty endpoints are open (min-only / max-only).
+function sizeMatches(value: string, sizeBytes: number | undefined): boolean {
+  if (!sizeBytes || sizeBytes <= 0) return false
+  const GB = 1024 ** 3
+  const m = value.trim().match(/^(\d*\.?\d*)\s*-\s*(\d*\.?\d*)$/)
+  if (!m) return false
+  const lo = m[1] ? parseFloat(m[1]) * GB : 0
+  const hi = m[2] ? parseFloat(m[2]) * GB : Infinity
+  return sizeBytes >= lo && sizeBytes <= hi
 }
 
 export interface QualityTier {
@@ -90,7 +130,12 @@ function resolveTier(meta: ReleaseMeta): { id: number; weight: number } | null {
 
 // ── custom format matching ─────────────────────────────────────────────────────
 
-function specMatches(spec: CustomFormatSpec, meta: ReleaseMeta, rawTitle: string): boolean {
+function specMatches(
+  spec: CustomFormatSpec,
+  meta: ReleaseMeta,
+  rawTitle: string,
+  sizeBytes?: number,
+): boolean {
   let matched: boolean
   switch (spec.type) {
     case 'title_regex': {
@@ -110,6 +155,25 @@ function specMatches(spec: CustomFormatSpec, meta: ReleaseMeta, rawTitle: string
     case 'codec':
       matched = (meta.codec ?? '').toLowerCase() === spec.value.toLowerCase()
       break
+    case 'language':
+      matched = (meta.language ?? '').toLowerCase() === spec.value.toLowerCase()
+      break
+    case 'release_group':
+      matched = (meta.group ?? '').toLowerCase() === spec.value.toLowerCase()
+      break
+    case 'size':
+      matched = sizeMatches(spec.value, sizeBytes)
+      break
+    case 'flag': {
+      const key = spec.value.toLowerCase()
+      const re = FLAG_PATTERNS[key]
+      try {
+        matched = re ? re.test(rawTitle) : new RegExp(`\\b${spec.value}\\b`, 'i').test(rawTitle)
+      } catch {
+        matched = false
+      }
+      break
+    }
     default:
       matched = false
   }
@@ -117,13 +181,24 @@ function specMatches(spec: CustomFormatSpec, meta: ReleaseMeta, rawTitle: string
 }
 
 // Returns true if all specs in the format match (AND logic, same as Sonarr)
-function formatMatches(specs: CustomFormatSpec[], meta: ReleaseMeta, rawTitle: string): boolean {
-  return specs.every(s => specMatches(s, meta, rawTitle))
+function formatMatches(
+  specs: CustomFormatSpec[],
+  meta: ReleaseMeta,
+  rawTitle: string,
+  sizeBytes?: number,
+): boolean {
+  return specs.every(s => specMatches(s, meta, rawTitle, sizeBytes))
 }
 
 // ── main scoring function ──────────────────────────────────────────────────────
 
-export function scoreWithProfile(releaseTitle: string, profileId: number): ScoreResult {
+// sizeBytes is optional — only 'size' custom-format specs use it; callers with the release size
+// (the grabber has it from the TorznabResult) should pass it so size formats can match.
+export function scoreWithProfile(
+  releaseTitle: string,
+  profileId: number,
+  sizeBytes?: number,
+): ScoreResult {
   const db = getDb()
   const meta = parseReleaseName(releaseTitle)
 
@@ -144,7 +219,7 @@ export function scoreWithProfile(releaseTitle: string, profileId: number): Score
   for (const row of formatRows) {
     let specs: CustomFormatSpec[] = []
     try { specs = JSON.parse(row.specs) as CustomFormatSpec[] } catch { continue }
-    if (formatMatches(specs, meta, releaseTitle)) {
+    if (formatMatches(specs, meta, releaseTitle, sizeBytes)) {
       totalScore += row.score
       matchedFormats.push({ name: row.name, score: row.score })
     }

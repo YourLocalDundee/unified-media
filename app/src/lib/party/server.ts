@@ -52,6 +52,7 @@ import {
   MAX_SOCKETS_PER_USER,
   MAX_MEMBERS_PER_PARTY,
   MAX_TOTAL_PARTIES,
+  MAX_QUEUE_LENGTH,
   SESSION_RECHECK_INTERVAL_MS,
   TICKS_PER_MS,
   allowedWsOrigins,
@@ -64,7 +65,17 @@ import {
 } from './position'
 import { getPartyStore } from './state-store'
 import { parseSessionCookie, lookupPartySession } from './session'
-import { isActiveMember, checkpointParty, endPartyRow, loadActiveParties } from './db'
+import {
+  isActiveMember,
+  checkpointParty,
+  endPartyRow,
+  loadActiveParties,
+  getPlayableMedia,
+  persistQueue,
+  loadQueue,
+  setPartyMedia,
+  getActivePartyById,
+} from './db'
 import { partyEvents } from './events'
 import type {
   ClientMessage,
@@ -77,6 +88,12 @@ import type {
   ControlMessage,
   MemberSummary,
   ChatMessage,
+  QueueItem,
+  QueueItemDTO,
+  QueueAddMessage,
+  QueueRemoveMessage,
+  QueueReorderMessage,
+  QueueAdvanceRequest,
 } from './types'
 
 const PERIODIC_TICK_MS = 2500
@@ -194,6 +211,22 @@ function sendToMember(rt: ServerRuntime, state: PartyLiveState, userId: string, 
   if (!member) return
   const entry = rt.sockets.get(member.socketId)
   if (entry) send(entry.ws, msg)
+}
+
+// --- shared queue (feature 3) ---
+
+function queueToDTO(queue: QueueItem[]): QueueItemDTO[] {
+  return queue.map((q) => ({
+    id: q.id,
+    mediaId: q.mediaId,
+    title: q.title,
+    addedBy: { userId: q.addedByUserId, displayName: q.addedByDisplayName },
+  }))
+}
+
+/** Broadcast the current queue to the whole party. */
+function broadcastQueue(rt: ServerRuntime, state: PartyLiveState): void {
+  broadcastToParty(rt, state.partyId, { type: 'queue', partyId: state.partyId, items: queueToDTO(state.queue) })
 }
 
 // ---------------------------------------------------------------------------
@@ -365,6 +398,112 @@ async function handleControl(rt: ServerRuntime, identity: PartySessionIdentity, 
       void checkpoint(partyId, true)
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// Shared queue (feature 3) — any member may add/remove/reorder/advance.
+// Each mutation runs through updateParty (atomic per-party), is persisted to
+// SQLite (queue ops are infrequent), then broadcast to the whole party.
+// ---------------------------------------------------------------------------
+
+async function handleQueueAdd(rt: ServerRuntime, identity: PartySessionIdentity, msg: QueueAddMessage): Promise<void> {
+  const store = getPartyStore()
+  // Validate the item is playable (non-NULL file_path) BEFORE touching state.
+  const media = getPlayableMedia(msg.mediaId)
+  if (!media) {
+    const s = await store.getParty(msg.partyId)
+    if (s) sendToMember(rt, s, identity.userId, { type: 'error', code: 'bad_media', message: 'Item is not playable' })
+    return
+  }
+  let added = false
+  const state = await store.updateParty(msg.partyId, (s) => {
+    if (s.queue.length >= MAX_QUEUE_LENGTH) return
+    s.queue.push({
+      id: randomUUID(),
+      mediaId: media.id,
+      title: (typeof msg.title === 'string' && msg.title.trim() ? msg.title.trim().slice(0, 300) : media.title),
+      addedByUserId: identity.userId,
+      addedByDisplayName: identity.displayName,
+      addedAt: Date.now(),
+    })
+    added = true
+  })
+  if (added) {
+    persistQueue(msg.partyId, state.queue)
+    broadcastQueue(rt, state)
+  } else {
+    sendToMember(rt, state, identity.userId, { type: 'error', code: 'queue_full', message: 'Queue is full' })
+  }
+}
+
+async function handleQueueRemove(rt: ServerRuntime, _identity: PartySessionIdentity, msg: QueueRemoveMessage): Promise<void> {
+  const store = getPartyStore()
+  let changed = false
+  const state = await store.updateParty(msg.partyId, (s) => {
+    const before = s.queue.length
+    s.queue = s.queue.filter((q) => q.id !== msg.itemId)
+    changed = s.queue.length !== before
+  })
+  if (changed) {
+    persistQueue(msg.partyId, state.queue)
+    broadcastQueue(rt, state)
+  }
+}
+
+async function handleQueueReorder(rt: ServerRuntime, _identity: PartySessionIdentity, msg: QueueReorderMessage): Promise<void> {
+  const store = getPartyStore()
+  let changed = false
+  const state = await store.updateParty(msg.partyId, (s) => {
+    const idx = s.queue.findIndex((q) => q.id === msg.itemId)
+    if (idx < 0) return
+    const [item] = s.queue.splice(idx, 1)
+    const to = Math.min(Math.max(0, msg.toIndex), s.queue.length)
+    s.queue.splice(to, 0, item)
+    changed = to !== idx
+  })
+  if (changed) {
+    persistQueue(msg.partyId, state.queue)
+    broadcastQueue(rt, state)
+  }
+}
+
+async function handleQueueAdvance(rt: ServerRuntime, _identity: PartySessionIdentity, msg: QueueAdvanceRequest): Promise<void> {
+  const store = getPartyStore()
+  let next: QueueItem | null = null
+  const state = await store.updateParty(msg.partyId, (s) => {
+    // Only advance if the sender's "current" still matches — concurrent end/Next presses
+    // reference the same fromMediaId, so the first wins and the rest become no-ops.
+    if (s.mediaId !== msg.fromMediaId) return
+    if (s.queue.length === 0) return
+    next = s.queue.shift()!
+    s.mediaId = next.mediaId
+    s.positionTicks = 0
+    // Start the new item playing (zero-click binge); the client readiness/auto-play path in
+    // applyState plays it once buffered. Browsers permit this because the document already
+    // had user interaction before the client-side navigation.
+    s.paused = false
+    s.playbackRate = 1
+    s.lastTickWallClock = Date.now()
+    s.pendingPlay = null
+    s.commandSeq += 1
+    s.lastActor = null
+    for (const m of s.members.values()) m.ready = false
+  })
+
+  const target = next as QueueItem | null
+  if (!target) return // stale/duplicate advance, or empty queue — ignore
+
+  setPartyMedia(msg.partyId, target.mediaId)
+  persistQueue(msg.partyId, state.queue)
+
+  const row = getActivePartyById(msg.partyId)
+  broadcastToParty(rt, msg.partyId, {
+    type: 'queue_advance',
+    partyId: msg.partyId,
+    mediaId: target.mediaId,
+    joinCode: row?.join_code ?? '',
+    items: queueToDTO(state.queue),
+  })
 }
 
 // ---------------------------------------------------------------------------
@@ -575,6 +714,66 @@ function validateMessage(entry: SocketEntry, msg: ClientMessage): boolean {
       return true
     }
 
+    case 'queue_add': {
+      const m = msg as { partyId?: unknown; mediaId?: unknown; title?: unknown }
+      if (typeof m.partyId !== 'string' || m.partyId.length === 0) {
+        sendError(entry.ws, 'bad_field', 'Invalid partyId')
+        return false
+      }
+      if (typeof m.mediaId !== 'string' || m.mediaId.length === 0 || m.mediaId.length > 128) {
+        sendError(entry.ws, 'bad_field', 'Invalid mediaId')
+        return false
+      }
+      if (m.title !== undefined && typeof m.title !== 'string') {
+        sendError(entry.ws, 'bad_field', 'Invalid title')
+        return false
+      }
+      return true
+    }
+
+    case 'queue_remove': {
+      const m = msg as { partyId?: unknown; itemId?: unknown }
+      if (typeof m.partyId !== 'string' || m.partyId.length === 0) {
+        sendError(entry.ws, 'bad_field', 'Invalid partyId')
+        return false
+      }
+      if (typeof m.itemId !== 'string' || m.itemId.length === 0 || m.itemId.length > 64) {
+        sendError(entry.ws, 'bad_field', 'Invalid itemId')
+        return false
+      }
+      return true
+    }
+
+    case 'queue_reorder': {
+      const m = msg as { partyId?: unknown; itemId?: unknown; toIndex?: unknown }
+      if (typeof m.partyId !== 'string' || m.partyId.length === 0) {
+        sendError(entry.ws, 'bad_field', 'Invalid partyId')
+        return false
+      }
+      if (typeof m.itemId !== 'string' || m.itemId.length === 0 || m.itemId.length > 64) {
+        sendError(entry.ws, 'bad_field', 'Invalid itemId')
+        return false
+      }
+      if (typeof m.toIndex !== 'number' || !Number.isInteger(m.toIndex) || m.toIndex < 0 || m.toIndex > MAX_QUEUE_LENGTH) {
+        sendError(entry.ws, 'bad_field', 'Invalid toIndex')
+        return false
+      }
+      return true
+    }
+
+    case 'queue_advance': {
+      const m = msg as { partyId?: unknown; fromMediaId?: unknown }
+      if (typeof m.partyId !== 'string' || m.partyId.length === 0) {
+        sendError(entry.ws, 'bad_field', 'Invalid partyId')
+        return false
+      }
+      if (typeof m.fromMediaId !== 'string' || m.fromMediaId.length === 0 || m.fromMediaId.length > 128) {
+        sendError(entry.ws, 'bad_field', 'Invalid fromMediaId')
+        return false
+      }
+      return true
+    }
+
     default:
       return true
   }
@@ -733,6 +932,22 @@ async function handleMessage(rt: ServerRuntime, entry: SocketEntry, raw: string)
       await handleLeave(rt, entry, partyId)
       break
 
+    case 'queue_add':
+      await handleQueueAdd(rt, identity, msg)
+      break
+
+    case 'queue_remove':
+      await handleQueueRemove(rt, identity, msg)
+      break
+
+    case 'queue_reorder':
+      await handleQueueReorder(rt, identity, msg)
+      break
+
+    case 'queue_advance':
+      await handleQueueAdvance(rt, identity, msg)
+      break
+
     default:
       sendError(entry.ws, 'unknown_type', 'Unknown message type')
   }
@@ -849,6 +1064,10 @@ async function handleJoin(rt: ServerRuntime, entry: SocketEntry, partyId: string
       id: c.id,
     })),
   })
+
+  // Send the shared queue snapshot so a joiner (or a client that just navigated on auto-advance)
+  // sees "up next" immediately.
+  send(entry.ws, { type: 'queue', partyId, items: queueToDTO(fresh.queue) })
 
   // Broadcast the membership change to the whole party (effectiveAt = now: reconcile now).
   broadcastState(rt, fresh, now)
@@ -1121,6 +1340,13 @@ async function rehydrate(): Promise<void> {
         positionTicks: row.last_position_ticks,
         paused: row.last_paused === 1,
       })
+      // Restore the shared queue from its durable mirror.
+      const queued = loadQueue(row.id)
+      if (queued.length > 0) {
+        await store.updateParty(row.id, (s) => {
+          s.queue = queued
+        })
+      }
     } catch (err) {
       console.warn(`[party] rehydrate party ${row.id} failed (non-fatal):`, err)
     }

@@ -144,19 +144,23 @@ Severity tags mirror the audit (S = security, D = data/engine, F = functional, A
 
 - **Download clients** — Transmission + Deluge are still unimplemented (now fail loudly at selection,
   A7-02 done). Implementing them is a feature, not a defect.
-- **Subtitle search** — server-side auto-download done; player-side `<track>` injection from IMDB id not.
+- **Subtitle search** — DONE (v0.9.11). Server-side auto-download plus on-demand player search with live
+  `<track>` injection (IMDB id resolved server-side); served by stable `subtitle_wants.id`. See CLAUDE.md §10b.
 - **Theme marketplace** — custom themes work; export/import/share-string not.
 - **Keyboard shortcut reference** — static table at `/settings/shortcuts`; auto-generation from a
   registry not.
 - **Admin audit-log CSV export** — not done (watch-activity export exists).
-- **Independence build is at MVP** — the deeper automation depth (decision gate-chain + rejection
-  reasons, real custom formats, upgrade/cutoff, blocklist, notifications, import lists) is documented
-  as grabbable in `sonarr/radarr/prowlarr-analysis.md` + `feature-mining-summary.md`, not built.
+- **Independence build is past MVP** — decision **gate-chain + rejection reasons**, **real custom
+  formats** (language/group/size/flags), and **blocklist** shipped v0.10.0 (CLAUDE.md §17). Still
+  grabbable from the mining docs but NOT built: upgrade-until-cutoff/proper-repack, auto-retry on failed
+  grab, indexer health/backoff, notifications, import lists.
 
 ## Feature backlog (CLAUDE.md §13 + feature-mining)
 
-Not defects. Top candidates from the feature mining: Party Play shared queue, voice chat, decision
-gate-chain, real custom formats, Discord/ntfy notifications. See `feature-mining-summary.md`.
+Not defects. **SHIPPED v0.10.0** from the mining list: decision gate-chain + rejection reasons (Tier-1 #1),
+real custom formats (Tier-1 #2), Party Play shared queue with auto-advance (Tier-1 #3). Remaining top
+candidates: voice chat, Discord/ntfy notifications, upgrade-until-cutoff, blocklist auto-retry, indexer
+health/backoff. See `feature-mining-summary.md`.
 
 ---
 

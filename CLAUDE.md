@@ -1,6 +1,6 @@
 # unified-frontend
 
-A single-pane-of-glass web app for the minime home server media stack (v0.9.11). Replaces the multi-tab workflow
+A single-pane-of-glass web app for the minime home server media stack (v0.10.0). Replaces the multi-tab workflow
 (Jellyfin + Seerr + qBittorrent) with one unified interface for browsing, requesting, watching, and
 monitoring downloads.
 
@@ -154,7 +154,7 @@ Key components:
 | File | Purpose |
 |---|---|
 | `src/lib/db/index.ts` | Singleton DB, runs migrations + seed on first call |
-| `src/lib/db/migrations.ts` | Schema for all 21 tables: `users`, `sessions`, `invite_codes`, `audit_log`, `watch_events`, `login_attempts`, `password_resets`, `pending_registrations`, `indexers`, `quality_profiles`, `quality_tiers`, `custom_formats`, `quality_profile_formats`, `monitored_items`, `grab_history`, `grab_results`, `subtitle_wants`, `media_requests`, `app_settings`, `media_items`, `media_watch_state` |
+| `src/lib/db/migrations.ts` | Schema for all tables: `users`, `sessions`, `invite_codes`, `audit_log`, `watch_events`, `login_attempts`, `password_resets`, `pending_registrations`, `indexers`, `quality_profiles`, `quality_tiers`, `custom_formats`, `quality_profile_formats`, `monitored_items`, `grab_history`, `grab_results`, `grab_blocklist`, `subtitle_wants`, `media_requests`, `app_settings`, `media_items`, `media_watch_state`, `watch_parties`, `watch_party_members`, `watch_party_queue` |
 | `src/lib/db/seed.ts` | Seeds admin account from `ADMIN_USERNAME` + `ADMIN_PASSWORD` env vars on first run |
 | `src/lib/dal.ts` | `requireAuth()` / `requireAdmin()` / `createSession()` / `logEvent()` — server-only |
 | `src/lib/password.ts` | `validatePassword()`, `hashPassword()`, `verifyPassword()` |
@@ -1705,3 +1705,93 @@ The new tuning constants (caps, rate-limit windows, `MAX_POSITION_TICKS`, origin
 `src/lib/party/constants.ts`. One item is intentionally deferred: an explicit Caddy idle timeout for
 `/api/party/ws` (audit L5) — the heartbeat/ping is the primary keepalive, and the BunkerWeb idle-reap
 exception is added only if the mandated off-tailnet cellular idle test shows reaping.
+
+### Shared queue with auto-advance (v0.10.0)
+
+Party Play has a shared **"up next" queue**. Any member may add / remove / reorder items and skip to
+the next one — consistent with the existing shared-control model (no host-only gate). When the current
+item ends, the party **auto-advances**: every member's player navigates to the next item with zero clicks
+(binge a whole season). Items are playable `media_items` only (series containers rejected, same rule as
+party create).
+
+- **Durable + live.** The queue lives in `PartyLiveState.queue` (the in-memory authority, mutated through
+  the atomic `updateParty`) and is mirrored to the `watch_party_queue` SQLite table on every mutation
+  (queue ops are infrequent, so a delete+reinsert keeps positions gap-free). `rehydrate()` reloads it on
+  boot via `loadQueue()`, so a restart preserves "up next".
+- **Protocol.** Client→server: `queue_add{mediaId,title?}`, `queue_remove{itemId}`,
+  `queue_reorder{itemId,toIndex}`, `queue_advance{fromMediaId}`. Server→client: `queue{items}` (full
+  snapshot on join + after every mutation) and `queue_advance{mediaId,joinCode,items}` (navigate
+  everyone). All are membership-checked per message and field-validated like every other WS message;
+  `MAX_QUEUE_LENGTH=200`.
+- **Advance is idempotent.** `queue_advance` carries `fromMediaId`; the server advances only if it still
+  equals the party's current `mediaId`. The client fires `queue_advance` on the `<video>` `ended` event
+  (and from the "Play next" button), so when every member's video ends near-simultaneously the first
+  request wins and the rest are no-ops referencing the now-stale media id. On advance the server shifts
+  the queue head, sets the new `mediaId`, resets position to 0, sets `paused=false` (the client's
+  `applyState` auto-plays once buffered — permitted because the document already had user interaction
+  before the client-side nav), bumps `commandSeq`, and clears every member's `ready`.
+- **The navigation race (important).** On auto-advance every client `router.push`es to
+  `/play/${nextMediaId}?party=${joinCode}`, which unmounts the old `VideoPlayer` and remounts on the new
+  route. `usePartySync`'s cleanup normally sends an explicit `leave` on unmount — but that would risk
+  last-member-out (`leaveAndMaybeEnd`) ending the party while everyone is mid-navigation. So the
+  `queue_advance` handler raises `suppressLeaveRef` and the cleanup **skips the leave**, letting the
+  socket close fall into the 30s disconnect grace window; the re-join on the next item reactivates the
+  member (its durable `left_at` stayed NULL). The party never hits zero active members during a transition.
+- **Files.** `QueueItem`/DTO + messages in `party/types.ts`; queue field in `PartyLiveState`
+  (`in-memory-store.ts` inits `queue:[]`); durable helpers `persistQueue`/`loadQueue`/`getPlayableMedia`/
+  `setPartyMedia` in `party/db.ts`; server handlers `handleQueueAdd/Remove/Reorder/Advance` +
+  `broadcastQueue` in `party/server.ts`; client state/ops (`queue`, `addToQueue`, `removeFromQueue`,
+  `reorderQueue`, `playNext`, `onQueueAdvance`) in `usePartySync.ts`; UI in `party/PartyPanel.tsx`
+  (the "Up next" list + a library-search `QueueAdder`).
+
+---
+
+## 17. Decision Engine — Gate-Chain + Custom Formats (v0.10.0)
+
+Two-stage release evaluation in the grabber, mirroring Sonarr/Radarr: **hard gates** decide what is
+grabbable at all, then a **soft score** ranks what survives. The auto-pick path never grabs a gated
+release; the interactive admin picker still lists gated releases (with reasons) and can override-grab them.
+
+### Hard gates (`src/lib/automation/gates.ts`)
+
+`evaluateGates(result, config, blocked)` returns the list of reasons a release failed (empty = passed):
+
+| Gate | Reason | Rule |
+|---|---|---|
+| Blocklist | `blocklisted` | `info_hash` is in `grab_blocklist` |
+| Seed floor | `dead` | `seeders < gate_min_seeders` (default 1) |
+| Sample | `sample` | title matches a whole-token `sample` |
+| Size cap | `oversize` | `size > gate_max_size_*_gb` (movie default 100, tv 200; 0 disables) |
+
+Thresholds are `app_settings` keys read each search (no redeploy): `gate_min_seeders`,
+`gate_max_size_movie_gb`, `gate_max_size_tv_gb`. `partitionByGates(results, type)` splits scope-matched
+results into `passing` + `gatesByKey`; `findBestRelease(passing, …)` auto-picks from the passing pool only.
+The pack finders (`findSeasonPack`/`findArcPack`/`findCoveringPacks`) are gate-aware too.
+
+**Blocklist.** `grab_blocklist` (keyed by lowercased `info_hash`) is auto-populated by the metadata
+**reaper** (a dead stuck torrent whose indexer-claimed seeders never materialised is blocklisted so the
+cron won't re-grab it) and managed by admins via `GET/POST/DELETE /api/automation/blocklist`
+(requireAdmin + verifyOrigin).
+
+**Rejection reasons surface in the UI.** `ScoredCandidate.gates` is persisted in `grab_results`;
+`/api/torrent-search` returns per-result `gates`; `SeasonGrabControl` renders them as amber badges
+("why didn't this download") while keeping the row grab-able (it's the override surface). A search that
+gates out every candidate records `SkipReason` `'gated'` (or `'no_seeders'` when the only failure was the
+seed floor).
+
+### Real custom formats (`src/lib/automation/quality.ts`)
+
+`CustomFormatSpec.type` now covers `title_regex | resolution | source | codec | language | release_group |
+size | flag`:
+
+- **language** — ISO 639-1 parsed from the title (`meta.language`).
+- **release_group** — exact scene-group match (`meta.group`).
+- **size** — GB range `min-max` / `min-` / `-max` (needs the release size, threaded through
+  `scoreWithProfile(title, profileId, sizeBytes)` from `autoPickScore`).
+- **flag** — a named release flag (`proper`/`repack`/`internal`/`remux`/`hdr`/`hdr10plus`/`dv`/`atmos`/
+  `imax`/…); unknown keys fall back to a word-boundary match. `CUSTOM_FORMAT_FLAGS` exports the known keys.
+
+Custom formats are scored within `autoPickScore` (`scoreWithProfile(...).totalScore`) and are
+created/assigned with per-profile scores on the existing `/admin/quality-profiles` page (the
+`CustomFormatBuilder` now offers the new spec types with per-type value hints). The `quality_profile_formats`
+score table and the matcher were already scaffolded; this activates the fuller matcher.

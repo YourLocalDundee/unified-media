@@ -34,6 +34,7 @@ import type {
   MemberSummary,
   ChatMessageDTO,
   LastActor,
+  QueueItemDTO,
 } from '@/lib/party/types'
 
 // Match the 5s heartbeat cadence (A5-10) so the clock-offset EMA — which is fed only by
@@ -75,19 +76,36 @@ export interface UsePartySyncResult {
   sendChat: (text: string) => void
   sendReaction: (emoji: string) => void
   expireReaction: (id: string) => void
+  // --- shared queue (feature 3) ---
+  queue: QueueItemDTO[]
+  addToQueue: (mediaId: string, title?: string) => void
+  removeFromQueue: (itemId: string) => void
+  reorderQueue: (itemId: string, toIndex: number) => void
+  /** Advance to the next queued item now (manual "Play next"). */
+  playNext: () => void
 }
 
 interface UsePartySyncOpts {
   videoRef: React.RefObject<HTMLVideoElement | null>
   selfUserId: string
   enabled: boolean
+  /** The media id currently playing on this page — used as the advance guard token. */
+  mediaId: string
+  /** Called when the server advances the queue; the page navigates to the next item. */
+  onQueueAdvance?: (mediaId: string, joinCode: string) => void
 }
 
 export function usePartySync(
   partyId: string | null,
   opts: UsePartySyncOpts,
 ): UsePartySyncResult {
-  const { videoRef, enabled } = opts
+  const { videoRef, enabled, mediaId, onQueueAdvance } = opts
+
+  // Live refs for values read inside stable callbacks / element listeners.
+  const mediaIdRef = useRef(mediaId)
+  mediaIdRef.current = mediaId
+  const onQueueAdvanceRef = useRef(onQueueAdvance)
+  onQueueAdvanceRef.current = onQueueAdvance
 
   // --- React-visible state (drives UI) ---
   const [connected, setConnected] = useState(false)
@@ -104,6 +122,7 @@ export function usePartySync(
       enabled && partyId ? 'connecting' : 'ended',
     )
   const [ended, setEnded] = useState(false)
+  const [queue, setQueue] = useState<QueueItemDTO[]>([])
   // Transient, user-facing server error surfaced to the panel (A5-06).
   const [lastError, setLastError] = useState<string | null>(null)
   const errorClearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -123,6 +142,11 @@ export function usePartySync(
   const readyDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const lastReadyReportedRef = useRef<boolean | null>(null)
   const closedByUsRef = useRef(false)
+  // Set when the server advances the queue: the imminent unmount (router.push to the next
+  // item) must NOT send an explicit 'leave' — that would risk last-member-out ending the
+  // party while everyone navigates. Closing without 'leave' routes the member into the 30s
+  // grace window instead, and the re-join on the next page reactivates them.
+  const suppressLeaveRef = useRef(false)
   // Late-join two-phase: pending second seek on next canplay, then report ready.
   const pendingPostJoinReseekRef = useRef(false)
   // H7: the last authoritative snapshot we applied, retained so the two-phase
@@ -411,6 +435,17 @@ export function usePartySync(
             (1 - CLOCK_OFFSET_EMA_ALPHA) * offsetRef.current + CLOCK_OFFSET_EMA_ALPHA * sample
           break
         }
+        case 'queue':
+          setQueue(msg.items)
+          break
+        case 'queue_advance':
+          // Server advanced to the next item. Suppress the leave-on-unmount (we're about to
+          // navigate, not leave), update the panel, then navigate everyone to the new media
+          // (the page callback owns the actual router.push).
+          suppressLeaveRef.current = true
+          setQueue(msg.items)
+          onQueueAdvanceRef.current?.(msg.mediaId, msg.joinCode)
+          break
         case 'party_ended':
           setEnded(true)
           setConnectionState('ended')
@@ -492,18 +527,26 @@ export function usePartySync(
     const onPlaying = () => reportReady(true)
     const onWaiting = () => reportReady(false)
     const onStalled = () => reportReady(false)
+    // Auto-advance: when this item ends, ask the server to advance the shared queue. The
+    // request carries the current mediaId so the server advances exactly once even when
+    // every member's video ends near-simultaneously. No-op server-side if the queue is empty.
+    const onEnded = () => {
+      if (partyId) send({ type: 'queue_advance', partyId, fromMediaId: mediaIdRef.current })
+    }
 
     video.addEventListener('canplay', onCanPlay)
     video.addEventListener('playing', onPlaying)
     video.addEventListener('waiting', onWaiting)
     video.addEventListener('stalled', onStalled)
+    video.addEventListener('ended', onEnded)
     return () => {
       video.removeEventListener('canplay', onCanPlay)
       video.removeEventListener('playing', onPlaying)
       video.removeEventListener('waiting', onWaiting)
       video.removeEventListener('stalled', onStalled)
+      video.removeEventListener('ended', onEnded)
     }
-  }, [enabled, partyId, videoRef, reportReady, withRemoteApply, extrapolateLiveTargetSec])
+  }, [enabled, partyId, videoRef, reportReady, withRemoteApply, extrapolateLiveTargetSec, send])
 
   // -------------------------------------------------------------------------
   // Socket lifecycle: connect, reconnect with backoff, heartbeat, ping.
@@ -663,7 +706,11 @@ export function usePartySync(
       const ws = wsRef.current
       if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
         try {
-          if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'leave', partyId }))
+          // Skip the explicit leave when navigating on auto-advance — let the close fall into
+          // the server grace window so the re-join on the next item reactivates the member.
+          if (ws.readyState === WebSocket.OPEN && !suppressLeaveRef.current) {
+            ws.send(JSON.stringify({ type: 'leave', partyId }))
+          }
         } catch {
           /* ignore */
         }
@@ -710,6 +757,33 @@ export function usePartySync(
     setReactions((prev) => prev.filter((r) => r.id !== id))
   }, [])
 
+  // --- shared queue ops ---
+  const addToQueue = useCallback(
+    (qMediaId: string, title?: string) => {
+      if (!partyId) return
+      send({ type: 'queue_add', partyId, mediaId: qMediaId, ...(title ? { title } : {}) })
+    },
+    [partyId, send],
+  )
+  const removeFromQueue = useCallback(
+    (itemId: string) => {
+      if (!partyId) return
+      send({ type: 'queue_remove', partyId, itemId })
+    },
+    [partyId, send],
+  )
+  const reorderQueue = useCallback(
+    (itemId: string, toIndex: number) => {
+      if (!partyId) return
+      send({ type: 'queue_reorder', partyId, itemId, toIndex })
+    },
+    [partyId, send],
+  )
+  const playNext = useCallback(() => {
+    if (!partyId) return
+    send({ type: 'queue_advance', partyId, fromMediaId: mediaIdRef.current })
+  }, [partyId, send])
+
   return {
     connected,
     members,
@@ -726,5 +800,10 @@ export function usePartySync(
     sendChat,
     sendReaction,
     expireReaction,
+    queue,
+    addToQueue,
+    removeFromQueue,
+    reorderQueue,
+    playNext,
   }
 }

@@ -22,14 +22,14 @@ linked docs. **This is a discussion menu, not a commitment.**
 ## Top candidates across everything (my ranking for the discussion)
 
 ### Tier 1 — highest value-to-effort
-1. **Decision-engine refactor: gate-chain + rejection reasons** (sonarr #1). Turn `scoreRelease()` into
-   hard gates (min-seeders, reject-sample, max-size, blocklist) + soft score, persisting *why* a release
-   was rejected. Unlocks better grabs *and* "why didn't this download" in the interactive picker. Reuses
-   tables/flow we already have.
-2. **Real Custom Formats** (sonarr #3). Activate the `custom_formats`/`quality_profile_formats` tables we
-   already scaffolded with the actual matcher engine (regex/source/resolution/language/group/size/flags).
-3. **Shared queue for Party Play** (watchparty #1 + vynchronize #1). Lift the "one item per party"
-   limit → queue episodes/movies; "enqueue a whole season." Two independent references agree on the design.
+1. ~~**Decision-engine refactor: gate-chain + rejection reasons**~~ **SHIPPED v0.10.0** (CLAUDE.md §17).
+   Hard gates (min-seeders, reject-sample, max-size, blocklist) + soft score; reasons persisted in
+   `grab_results` and surfaced in the interactive picker. Blocklist auto-populated by the reaper + admin API.
+2. ~~**Real Custom Formats**~~ **SHIPPED v0.10.0** (CLAUDE.md §17). Matcher extended to
+   language/release_group/size/flag on top of the existing regex/resolution/source/codec; new spec types
+   in the profile admin UI.
+3. ~~**Shared queue for Party Play**~~ **SHIPPED v0.10.0** (CLAUDE.md §16 "Shared queue with auto-advance").
+   Any-member queue, auto-advance navigates everyone to the next item; durable `watch_party_queue` mirror.
 4. **Notifications on request-available (Discord / ntfy)** (sonarr #7). Best *visible* user payoff;
    maps onto the availability poller; generalizes our Web-Push backlog item.
 
