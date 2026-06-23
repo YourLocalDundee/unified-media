@@ -1708,6 +1708,7 @@ export default function VideoPlayer(props: PlaybackData) {
             queue={party.queue}
             onAddToQueue={party.addToQueue}
             onRemoveFromQueue={party.removeFromQueue}
+            onReorderQueue={party.reorderQueue}
             onPlayNext={party.playNext}
           />
           <ChatPanelMemo

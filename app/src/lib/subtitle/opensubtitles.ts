@@ -122,11 +122,13 @@ async function searchSubtitles(params: SubtitleSearchParams): Promise<OSSubtitle
 
   const qs = new URLSearchParams()
 
-  if (params.imdb_id) {
-    // OpenSubtitles expects a plain integer with no "tt" prefix and no leading zeros.
-    const numeric = params.imdb_id.replace(/^tt0*/, '').replace(/^0+/, '') || '0'
-    qs.set('imdb_id', numeric)
-  }
+  // OpenSubtitles expects a plain integer with no "tt" prefix and no leading zeros.
+  const stripImdb = (id: string) => id.replace(/^tt0*/, '').replace(/^0+/, '') || '0'
+  if (params.imdb_id) qs.set('imdb_id', stripImdb(params.imdb_id))
+  // Episode matching: series imdb + season/episode beats a per-episode imdb_id.
+  if (params.parent_imdb_id) qs.set('parent_imdb_id', stripImdb(params.parent_imdb_id))
+  if (params.season_number != null) qs.set('season_number', String(params.season_number))
+  if (params.episode_number != null) qs.set('episode_number', String(params.episode_number))
   if (params.tmdb_id != null) qs.set('tmdb_id', String(params.tmdb_id))
   if (params.query) qs.set('query', params.query)
 

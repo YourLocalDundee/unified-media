@@ -5,6 +5,45 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.10.2] — 2026-06-23
+
+Bucket-1 loose-end cleanup — surfacing pieces of the v0.10.0 decision engine and Party queue that
+shipped with an API/engine but no UI, plus a subtitle-matching improvement. See
+`analysis/bucket1-cleanup-session-2026-06-23.md`.
+
+### Added
+- **Grab-gate thresholds admin UI** (`/admin/automation` → "Grab Gates"). The hard-gate thresholds
+  (`gate_min_seeders`, `gate_max_size_movie_gb`, `gate_max_size_tv_gb`) shipped in v0.10.0 as
+  `app_settings` keys that could only be changed by SQL. They now have three numeric inputs that
+  read via `GET /api/admin/settings` and save via `PUT` (values clamped to non-negative ints; 0 on a
+  max-size disables that cap, matching `gates.ts`). No redeploy needed — the grabber reads the keys
+  each search.
+- **Blocklist admin page** (`/admin/automation` → "Blocklist"). The `grab_blocklist` table and its
+  `GET/POST/DELETE /api/automation/blocklist` API shipped in v0.10.0 with no UI. There is now a table
+  of blocklisted releases (info hash, title, reason, when) with a remove (unblock) action and a
+  manual "block this hash" form. The metadata reaper still auto-populates it; this just makes it
+  visible and editable.
+- **Party queue reorder controls** (`PartyPanel`). The shared "Up next" queue's `reorderQueue` op
+  was wired end-to-end (hook → WS → server → durable mirror) in v0.10.0 but the panel only exposed
+  remove + Play next. Each queued item now has move-up / move-down buttons (the unavailable
+  direction is disabled at the endpoints). Chose move buttons over HTML5 drag deliberately — mobile
+  (touch) is the primary surface and move buttons are touch-reliable and keyboard-accessible. They
+  map directly onto the existing `reorderQueue(itemId, toIndex)`; no protocol or server change.
+
+### Fixed
+- **Episode subtitle matching** now searches OpenSubtitles by the **series** IMDB id plus
+  `season_number`/`episode_number` instead of relying on a (usually absent, always weaker)
+  per-episode IMDB id. `SubtitleSearchParams` gained `parent_imdb_id` / `season_number` /
+  `episode_number`; the OpenSubtitles client emits them; the on-demand search route
+  (`GET /api/media/subtitles/search`) resolves the parent series row via `series_id` for an episode
+  and prefers `parent_imdb_id` + S/E, falling back to the episode's own imdb, then a series-title
+  query (all still passing S/E when known). Movie search is unchanged. The grab path is unaffected
+  (it downloads by `file_id`).
+
+### Changed
+- The two `/admin/automation` sections live on the existing page (one mount fetch, deferred a tick
+  per the `set-state-in-effect` rule). `type-check` + `lint` clean at error level.
+
 ## [0.10.1] — 2026-06-23
 
 ### Changed

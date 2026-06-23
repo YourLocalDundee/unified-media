@@ -143,13 +143,12 @@ docker compose -f /opt/docker/compose/docker-compose.yml up -d --force-recreate 
 - **Manual two-browser test of party auto-advance** — the only path not exercisable by type-check/build.
   Queue an item, let the first end, confirm both clients land on the next AND the party survives the
   transition (the grace-window race fix). Worth doing at a screen.
-- **Gate thresholds have no admin UI** — they're `app_settings` keys (`gate_min_seeders`,
-  `gate_max_size_movie_gb`, `gate_max_size_tv_gb`); set via SQL/settings for now. A small admin control
-  could be added to `/admin/automation`.
-- **Blocklist has an API but no admin page** — `/api/automation/blocklist` works; no UI lists/removes
-  entries yet.
-- **Queue reorder UI is remove-only in practice** — `reorderQueue` (drag/move) is wired end-to-end in the
-  hook/server but `PartyPanel` only exposes remove + Play next; add drag handles if wanted.
+- ~~**Gate thresholds have no admin UI**~~ — **DONE v0.10.2.** Editable on `/admin/automation` → "Grab
+  Gates" via `GET`/`PUT /api/admin/settings`. See `analysis/bucket1-cleanup-session-2026-06-23.md`.
+- ~~**Blocklist has an API but no admin page**~~ — **DONE v0.10.2.** `/admin/automation` → "Blocklist"
+  (list + remove + manual block) over the existing `/api/automation/blocklist`.
+- ~~**Queue reorder UI is remove-only in practice**~~ — **DONE v0.10.2.** `PartyPanel` "Up next" rows have
+  move-up/down controls wired to `reorderQueue` (move buttons over drag for touch reliability).
 - **Auto-advance starts the next item playing** — if you'd rather it land paused ("Up next, press play"),
   flip `s.paused = false` → `true` in `handleQueueAdvance` (server.ts).
 - ~~**78 lint warnings** remain (pre-existing warn-level react-hooks rules; my `QueueAdder` effect adds a

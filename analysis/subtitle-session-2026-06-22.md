@@ -80,10 +80,10 @@ now exits 0 (75 warnings, all pre-existing patterns).
 
 ## 7. Still left / follow-ups (none blocking)
 
-- **Episode subtitle matching.** Search uses the item's own `imdb_id` + `type=episode`, falling back to a title
-  query when the episode row has no `imdb_id`. For better episode hits, pass the **series** IMDB id +
-  `season_number`/`episode_number` to OpenSubtitles instead of relying on a per-episode IMDB id. Worth doing if
-  episode results look weak.
+- ~~**Episode subtitle matching.**~~ **DONE v0.10.2.** On-demand search now resolves the parent series row
+  via `series_id` and searches by the **series** IMDB id + `season_number`/`episode_number`
+  (`parent_imdb_id`/`season_number`/`episode_number`), falling back to the episode's own imdb, then a
+  series-title query. See `analysis/bucket1-cleanup-session-2026-06-23.md`.
 - **Lint cleanup (optional).** 75 pre-existing warnings remain (mostly `react-hooks` v6: `set-state-in-effect`,
   `refs`). Promote those four rules back to `error` in `eslint.config.mjs` and fix them when ready.
 - **Auth scope of grab.** On-demand search/grab is open to any authenticated viewer (not admin-only), rate-limited

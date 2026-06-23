@@ -16,7 +16,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useFocusTrap } from '@/hooks/useFocusTrap'
-import { Loader2, Trash2, Play, ChevronDown, ChevronUp, Plus, X } from 'lucide-react'
+import { Loader2, Trash2, Play, ChevronDown, ChevronUp, Plus, X, Ban, SlidersHorizontal } from 'lucide-react'
 
 interface MonitoredItem {
   id: number
@@ -71,6 +71,27 @@ interface GrabHistory {
   import_status: string
 }
 
+// One blocklisted release (gate-chain). Hashes here are hard-gated out of every auto-grab.
+interface BlocklistRow {
+  info_hash: string
+  title: string | null
+  reason: string | null
+  blocked_at: number
+}
+
+// app_settings keys that tune the hard gates (see lib/automation/gates.ts). Stored as strings.
+interface GateSettings {
+  gate_min_seeders: string
+  gate_max_size_movie_gb: string
+  gate_max_size_tv_gb: string
+}
+
+const GATE_DEFAULTS: GateSettings = {
+  gate_min_seeders: '1',
+  gate_max_size_movie_gb: '100',
+  gate_max_size_tv_gb: '200',
+}
+
 // Static Tailwind class maps avoid dynamic class construction which can be purged by the compiler
 const STATUS_BADGE: Record<MonitoredItem['status'], string> = {
   wanted:   'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30',
@@ -123,6 +144,20 @@ export default function AdminAutomationPage() {
   // Show-all toggle for recent grabs
   const [showAllGrabs, setShowAllGrabs] = useState(false)
 
+  // Grab-gate thresholds (Part 1). Held as strings to match the app_settings storage model.
+  const [gate, setGate] = useState<GateSettings>(GATE_DEFAULTS)
+  const [gateSaving, setGateSaving] = useState(false)
+  const [gateSaved, setGateSaved] = useState(false)
+  const [gateError, setGateError] = useState('')
+
+  // Blocklist (Part 2).
+  const [blocklist, setBlocklist] = useState<BlocklistRow[]>([])
+  const [loadingBlocklist, setLoadingBlocklist] = useState(true)
+  const [blockHash, setBlockHash] = useState('')
+  const [blockTitle, setBlockTitle] = useState('')
+  const [blockBusy, setBlockBusy] = useState(false)
+  const [blockError, setBlockError] = useState('')
+
   const fetchItems = useCallback(async () => {
     setLoadingItems(true)
     try {
@@ -160,6 +195,35 @@ export default function AdminAutomationPage() {
     }
   }, [])
 
+  const fetchGate = useCallback(async () => {
+    try {
+      const res = await fetch('/api/admin/settings')
+      if (!res.ok) return // non-fatal; inputs keep their defaults
+      const data = await res.json() as Record<string, string>
+      setGate({
+        gate_min_seeders: data.gate_min_seeders ?? GATE_DEFAULTS.gate_min_seeders,
+        gate_max_size_movie_gb: data.gate_max_size_movie_gb ?? GATE_DEFAULTS.gate_max_size_movie_gb,
+        gate_max_size_tv_gb: data.gate_max_size_tv_gb ?? GATE_DEFAULTS.gate_max_size_tv_gb,
+      })
+    } catch {
+      // non-fatal — leave defaults in place
+    }
+  }, [])
+
+  const fetchBlocklist = useCallback(async () => {
+    setLoadingBlocklist(true)
+    try {
+      const res = await fetch('/api/automation/blocklist')
+      if (!res.ok) throw new Error(`Failed to load blocklist (${res.status})`)
+      const data = await res.json() as { blocklist: BlocklistRow[] }
+      setBlocklist(data.blocklist)
+    } catch (e) {
+      setBlockError(e instanceof Error ? e.message : 'Failed to load blocklist')
+    } finally {
+      setLoadingBlocklist(false)
+    }
+  }, [])
+
   // Deferred a tick so the loading setStates in the fetchers run outside the effect's
   // synchronous commit path (react-hooks/set-state-in-effect).
   useEffect(() => {
@@ -167,9 +231,11 @@ export default function AdminAutomationPage() {
       void fetchItems()
       void fetchProfiles()
       void fetchHistory()
+      void fetchGate()
+      void fetchBlocklist()
     }, 0)
     return () => clearTimeout(id)
-  }, [fetchItems, fetchProfiles, fetchHistory])
+  }, [fetchItems, fetchProfiles, fetchHistory, fetchGate, fetchBlocklist])
 
   async function handleGrab(item: MonitoredItem) {
     setGrabState(s => ({ ...s, [item.id]: 'loading' }))
@@ -236,6 +302,78 @@ export default function AdminAutomationPage() {
     }
   }
 
+  async function saveGate() {
+    setGateSaving(true)
+    setGateSaved(false)
+    setGateError('')
+    // Clamp to sane, non-negative integers; 0 on a max-size disables that cap (gates.ts).
+    const clean = (v: string, def: string) => {
+      const n = parseInt(v, 10)
+      return Number.isFinite(n) && n >= 0 ? String(n) : def
+    }
+    const payload: GateSettings = {
+      gate_min_seeders: clean(gate.gate_min_seeders, GATE_DEFAULTS.gate_min_seeders),
+      gate_max_size_movie_gb: clean(gate.gate_max_size_movie_gb, GATE_DEFAULTS.gate_max_size_movie_gb),
+      gate_max_size_tv_gb: clean(gate.gate_max_size_tv_gb, GATE_DEFAULTS.gate_max_size_tv_gb),
+    }
+    try {
+      const res = await fetch('/api/admin/settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+      if (!res.ok) throw new Error(`Save failed (HTTP ${res.status})`)
+      setGate(payload) // reflect the clamped values back into the inputs
+      setGateSaved(true)
+      setTimeout(() => setGateSaved(false), 2500)
+    } catch (e) {
+      setGateError(e instanceof Error ? e.message : 'Save failed')
+    } finally {
+      setGateSaving(false)
+    }
+  }
+
+  async function blockAdd(e: React.FormEvent) {
+    e.preventDefault()
+    setBlockError('')
+    const infoHash = blockHash.trim()
+    if (!infoHash) { setBlockError('Info hash is required'); return }
+    setBlockBusy(true)
+    try {
+      const res = await fetch('/api/automation/blocklist', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ infoHash, title: blockTitle.trim() || undefined }),
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({})) as { error?: string }
+        throw new Error(data.error ?? `Block failed (HTTP ${res.status})`)
+      }
+      setBlockHash('')
+      setBlockTitle('')
+      void fetchBlocklist()
+    } catch (e) {
+      setBlockError(e instanceof Error ? e.message : 'Block failed')
+    } finally {
+      setBlockBusy(false)
+    }
+  }
+
+  async function blockRemove(infoHash: string) {
+    setBlockError('')
+    try {
+      const res = await fetch('/api/automation/blocklist', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ infoHash }),
+      })
+      if (!res.ok) throw new Error(`Unblock failed (HTTP ${res.status})`)
+      void fetchBlocklist()
+    } catch (e) {
+      setBlockError(e instanceof Error ? e.message : 'Unblock failed')
+    }
+  }
+
   const closeModal = useCallback(() => {
     setShowModal(false)
     setFormError('')
@@ -283,6 +421,68 @@ export default function AdminAutomationPage() {
           <button onClick={() => setError('')} className="ml-3 underline text-xs">dismiss</button>
         </div>
       )}
+
+      {/* Grab Gates (Part 1) — hard thresholds applied before any auto-grab (gates.ts). */}
+      <section>
+        <div className="flex items-center gap-2 mb-3">
+          <SlidersHorizontal className="h-4 w-4 text-muted-foreground" />
+          <h2 className="text-lg font-semibold text-foreground">Grab Gates</h2>
+        </div>
+        <div className="rounded-xl border border-border bg-card p-5 space-y-4">
+          <p className="text-xs text-muted-foreground">
+            Hard limits applied to every <span className="font-medium text-foreground">automatic</span> grab.
+            A release that fails any gate is never auto-grabbed (the interactive picker can still override it).
+          </p>
+          <div className="grid gap-4 sm:grid-cols-3">
+            <label className="flex flex-col gap-1">
+              <span className="text-xs text-muted-foreground">Minimum seeders</span>
+              <input
+                type="number"
+                min={0}
+                value={gate.gate_min_seeders}
+                onChange={e => setGate(g => ({ ...g, gate_min_seeders: e.target.value }))}
+                className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+              />
+              <span className="text-[11px] text-muted-foreground">Below this is gated as “dead”. Default 1.</span>
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-xs text-muted-foreground">Max movie size (GB)</span>
+              <input
+                type="number"
+                min={0}
+                value={gate.gate_max_size_movie_gb}
+                onChange={e => setGate(g => ({ ...g, gate_max_size_movie_gb: e.target.value }))}
+                className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+              />
+              <span className="text-[11px] text-muted-foreground">0 disables the cap. Default 100.</span>
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-xs text-muted-foreground">Max TV size (GB)</span>
+              <input
+                type="number"
+                min={0}
+                value={gate.gate_max_size_tv_gb}
+                onChange={e => setGate(g => ({ ...g, gate_max_size_tv_gb: e.target.value }))}
+                className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+              />
+              <span className="text-[11px] text-muted-foreground">0 disables the cap. Default 200.</span>
+            </label>
+          </div>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => void saveGate()}
+              disabled={gateSaving}
+              className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+            >
+              {gateSaving ? 'Saving…' : 'Save gates'}
+            </button>
+            <p aria-live="polite" className="text-sm">
+              {gateSaved && <span className="text-green-400">Saved.</span>}
+              {gateError && <span className="text-red-400">{gateError}</span>}
+            </p>
+          </div>
+        </div>
+      </section>
 
       {/* Monitored Items */}
       <section>
@@ -449,6 +649,99 @@ export default function AdminAutomationPage() {
               </button>
             )}
           </>
+        )}
+      </section>
+
+      {/* Blocklist (Part 2) — hashes hard-gated out of every auto-grab. */}
+      <section>
+        <div className="flex items-center gap-2 mb-3">
+          <Ban className="h-4 w-4 text-muted-foreground" />
+          <h2 className="text-lg font-semibold text-foreground">
+            Blocklist {!loadingBlocklist && `(${blocklist.length})`}
+          </h2>
+        </div>
+
+        <p className="mb-3 text-xs text-muted-foreground">
+          Releases here are never auto-grabbed. The metadata reaper adds dead stuck torrents
+          automatically; you can also block a hash by hand or remove one to allow it again.
+        </p>
+
+        {blockError && (
+          <div className="mb-3 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-2 text-sm text-red-400">
+            {blockError}
+            <button onClick={() => setBlockError('')} className="ml-3 underline text-xs">dismiss</button>
+          </div>
+        )}
+
+        {/* Manual add */}
+        <form onSubmit={e => void blockAdd(e)} className="mb-3 flex flex-col gap-2 sm:flex-row">
+          <input
+            value={blockHash}
+            onChange={e => setBlockHash(e.target.value)}
+            placeholder="Info hash to block"
+            className="flex-1 rounded-lg border border-border bg-background px-3 py-2 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-primary"
+          />
+          <input
+            value={blockTitle}
+            onChange={e => setBlockTitle(e.target.value)}
+            placeholder="Label (optional)"
+            className="flex-1 rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+          />
+          <button
+            type="submit"
+            disabled={blockBusy}
+            className="flex items-center justify-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+          >
+            {blockBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Ban className="h-4 w-4" />}
+            Block
+          </button>
+        </form>
+
+        {loadingBlocklist ? (
+          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+        ) : (
+          <div className="rounded-xl border border-border bg-card overflow-hidden">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-border">
+                  {['Info Hash', 'Title', 'Reason', 'Blocked', ''].map((h, i) => (
+                    <th key={i} className="px-4 py-2 text-left text-muted-foreground font-medium">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {blocklist.map(row => (
+                  <tr key={row.info_hash}>
+                    <td className="px-4 py-2 font-mono text-xs text-foreground max-w-[12rem] truncate" title={row.info_hash}>
+                      {row.info_hash}
+                    </td>
+                    <td className="px-4 py-2 text-muted-foreground max-w-xs truncate" title={row.title ?? ''}>
+                      {row.title ?? '—'}
+                    </td>
+                    <td className="px-4 py-2 text-muted-foreground">{row.reason ?? '—'}</td>
+                    <td className="px-4 py-2 text-muted-foreground">{relativeTime(row.blocked_at)}</td>
+                    <td className="px-4 py-2 text-right">
+                      <button
+                        onClick={() => void blockRemove(row.info_hash)}
+                        className="rounded p-1 hover:bg-muted text-muted-foreground hover:text-foreground"
+                        title="Remove from blocklist (allow again)"
+                        aria-label={`Unblock ${row.title ?? row.info_hash}`}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+                {blocklist.length === 0 && (
+                  <tr>
+                    <td colSpan={5} className="px-4 py-8 text-center text-muted-foreground">
+                      Nothing blocklisted.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
         )}
       </section>
 

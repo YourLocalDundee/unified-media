@@ -130,10 +130,15 @@ export interface OSUserInfo {
 // imdb_id must be the numeric portion only — strip the "tt" prefix before passing.
 // The OpenSubtitles API rejects IDs with the prefix.
 export interface SubtitleSearchParams {
-  imdb_id?: string     // numeric IMDB ID without "tt" prefix, e.g. "1234567"
+  imdb_id?: string         // numeric IMDB ID without "tt" prefix, e.g. "1234567"
+  // For episodes: the SERIES IMDB id (no "tt"). Combined with season_number + episode_number
+  // this gives far better episode hits than a (usually absent) per-episode imdb_id.
+  parent_imdb_id?: string
   tmdb_id?: number
-  query?: string       // title fallback
-  languages: string    // comma-separated, e.g. "en,es"
+  query?: string           // title fallback
+  season_number?: number   // episode searches only
+  episode_number?: number  // episode searches only
+  languages: string        // comma-separated, e.g. "en,es"
   type: 'movie' | 'episode'
   hearing_impaired?: 'include' | 'exclude' | 'only'
 }

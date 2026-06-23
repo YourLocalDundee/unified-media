@@ -7,7 +7,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react'
-import { Copy, Check, LogOut, X, Crown, Loader2, AlertCircle, Trash2, SkipForward, Plus, Search } from 'lucide-react'
+import { Copy, Check, LogOut, X, Crown, Loader2, AlertCircle, Trash2, SkipForward, Plus, Search, ChevronUp, ChevronDown } from 'lucide-react'
 import type { MemberSummary, LastActor, QueueItemDTO } from '@/lib/party/types'
 
 interface Props {
@@ -26,6 +26,7 @@ interface Props {
   queue: QueueItemDTO[]
   onAddToQueue: (mediaId: string, title?: string) => void
   onRemoveFromQueue: (itemId: string) => void
+  onReorderQueue: (itemId: string, toIndex: number) => void
   onPlayNext: () => void
 }
 
@@ -133,6 +134,7 @@ export function PartyPanel({
   queue,
   onAddToQueue,
   onRemoveFromQueue,
+  onReorderQueue,
   onPlayNext,
 }: Props) {
   const [copied, setCopied] = useState(false)
@@ -314,6 +316,26 @@ export function PartyPanel({
               <li key={item.id} className="flex items-center gap-2 rounded-md bg-zinc-800/50 px-2 py-1 text-xs">
                 <span className="w-4 shrink-0 text-right text-zinc-500">{i + 1}</span>
                 <span className="line-clamp-1 flex-1 text-zinc-200" title={item.title}>{item.title}</span>
+                {/* Reorder via move up/down — touch-reliable and accessible, maps onto
+                    reorderQueue(itemId, toIndex). Endpoints disable the unavailable direction. */}
+                <button
+                  type="button"
+                  onClick={() => onReorderQueue(item.id, i - 1)}
+                  disabled={i === 0}
+                  className="shrink-0 text-zinc-600 hover:text-zinc-200 disabled:opacity-30 disabled:hover:text-zinc-600"
+                  aria-label={`Move ${item.title} up`}
+                >
+                  <ChevronUp className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onReorderQueue(item.id, i + 1)}
+                  disabled={i === queue.length - 1}
+                  className="shrink-0 text-zinc-600 hover:text-zinc-200 disabled:opacity-30 disabled:hover:text-zinc-600"
+                  aria-label={`Move ${item.title} down`}
+                >
+                  <ChevronDown className="h-3.5 w-3.5" />
+                </button>
                 <button
                   type="button"
                   onClick={() => onRemoveFromQueue(item.id)}

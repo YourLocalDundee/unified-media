@@ -1,6 +1,6 @@
 # unified-frontend
 
-A single-pane-of-glass web app for the minime home server media stack (v0.10.1). Replaces the multi-tab workflow
+A single-pane-of-glass web app for the minime home server media stack (v0.10.2). Replaces the multi-tab workflow
 (Jellyfin + Seerr + qBittorrent) with one unified interface for browsing, requesting, watching, and
 monitoring downloads.
 
@@ -1188,7 +1188,7 @@ Routes (all under the player's existing `subtitleApiBase` = `/api/media/subtitle
 
 | Route | Auth | Role |
 |---|---|---|
-| `GET …/search?mediaId=&language=&hi=` | `requireAuth` | Resolves the item's IMDB id **server-side** (never from the client), queries OpenSubtitles (title-query fallback when no IMDB id), returns trimmed candidates. Does **not** spend the daily download quota. |
+| `GET …/search?mediaId=&language=&hi=` | `requireAuth` | Resolves the item's IMDB id **server-side** (never from the client), queries OpenSubtitles, returns trimmed candidates. **Episodes (v0.10.2)** search by the **series** IMDB id + `season_number`/`episode_number` (`parent_imdb_id`/`season_number`/`episode_number`, parent row resolved via `series_id`), falling back to the episode's own imdb, then a series-title query. Movies use the item imdb with a title-query fallback. Does **not** spend the daily download quota. |
 | `POST …/grab` | `requireAuth` + `verifyOrigin`, 10/hr/user | Downloads the picked file, `upsertSubtitleWant` (heals an existing `wanted`/`skipped`/`failed` row via the `(item,lang,forced,hi)` UNIQUE index), writes the `.srt` next to the media with language/HI/forced markers, sets `status='downloaded'`. Returns the stable `wantId` + remaining quota; OpenSubtitles 406 → "daily limit reached". |
 | `GET …/want/[wantId]` | `requireAuth` | Serves a downloaded sub by immutable `subtitle_wants.id` as WebVTT. |
 
@@ -1765,7 +1765,8 @@ party create).
   `setPartyMedia` in `party/db.ts`; server handlers `handleQueueAdd/Remove/Reorder/Advance` +
   `broadcastQueue` in `party/server.ts`; client state/ops (`queue`, `addToQueue`, `removeFromQueue`,
   `reorderQueue`, `playNext`, `onQueueAdvance`) in `usePartySync.ts`; UI in `party/PartyPanel.tsx`
-  (the "Up next" list + a library-search `QueueAdder`).
+  (the "Up next" list with per-item move-up/down reorder controls (v0.10.2) + remove + Play next, plus a
+  library-search `QueueAdder`).
 
 ---
 
@@ -1787,14 +1788,17 @@ release; the interactive admin picker still lists gated releases (with reasons) 
 | Size cap | `oversize` | `size > gate_max_size_*_gb` (movie default 100, tv 200; 0 disables) |
 
 Thresholds are `app_settings` keys read each search (no redeploy): `gate_min_seeders`,
-`gate_max_size_movie_gb`, `gate_max_size_tv_gb`. `partitionByGates(results, type)` splits scope-matched
+`gate_max_size_movie_gb`, `gate_max_size_tv_gb`, **editable in the UI at `/admin/automation` → "Grab
+Gates"** (v0.10.2; via `GET`/`PUT /api/admin/settings`; 0 on a max-size disables that cap).
+`partitionByGates(results, type)` splits scope-matched
 results into `passing` + `gatesByKey`; `findBestRelease(passing, …)` auto-picks from the passing pool only.
 The pack finders (`findSeasonPack`/`findArcPack`/`findCoveringPacks`) are gate-aware too.
 
 **Blocklist.** `grab_blocklist` (keyed by lowercased `info_hash`) is auto-populated by the metadata
 **reaper** (a dead stuck torrent whose indexer-claimed seeders never materialised is blocklisted so the
 cron won't re-grab it) and managed by admins via `GET/POST/DELETE /api/automation/blocklist`
-(requireAdmin + verifyOrigin).
+(requireAdmin + verifyOrigin), **surfaced in the UI at `/admin/automation` → "Blocklist"** (v0.10.2;
+list + remove/unblock + manual block-by-hash form).
 
 **Rejection reasons surface in the UI.** `ScoredCandidate.gates` is persisted in `grab_results`;
 `/api/torrent-search` returns per-result `gates`; `SeasonGrabControl` renders them as amber badges

@@ -14,6 +14,44 @@ Severity tags mirror the audit (S = security, D = data/engine, F = functional, A
 
 ## Closed (verify when convenient, then delete from this list)
 
+**2026-06-23 (v0.10.2) — Bucket-1 loose ends** (see `analysis/bucket1-cleanup-session-2026-06-23.md`)
+- **Grab-gate thresholds admin UI** — `gate_min_seeders` / `gate_max_size_movie_gb` / `gate_max_size_tv_gb`
+  (v0.10.0 `app_settings` keys, previously SQL-only) now editable on `/admin/automation` → "Grab Gates"
+  via the existing `GET`/`PUT /api/admin/settings`. 0 on a max-size disables that cap.
+- **Blocklist admin page** — `/admin/automation` → "Blocklist": lists `grab_blocklist` rows with
+  remove/unblock + a manual block form, over the existing `GET/POST/DELETE /api/automation/blocklist`.
+- **Party queue reorder** — `PartyPanel` "Up next" rows gained move-up/down controls wired to the
+  already-built `reorderQueue(itemId, toIndex)` op (chose move buttons over drag for touch reliability).
+- **Episode subtitle matching** — on-demand search now uses the **series** IMDB id + season/episode
+  (`parent_imdb_id`/`season_number`/`episode_number`) instead of the weak per-episode imdb id.
+- All four are `type-check` + `lint` (error level) + `build` clean. **Not done (carried over):** the
+  two-browser Party auto-advance manual test — needs a human at two clients, not codeable headless.
+
+**2026-06-23 (v0.10.1) — importer log-spam / item stuck on empty `info_hash`** (working tree)
+- **Fix (a) — the unstick.** `importer.ts` no longer log-and-skips a grabbed item whose `info_hash` is the
+  empty string (or missing). It now leaves `torrent` undefined for any hashless item and falls through to the
+  **same fallbacks used for departed torrents**: detect it already reached the library by `tmdb_id`, else match
+  the completed file by title in `/media/downloads/complete` and import it. The misleading
+  `"No info_hash found … skipping"` line is gone; the residual fallback log now reads accurately
+  (`"… (no info_hash recorded) not in qBt and not in library — … awaiting manual import"`).
+- **Fix (c) — stop writing hashless rows.** `recordGrab()` (`monitor.ts`) now recovers the infohash centrally
+  from a magnet's `urn:btih:` (40-char v1 hex **and** 32-char base32) via a new `urls` field, used when the
+  explicit `info_hash` is empty. Wired at all **6** grab sites: cron `grabber.ts`, `grab/season` override +
+  both pack paths, `requests/[id]/grab` override, and `requests/[id]/approve` preferred-grab. magnet/URL adds
+  now persist the real hash so the importer's **primary** `setLocation` path works. A `.torrent`-download-URL
+  add is genuinely hashless until qBit computes it post-add — those still record empty and rely on fix (a)'s
+  by-title fallback by design.
+- **Existing stuck row.** Self-heals via fix (a): the next import tick matches item 7's completed file by title
+  (or detects it already in the library) and marks it `imported`, so the every-2-min spam stops with **no
+  manual DB surgery**. If that item's download genuinely never completed, it stays `grabbed` but logs the
+  accurate "awaiting manual import" line, not the old false "No info_hash found".
+- **Deliberately not done:** option (b) (terminal `failed` state after N misses). It's a backstop, not the root
+  cause, and a blind miss-counter would wrongly fail an item whose torrent is merely slow to finish. Revisit
+  only if a real hashless-and-never-completing case shows up.
+- **Verified.** `type-check` + `lint` clean; `resolveInfoHash` logic unit-checked across explicit/magnet-hex/
+  magnet-base32/torrent-URL/empty cases. Source: `importer.ts`, `monitor.ts` (`recordGrab`/`resolveInfoHash`),
+  the 4 grab routes.
+
 **2026-06-23 (v0.10.1) — lint cleanup**
 - **All 78 `eslint-plugin-react-hooks` v6 warnings fixed with real code changes (no suppressions)** and the
   four React-Compiler-era rules (`set-state-in-effect`, `refs`, `purity`, `immutability`) promoted from
