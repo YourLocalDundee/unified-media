@@ -597,6 +597,7 @@ export async function grabItem(
       indexer: result.indexerName,
       release_title: result.title,
       info_hash: result.infoHash,
+      urls: [result.magnetUrl, result.downloadUrl],
     })
 
     updateItem(item.id, { status: 'grabbed' })

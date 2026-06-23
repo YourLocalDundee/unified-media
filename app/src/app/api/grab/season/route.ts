@@ -162,7 +162,7 @@ export async function POST(req: NextRequest) {
         type: 'tv', title, tmdb_id: tmdbId, year: year ?? undefined,
         quality_profile_id: profileId, monitor_future: false, language, ...itemScope,
       })
-      recordGrab({ item_id: item.id, indexer: body.override.indexerName ?? 'manual', release_title: body.override.title ?? 'manual override', info_hash: body.override.infoHash ?? '' })
+      recordGrab({ item_id: item.id, indexer: body.override.indexerName ?? 'manual', release_title: body.override.title ?? 'manual override', info_hash: body.override.infoHash ?? '', urls: [body.override.magnetUrl, body.override.downloadUrl] })
       updateItem(item.id, { status: 'grabbed' })
       recordGrabRequest(session.userId, tmdbId, title, year, reqScope)
       return NextResponse.json({ result: 'grabbed', release: { title: body.override.title ?? 'manual override', indexer: body.override.indexerName ?? 'manual' } })
@@ -191,7 +191,7 @@ export async function POST(req: NextRequest) {
             quality_profile_id: profileId, monitor_future: false, language,
             scope_type: 'episodes', scope_episodes: coveredEps, scope_label: arc?.name ?? null,
           })
-          recordGrab({ item_id: item.id, indexer: pack.indexerName, release_title: pack.title, info_hash: pack.infoHash })
+          recordGrab({ item_id: item.id, indexer: pack.indexerName, release_title: pack.title, info_hash: pack.infoHash, urls: [pack.magnetUrl, pack.downloadUrl] })
           updateItem(item.id, { status: 'grabbed' })
           packsGrabbed++
         } catch (err) {
@@ -246,7 +246,7 @@ export async function POST(req: NextRequest) {
       type: 'tv', title, tmdb_id: tmdbId, year: year ?? undefined,
       quality_profile_id: profileId, monitor_future: false, language, ...itemScope,
     })
-    recordGrab({ item_id: item.id, indexer: pack.indexerName, release_title: pack.title, info_hash: pack.infoHash })
+    recordGrab({ item_id: item.id, indexer: pack.indexerName, release_title: pack.title, info_hash: pack.infoHash, urls: [pack.magnetUrl, pack.downloadUrl] })
     updateItem(item.id, { status: 'grabbed' })
     recordGrabRequest(session.userId, tmdbId, title, year, reqScope)
     return NextResponse.json({

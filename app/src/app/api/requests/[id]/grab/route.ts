@@ -52,6 +52,7 @@ export async function POST(
       indexer: body.indexerName ?? 'manual',
       release_title: body.title ?? 'manual override',
       info_hash: body.infoHash ?? '',
+      urls: [body.magnetUrl],
     })
     updateItem(item.id, { status: 'grabbed' })
     return NextResponse.json({ status: 'grabbed' })

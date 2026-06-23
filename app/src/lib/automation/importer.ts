@@ -161,13 +161,15 @@ export async function runImportCheck(): Promise<void> {
   const { qbitFetch } = await import('@/lib/qbittorrent/session')
 
   for (const item of grabbed) {
-    const infoHash = hashByItemId.get(item.id)
-    if (!infoHash) {
-      process.stderr.write(`[importer] No info_hash found for item ${item.id} "${item.title}" — skipping\n`)
-      continue
-    }
-
-    const torrent = torrentByHash.get(infoHash.toLowerCase())
+    // infoHash may be missing (no grab_history row) or the empty string (a magnet/URL add that never
+    // surfaced qBittorrent's infohash — recordGrab now recovers it from the magnet, but legacy rows
+    // and .torrent-URL adds can still be hashless). Either way we can't look the torrent up by hash,
+    // so leave `torrent` undefined and let the same fallbacks used for departed torrents handle it:
+    // detect it already reached the library by tmdb_id, or match the completed file by title in
+    // /media/downloads/complete. This is what unsticks a grabbed item that would otherwise re-log
+    // every tick and never import.
+    const infoHash = hashByItemId.get(item.id) ?? ''
+    const torrent = infoHash ? torrentByHash.get(infoHash.toLowerCase()) : undefined
     if (!torrent) {
       // Torrent no longer in qBittorrent (removed after completion or manually).
       // Fallback 1: check if content already reached MEDIA_ROOTS (indexed by scanner).
@@ -279,7 +281,8 @@ export async function runImportCheck(): Promise<void> {
         }
       }
 
-      process.stderr.write(`[importer] "${item.title}" (hash ${infoHash}) not in qBt and not in library — file may be in downloads/complete awaiting manual import\n`)
+      const hashNote = infoHash ? `hash ${infoHash}` : 'no info_hash recorded'
+      process.stderr.write(`[importer] "${item.title}" (${hashNote}) not in qBt and not in library — file may be in downloads/complete awaiting manual import\n`)
       continue
     }
 

@@ -91,6 +91,7 @@ function firePreferredGrab(
         indexer: picked.indexerName,
         release_title: picked.releaseTitle,
         info_hash: picked.infoHash,
+        urls: [picked.magnetUrl, picked.downloadUrl],
       })
       updateItem(monitorItem.id, { status: 'grabbed' })
 
