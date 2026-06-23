@@ -7,6 +7,7 @@ import { useState, useEffect, use } from 'react'
 import { Loader2, ArrowLeft, Monitor, Film, ScrollText, LogIn, Shield } from 'lucide-react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
+import { nowMs } from '@/lib/utils'
 
 interface UserDetail {
   id: string; username: string; email: string | null; role: string; is_active: number
@@ -220,7 +221,7 @@ export default function UserDetailPage({ params }: { params: Promise<{ id: strin
               ['Total Watches', String(stats.total_watches)],
               ['Completed', String(stats.completed_watches)],
               ['Total Watch Time', fmtDur(stats.total_watched_sec)],
-              ['Active Sessions', String(sessions.filter(s => s.expires_at > Date.now()).length)],
+              ['Active Sessions', String(sessions.filter(s => s.expires_at > nowMs()).length)],
             ].map(([k, v]) => (
               <div key={k} className="flex justify-between text-sm gap-4">
                 <span className="text-muted-foreground shrink-0">{k}</span>
@@ -243,7 +244,7 @@ export default function UserDetailPage({ params }: { params: Promise<{ id: strin
             </thead>
             <tbody className="divide-y divide-border">
               {sessions.map(s => {
-                const expired = s.expires_at < Date.now()
+                const expired = s.expires_at < nowMs()
                 return (
                   <tr key={s.id} className="hover:bg-muted/20">
                     <td className="px-4 py-3"><code className="text-xs bg-muted px-1.5 py-0.5 rounded">{s.ip_address ?? '—'}</code></td>

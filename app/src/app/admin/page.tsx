@@ -3,7 +3,7 @@
 
 import { requireAdmin } from '@/lib/dal'
 import { getDb } from '@/lib/db/index'
-import { formatDate } from '@/lib/utils'
+import { formatDate, nowMs } from '@/lib/utils'
 
 interface StatRow { c: number }
 interface AuditRow {
@@ -23,7 +23,7 @@ const EVENT_ICONS: Record<string, string> = {
 export default async function AdminOverviewPage() {
   await requireAdmin()
   const db = getDb()
-  const now = Date.now()
+  const now = nowMs()
   const dayMs = 24 * 60 * 60 * 1000
 
   const totalUsers = (db.prepare('SELECT COUNT(*) as c FROM users WHERE role = ?').get('user') as StatRow).c

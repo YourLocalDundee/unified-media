@@ -54,20 +54,25 @@ export default function MediaAudioTools({ initAudioChain, videoRef }: Props) {
   const karaokeRef = useRef(karaoke)
   useEffect(() => { karaokeRef.current = karaoke }, [karaoke])
 
+  // Deferred a tick so the restore setStates run outside the effect's synchronous
+  // commit path (react-hooks/set-state-in-effect).
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem('unified-player-audio')
-      if (raw) {
-        const stored = JSON.parse(raw)
-        if (stored.gain !== undefined) setVolumeGain(stored.gain)
-        if (stored.compressorOn !== undefined) setCompressorEnabled(stored.compressorOn)
-        if (stored.pan !== undefined) setPan(stored.pan)
-        if (stored.normalizer !== undefined) setNormalizer(stored.normalizer)
-        if (stored.noiseGate !== undefined) setNoiseGate(stored.noiseGate)
-        if (stored.noiseGateThreshold !== undefined) setNoiseGateThreshold(stored.noiseGateThreshold)
-        if (stored.karaoke !== undefined) setKaraoke(stored.karaoke)
-      }
-    } catch {}
+    const tid = setTimeout(() => {
+      try {
+        const raw = localStorage.getItem('unified-player-audio')
+        if (raw) {
+          const stored = JSON.parse(raw)
+          if (stored.gain !== undefined) setVolumeGain(stored.gain)
+          if (stored.compressorOn !== undefined) setCompressorEnabled(stored.compressorOn)
+          if (stored.pan !== undefined) setPan(stored.pan)
+          if (stored.normalizer !== undefined) setNormalizer(stored.normalizer)
+          if (stored.noiseGate !== undefined) setNoiseGate(stored.noiseGate)
+          if (stored.noiseGateThreshold !== undefined) setNoiseGateThreshold(stored.noiseGateThreshold)
+          if (stored.karaoke !== undefined) setKaraoke(stored.karaoke)
+        }
+      } catch {}
+    }, 0)
+    return () => clearTimeout(tid)
   }, [])
 
   function saveAudio(patch: Record<string, unknown>) {

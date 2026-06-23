@@ -14,6 +14,15 @@ Severity tags mirror the audit (S = security, D = data/engine, F = functional, A
 
 ## Closed (verify when convenient, then delete from this list)
 
+**2026-06-23 (v0.10.1) — lint cleanup**
+- **All 78 `eslint-plugin-react-hooks` v6 warnings fixed with real code changes (no suppressions)** and the
+  four React-Compiler-era rules (`set-state-in-effect`, `refs`, `purity`, `immutability`) promoted from
+  `warn` back to `error` in `eslint.config.mjs`. `lint` (error level) + `type-check` + `build` all green;
+  behavior preserved. Patterns used (setTimeout-deferral, during-render adjust, `useSyncExternalStore`,
+  lazy init, live-ref bridges) are documented in CLAUDE.md §7 "react-hooks rules enforced at error" and
+  `analysis/lint-cleanup-session-2026-06-23.md`. This closes the only open follow-up from the 2026-06-22
+  decision-engine/party-queue session.
+
 **Before the 2026-06-15 session**
 - `verifyOrigin` `startsWith` bypass (A1-002) — `csrf.ts` is exact-match now.
 - **F1 watch history empty** (A3-01, A20-03) — `watch_events` is now written in

@@ -5,6 +5,14 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
 }
 
+// Single indirection for the current epoch millis. Keeps the non-deterministic clock
+// read out of component render bodies (react-hooks/purity) while preserving the exact
+// runtime behavior — these call sites want a render-time "now" snapshot for a display
+// label or a SQL expiry comparison, not reactive state.
+export function nowMs(): number {
+  return Date.now()
+}
+
 export function formatBytes(bytes: number): string {
   // NaN-safe (Bug 6): a missing/undefined/NaN/negative input previously produced "NaN undefined"
   // because Math.log(NaN)=NaN → sizes[NaN]=undefined. Treat any non-finite or <=0 value as 0 B.

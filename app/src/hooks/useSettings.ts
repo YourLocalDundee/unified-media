@@ -10,7 +10,8 @@
  */
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useCallback, useSyncExternalStore } from 'react'
+import { useIsClient } from './useIsClient'
 
 // ---------------------------------------------------------------------------
 // Playback settings
@@ -77,71 +78,92 @@ const DISPLAY_DEFAULTS: DisplayPrefs = {
 // Utilities
 // ---------------------------------------------------------------------------
 
-function readLS<T>(key: string, defaults: T): T {
-  // Guard for SSR — localStorage is browser-only
-  if (typeof window === 'undefined') return defaults
-  try {
-    const raw = localStorage.getItem(key)
-    if (!raw) return defaults
-    // Spread defaults first so any new preference fields added in future versions
-    // still get their default values when the stored JSON predates them
-    return { ...defaults, ...JSON.parse(raw) } as T
-  } catch {
-    return defaults
+/**
+ * A tiny localStorage-backed external store for one JSON key. Reading goes through
+ * `useSyncExternalStore` so the SSR/client snapshot difference is reconciled by React
+ * without a hydration mismatch and without a synchronous setState-in-effect (which the
+ * old `useState(defaults)` + hydrate-in-`useEffect` pattern tripped). `getSnapshot`
+ * returns a cached reference that only changes when the persisted value actually
+ * changes, so React does not loop. Writes update the cache and notify all subscribers,
+ * so every hook instance (and other tabs, via the `storage` event) stays in sync.
+ */
+function createLSStore<T>(key: string, defaults: T) {
+  const listeners = new Set<() => void>()
+  let cache: T = defaults
+  let cacheRaw: string | null = null
+  let initialized = false
+
+  function read(): T {
+    if (typeof window === 'undefined') return defaults
+    let raw: string | null = null
+    try { raw = localStorage.getItem(key) } catch { raw = null }
+    if (!initialized || raw !== cacheRaw) {
+      cacheRaw = raw
+      try {
+        // Spread defaults first so preference fields added in future versions still
+        // get their default values when the stored JSON predates them.
+        cache = raw ? ({ ...defaults, ...JSON.parse(raw) } as T) : defaults
+      } catch {
+        cache = defaults
+      }
+      initialized = true
+    }
+    return cache
   }
+
+  function subscribe(cb: () => void): () => void {
+    listeners.add(cb)
+    const onStorage = (e: StorageEvent) => { if (e.key === key) cb() }
+    window.addEventListener('storage', onStorage)
+    return () => {
+      listeners.delete(cb)
+      window.removeEventListener('storage', onStorage)
+    }
+  }
+
+  function write(patch: Partial<T>): void {
+    if (typeof window === 'undefined') return
+    const next = { ...read(), ...patch }
+    const raw = JSON.stringify(next)
+    try { localStorage.setItem(key, raw) } catch { /* ignore quota errors */ }
+    cache = next
+    cacheRaw = raw
+    initialized = true
+    listeners.forEach((l) => l())
+  }
+
+  return { read, subscribe, write, serverSnapshot: () => defaults }
 }
 
-function writeLS<T>(key: string, value: T): void {
-  if (typeof window === 'undefined') return
-  try {
-    localStorage.setItem(key, JSON.stringify(value))
-  } catch {
-    // ignore quota errors
-  }
-}
+const playbackStore = createLSStore('unified-playback-prefs', PLAYBACK_DEFAULTS)
+const displayStore = createLSStore('unified-display-prefs', DISPLAY_DEFAULTS)
 
 // ---------------------------------------------------------------------------
 // Hooks
 // ---------------------------------------------------------------------------
 
 export function usePlaybackPrefs() {
-  // Initialize with defaults; the effect below will overwrite with persisted values
-  // on the first client render, avoiding an SSR/client hydration mismatch.
-  const [prefs, setPrefs] = useState<PlaybackPrefs>(PLAYBACK_DEFAULTS)
-  // `ready` flips true once persisted prefs have hydrated from localStorage. Consumers that
-  // apply a one-time default (e.g. the player's language selection) wait for this so they act
-  // on the user's stored value rather than the pre-hydration defaults.
-  const [ready, setReady] = useState(false)
-
-  useEffect(() => {
-    setPrefs(readLS('unified-playback-prefs', PLAYBACK_DEFAULTS))
-    setReady(true)
-  }, [])
+  // The persisted prefs read through useSyncExternalStore: SSR/hydration sees the
+  // defaults (getServerSnapshot), then the client snapshot reflects localStorage with
+  // no hydration mismatch and no setState-in-effect.
+  const prefs = useSyncExternalStore(playbackStore.subscribe, playbackStore.read, playbackStore.serverSnapshot)
+  // `ready` flips true once mounted on the client. Consumers that apply a one-time
+  // default (e.g. the player's language selection) wait for this so they act on the
+  // user's stored value rather than the pre-hydration defaults.
+  const ready = useIsClient()
 
   const update = useCallback((patch: Partial<PlaybackPrefs>) => {
-    setPrefs((prev) => {
-      const next = { ...prev, ...patch }
-      writeLS('unified-playback-prefs', next)
-      return next
-    })
+    playbackStore.write(patch)
   }, [])
 
   return { prefs, update, ready }
 }
 
 export function useDisplayPrefs() {
-  const [prefs, setPrefs] = useState<DisplayPrefs>(DISPLAY_DEFAULTS)
-
-  useEffect(() => {
-    setPrefs(readLS('unified-display-prefs', DISPLAY_DEFAULTS))
-  }, [])
+  const prefs = useSyncExternalStore(displayStore.subscribe, displayStore.read, displayStore.serverSnapshot)
 
   const update = useCallback((patch: Partial<DisplayPrefs>) => {
-    setPrefs((prev) => {
-      const next = { ...prev, ...patch }
-      writeLS('unified-display-prefs', next)
-      return next
-    })
+    displayStore.write(patch)
   }, [])
 
   return { prefs, update }

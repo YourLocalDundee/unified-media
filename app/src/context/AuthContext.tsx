@@ -64,8 +64,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, [])
 
-  // Fetch on mount so auth state is ready before any child renders.
-  useEffect(() => { void refresh() }, [refresh])
+  // Fetch on mount so auth state is ready before any child renders. Deferred a tick
+  // so refresh()'s setState runs outside the effect's synchronous commit path
+  // (react-hooks/set-state-in-effect).
+  useEffect(() => {
+    const id = setTimeout(() => void refresh(), 0)
+    return () => clearTimeout(id)
+  }, [refresh])
 
   const logout = useCallback(async () => {
     // The POST call deletes the server-side session record and clears the

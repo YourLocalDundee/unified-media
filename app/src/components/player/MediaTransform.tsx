@@ -78,20 +78,25 @@ function buildTransform(state: TransformState): string {
 export default function MediaTransform({ onTransformChange, onAlignmentChange }: MediaTransformProps) {
   const [state, setState] = useState<TransformState>(DEFAULTS)
 
+  // Deferred a tick so the restore setState runs outside the effect's synchronous
+  // commit path (react-hooks/set-state-in-effect).
   useEffect(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY)
-      if (saved) {
-        // Spread over DEFAULTS so newly added fields don't break old stored objects.
-        const parsed = { ...DEFAULTS, ...JSON.parse(saved) } as TransformState
-        setState(parsed)
-        // Apply immediately so the video loads with saved rotation/zoom — avoids a visible jump.
-        onTransformChange(buildTransform(parsed))
-        onAlignmentChange(parsed.alignment)
+    const tid = setTimeout(() => {
+      try {
+        const saved = localStorage.getItem(STORAGE_KEY)
+        if (saved) {
+          // Spread over DEFAULTS so newly added fields don't break old stored objects.
+          const parsed = { ...DEFAULTS, ...JSON.parse(saved) } as TransformState
+          setState(parsed)
+          // Apply immediately so the video loads with saved rotation/zoom — avoids a visible jump.
+          onTransformChange(buildTransform(parsed))
+          onAlignmentChange(parsed.alignment)
+        }
+      } catch {
+        // ignore malformed storage
       }
-    } catch {
-      // ignore malformed storage
-    }
+    }, 0)
+    return () => clearTimeout(tid)
   // Callbacks are excluded to match the MediaVideoEffects pattern — see its comment.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])

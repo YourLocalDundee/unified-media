@@ -171,7 +171,12 @@ function SessionsSection({ currentSessionId }: { currentSessionId: string }) {
     }
   }, [])
 
-  useEffect(() => { void load() }, [load])
+  // Deferred a tick so load()'s loading setState runs outside the effect's
+  // synchronous commit path (react-hooks/set-state-in-effect).
+  useEffect(() => {
+    const id = setTimeout(() => void load(), 0)
+    return () => clearTimeout(id)
+  }, [load])
 
   async function revoke(id: string) {
     setRevoking(id)

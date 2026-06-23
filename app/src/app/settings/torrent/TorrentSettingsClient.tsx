@@ -405,11 +405,15 @@ export default function TorrentSettingsClient() {
   const [originalUIPrefs, setOriginalUIPrefs] = useState<TorrentUIPreferences>(DEFAULT_UI_PREFS)
   const [showPassword, setShowPassword] = useState(false)
 
-  // Load UI prefs from localStorage on mount
+  // Load UI prefs from localStorage on mount. Deferred a tick so the restore setState
+  // runs outside the effect's synchronous commit path (react-hooks/set-state-in-effect).
   useEffect(() => {
-    const loaded = loadUIPrefs()
-    setUIPrefs(loaded)
-    setOriginalUIPrefs(loaded)
+    const id = setTimeout(() => {
+      const loaded = loadUIPrefs()
+      setUIPrefs(loaded)
+      setOriginalUIPrefs(loaded)
+    }, 0)
+    return () => clearTimeout(id)
   }, [])
 
   const fetchPrefs = useCallback(async () => {
@@ -428,7 +432,12 @@ export default function TorrentSettingsClient() {
     }
   }, [])
 
-  useEffect(() => { fetchPrefs() }, [fetchPrefs])
+  // Deferred a tick so fetchPrefs' loading setState runs outside the effect's
+  // synchronous commit path (react-hooks/set-state-in-effect).
+  useEffect(() => {
+    const id = setTimeout(() => void fetchPrefs(), 0)
+    return () => clearTimeout(id)
+  }, [fetchPrefs])
 
   // Compute dirty tabs
   const dirtyTabs = new Set<string>()

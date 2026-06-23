@@ -1,5 +1,6 @@
 'use client'
 
+import Image from 'next/image'
 import { useState, useEffect, useCallback } from 'react'
 import { formatDateShort } from '@/lib/utils'
 import type { NativeRequestWithUser, RequestStatus, PreferredRelease } from '@/lib/requests/types'
@@ -363,9 +364,11 @@ function GrabResultsPanel({ requestId, status, adminMode }: GrabResultsPanelProp
 
   // A6-18: load on mount via an effect instead of calling load() in the render
   // body (which fired a fetch + setState during render). Re-runs if the panel is
-  // re-keyed to a different request.
+  // re-keyed to a different request. Deferred a tick so load()'s loading setState
+  // runs outside the effect's synchronous commit path (react-hooks/set-state-in-effect).
   useEffect(() => {
-    void load()
+    const id = setTimeout(() => void load(), 0)
+    return () => clearTimeout(id)
   }, [load])
 
   async function handleResearch() {
@@ -867,9 +870,11 @@ function RequestRow({
         {/* Poster */}
         <td className="py-3 pl-4 pr-3 w-14">
           {request.poster_path ? (
-            <img
+            <Image
               src={tmdbImageUrl(request.poster_path, 'w92')}
               alt={request.title}
+              width={44}
+              height={64}
               className="h-16 w-11 rounded object-cover"
             />
           ) : (
@@ -1020,11 +1025,15 @@ export default function RequestsTable({
   const [busyIds, setBusyIds] = useState<Set<number>>(new Set())
   const [expandedId, setExpandedId] = useState<number | null>(null)
 
-  // Restore admin mode from localStorage on mount
+  // Restore admin mode from localStorage on mount. Deferred a tick so the restore
+  // setState runs outside the effect's synchronous commit path (react-hooks/set-state-in-effect).
   useEffect(() => {
     if (!isAdmin) return
-    const stored = localStorage.getItem('unified-requests-admin-mode')
-    if (stored === 'true') setAdminMode(true)
+    const id = setTimeout(() => {
+      const stored = localStorage.getItem('unified-requests-admin-mode')
+      if (stored === 'true') setAdminMode(true)
+    }, 0)
+    return () => clearTimeout(id)
   }, [isAdmin])
 
   function toggleAdminMode() {

@@ -160,10 +160,15 @@ export default function AdminAutomationPage() {
     }
   }, [])
 
+  // Deferred a tick so the loading setStates in the fetchers run outside the effect's
+  // synchronous commit path (react-hooks/set-state-in-effect).
   useEffect(() => {
-    void fetchItems()
-    void fetchProfiles()
-    void fetchHistory()
+    const id = setTimeout(() => {
+      void fetchItems()
+      void fetchProfiles()
+      void fetchHistory()
+    }, 0)
+    return () => clearTimeout(id)
   }, [fetchItems, fetchProfiles, fetchHistory])
 
   async function handleGrab(item: MonitoredItem) {

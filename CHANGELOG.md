@@ -5,6 +5,35 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.10.1] — 2026-06-23
+
+### Changed
+- **Lint cleanup: all 78 `eslint-plugin-react-hooks` v6 warnings fixed with real code changes (no
+  suppressions), and the four React-Compiler-era rules promoted from `warn` back to `error`.** These
+  rules (`set-state-in-effect`, `refs`, `purity`, `immutability`) shipped at `error` in
+  `eslint-config-next@16` but were briefly downgraded during the v16 migration because the codebase
+  predated them. That cleanup pass is now done — `npm run lint` is clean at error level, so a new
+  violation fails the build. `type-check` and `build` remain green; behavior is preserved throughout.
+  - **`set-state-in-effect` (44 sites).** Fetch-on-mount effects defer their work a tick
+    (`setTimeout(fn, 0)` + `clearTimeout` cleanup) so the loading/data setStates no longer run in the
+    effect's synchronous commit path. Debounced search effects (PartyPanel, register username/strength)
+    moved their setStates inside the debounce timeout. Prop-sync (`SearchInput`) switched to the React
+    "adjust state during render" pattern. Player-tool localStorage restores (Equalizer/Transform/Video
+    Effects/Audio Tools/Subtitles) and the theme components defer only the React state commit (imperative
+    applies — audio chain, video transform, `applyTheme` — stay synchronous, so no flash).
+  - **`refs` (16 sites).** Latest-value ref writes (`usePartySync`, `VideoPlayer`) moved from render into
+    effects; refs read in JSX (`pendingResumeSeconds`, the stats-overlay resolution) became state set from
+    event handlers.
+  - **`purity` (4).** Render-time `Date.now()` reads in admin pages routed through a `nowMs()` helper.
+  - **`immutability` (4).** The `textTracks[i].mode` write iterates via `Array.from`; the keydown
+    handler's use-before-declaration of `toggleFullscreen`/`toggleMute`/`totalSubCount` now goes through a
+    live ref, and `detectAspectRatio` was hoisted to module scope.
+  - New shared helpers: **`useIsClient`** (a `useSyncExternalStore` is-client gate used by `ModalPortal`
+    and `useSettings`), and **`useSettings`** prefs now read through a `useSyncExternalStore` localStorage
+    store (the `ready` flag is preserved for the player's one-time audio/subtitle default logic).
+  - Also: 4 `<img>` → `next/image`, 2 internal `<a>` → `next/link`, the flat config's anonymous default
+    export named, and 2 stale `eslint-disable` directives removed.
+
 ## [0.9.11] — 2026-06-21
 
 ### Added

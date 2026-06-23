@@ -101,11 +101,16 @@ export function usePartySync(
 ): UsePartySyncResult {
   const { videoRef, enabled, mediaId, onQueueAdvance } = opts
 
-  // Live refs for values read inside stable callbacks / element listeners.
+  // Live refs for values read inside stable callbacks / element listeners. Written
+  // in an effect (not during render) so the rule against ref mutation in render is
+  // satisfied; the refs are only ever read from socket/element callbacks that fire
+  // well after commit, so the one-frame update lag is irrelevant here.
   const mediaIdRef = useRef(mediaId)
-  mediaIdRef.current = mediaId
   const onQueueAdvanceRef = useRef(onQueueAdvance)
-  onQueueAdvanceRef.current = onQueueAdvance
+  useEffect(() => {
+    mediaIdRef.current = mediaId
+    onQueueAdvanceRef.current = onQueueAdvance
+  })
 
   // --- React-visible state (drives UI) ---
   const [connected, setConnected] = useState(false)
@@ -122,6 +127,16 @@ export function usePartySync(
       enabled && partyId ? 'connecting' : 'ended',
     )
   const [ended, setEnded] = useState(false)
+  // Clear the ended flag when we (re)target a different party, via the adjust-on-change
+  // pattern (during render — no setState in the connect effect). A same-party socket
+  // reconnect keeps the flag; only a server party_ended sets it true, and pointing at a
+  // new partyId clears it. This is also safer than the old unconditional connect-effect
+  // reset, which could clobber a just-set ended=true if the effect re-ran.
+  const [endedPartyId, setEndedPartyId] = useState(partyId)
+  if (partyId !== endedPartyId) {
+    setEndedPartyId(partyId)
+    if (ended) setEnded(false)
+  }
   const [queue, setQueue] = useState<QueueItemDTO[]>([])
   // Transient, user-facing server error surfaced to the panel (A5-06).
   const [lastError, setLastError] = useState<string | null>(null)
@@ -554,15 +569,13 @@ export function usePartySync(
 
   useEffect(() => {
     if (!enabled || !partyId) {
-      // L10 — a disabled (non-party) instance has no socket; resolve the state to a
-      // settled value instead of leaving it stuck reporting 'connecting'/'connected'.
-      setConnected(false)
-      setConnectionState('ended')
+      // L10 — a disabled (non-party) instance has no socket. The connection state is
+      // derived as settled ('ended'/disconnected) at the return below, so there is no
+      // setState here (which would be a synchronous setState in an effect).
       return
     }
 
     closedByUsRef.current = false
-    setEnded(false)
     let disposed = false
 
     const clearTimers = () => {
@@ -784,15 +797,20 @@ export function usePartySync(
     send({ type: 'queue_advance', partyId, fromMediaId: mediaIdRef.current })
   }, [partyId, send])
 
+  // A disabled (non-party) instance has no socket — surface a settled state instead
+  // of whatever stale values the state holds, derived here rather than via a
+  // setState in the lifecycle effect.
+  const active = enabled && !!partyId
+
   return {
-    connected,
+    connected: active ? connected : false,
     members,
     lastActor,
     waitingFor,
     paused,
     chatMessages,
     reactions,
-    connectionState,
+    connectionState: active ? connectionState : 'ended',
     applyingRemoteStateRef,
     lastError,
     ended,

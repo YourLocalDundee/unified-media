@@ -53,19 +53,24 @@ function buildCssFilter(state: ExtendedFilterState): string {
 export default function MediaVideoEffects({ onFilterChange }: MediaVideoEffectsProps) {
   const [filters, setFilters] = useState<ExtendedFilterState>(DEFAULTS)
 
+  // Deferred a tick so the restore setState runs outside the effect's synchronous
+  // commit path (react-hooks/set-state-in-effect).
   useEffect(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY)
-      if (saved) {
-        // Spread over DEFAULTS so any new keys added in future code don't break old stored state.
-        const parsed = { ...DEFAULTS, ...JSON.parse(saved) } as ExtendedFilterState
-        setFilters(parsed)
-        // Apply immediately so the video loads with the user's saved settings.
-        onFilterChange(buildCssFilter(parsed))
+    const tid = setTimeout(() => {
+      try {
+        const saved = localStorage.getItem(STORAGE_KEY)
+        if (saved) {
+          // Spread over DEFAULTS so any new keys added in future code don't break old stored state.
+          const parsed = { ...DEFAULTS, ...JSON.parse(saved) } as ExtendedFilterState
+          setFilters(parsed)
+          // Apply immediately so the video loads with the user's saved settings.
+          onFilterChange(buildCssFilter(parsed))
+        }
+      } catch {
+        // ignore malformed storage
       }
-    } catch {
-      // ignore malformed storage
-    }
+    }, 0)
+    return () => clearTimeout(tid)
   // onFilterChange is intentionally excluded — including it would cause this to
   // re-fire whenever the parent re-renders, clobbering mid-session changes.
   // eslint-disable-next-line react-hooks/exhaustive-deps

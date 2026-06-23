@@ -21,22 +21,27 @@ export default function MediaEqualizer({ initAudioChain }: Props) {
   const [gains, setGains] = useState<number[]>(DEFAULT_GAINS)
   const chainRef = useRef<AudioChainNodes | null>(null)
 
+  // Deferred a tick so the restore setState runs outside the effect's synchronous
+  // commit path (react-hooks/set-state-in-effect).
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem('unified-player-eq')
-      if (raw) {
-        const stored = JSON.parse(raw) as number[]
-        // Length check ensures we don't apply a partially-saved array if the
-        // EQ_FREQUENCIES list is ever extended.
-        if (Array.isArray(stored) && stored.length === EQ_FREQUENCIES.length) {
-          setGains(stored)
-          // Chain may already exist if another audio tool was opened first.
-          if (chainRef.current) {
-            applyGainsToChain(chainRef.current, stored)
+    const tid = setTimeout(() => {
+      try {
+        const raw = localStorage.getItem('unified-player-eq')
+        if (raw) {
+          const stored = JSON.parse(raw) as number[]
+          // Length check ensures we don't apply a partially-saved array if the
+          // EQ_FREQUENCIES list is ever extended.
+          if (Array.isArray(stored) && stored.length === EQ_FREQUENCIES.length) {
+            setGains(stored)
+            // Chain may already exist if another audio tool was opened first.
+            if (chainRef.current) {
+              applyGainsToChain(chainRef.current, stored)
+            }
           }
         }
-      }
-    } catch {}
+      } catch {}
+    }, 0)
+    return () => clearTimeout(tid)
   }, [])
 
   function applyGainsToChain(chain: AudioChainNodes, values: number[]) {

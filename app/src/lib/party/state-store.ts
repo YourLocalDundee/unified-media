@@ -70,7 +70,6 @@ export function getPartyStore(): PartyStateStore {
   if (!g[GLOBAL_KEY]) {
     // Lazy import keeps this module free of the concrete implementation at the
     // type-contract level. InMemoryPartyStateStore is the v1 single-instance backing.
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { InMemoryPartyStateStore } = require('./in-memory-store') as typeof import('./in-memory-store')
     g[GLOBAL_KEY] = new InMemoryPartyStateStore()
   }

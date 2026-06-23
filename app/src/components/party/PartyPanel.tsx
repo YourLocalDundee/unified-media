@@ -45,16 +45,20 @@ function QueueAdder({ onAdd }: { onAdd: (mediaId: string, title?: string) => voi
   const [open, setOpen] = useState(false)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  // All setStates run inside the debounce timeout (empty term resolves on a 0ms
+  // timer) so none fire synchronously in the effect body (react-hooks/set-state-in-effect).
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current)
     const term = q.trim()
     if (!term) {
-      setHits([])
-      setLoading(false)
-      return
+      debounceRef.current = setTimeout(() => {
+        setHits([])
+        setLoading(false)
+      }, 0)
+      return () => { if (debounceRef.current) clearTimeout(debounceRef.current) }
     }
-    setLoading(true)
     debounceRef.current = setTimeout(async () => {
+      setLoading(true)
       try {
         const res = await fetch(`/api/media/items?q=${encodeURIComponent(term)}&limit=12`)
         const data = (await res.json().catch(() => [])) as MediaHit[]

@@ -76,24 +76,37 @@ function StepOne({ onNext, onDone, verificationRequired }: {
   // typing a password. The username and common words are passed as user-inputs so
   // zxcvbn penalises them in the entropy estimate.
   useEffect(() => {
-    if (!password) { setStrength(-1); return }
+    let cancelled = false
+    if (!password) {
+      // Deferred so the reset setState runs outside the effect's synchronous commit
+      // path (react-hooks/set-state-in-effect).
+      const tid = setTimeout(() => setStrength(-1), 0)
+      return () => { cancelled = true; clearTimeout(tid) }
+    }
     void (async () => {
       try {
         const z = (await import('zxcvbn')).default
-        setStrength((z(password, [username, 'unified', 'media']) as { score: number }).score)
-      } catch { setStrength(-1) }
+        if (!cancelled) setStrength((z(password, [username, 'unified', 'media']) as { score: number }).score)
+      } catch { if (!cancelled) setStrength(-1) }
     })()
+    return () => { cancelled = true }
   }, [password, username])
 
   // Debounced live availability check — fires 500ms after the user stops typing.
   // Checks both users and pending_registrations so a username mid-verification
   // elsewhere is not simultaneously offered here. The server re-checks at
   // verify-email time anyway, so this is a UX hint, not the enforcement point.
+  // The status setStates run inside the debounce timeout (an invalid username
+  // resolves to 'idle' on a 0ms timer) so none fire synchronously in the effect
+  // body (react-hooks/set-state-in-effect).
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current)
-    if (!username || !/^[a-zA-Z0-9_]{3,20}$/.test(username)) { setUsernameStatus('idle'); return }
-    setUsernameStatus('checking')
+    if (!username || !/^[a-zA-Z0-9_]{3,20}$/.test(username)) {
+      debounceRef.current = setTimeout(() => setUsernameStatus('idle'), 0)
+      return () => { if (debounceRef.current) clearTimeout(debounceRef.current) }
+    }
     debounceRef.current = setTimeout(async () => {
+      setUsernameStatus('checking')
       try {
         const res = await fetch(`/api/auth/check-username?username=${encodeURIComponent(username)}`)
         const d = await res.json() as { available: boolean }
@@ -449,7 +462,12 @@ function RegisterForm() {
     }
   }, [])
 
-  useEffect(() => { void fetchConfig() }, [fetchConfig])
+  // Deferred a tick so fetchConfig's setState runs outside the effect's synchronous
+  // commit path (react-hooks/set-state-in-effect).
+  useEffect(() => {
+    const id = setTimeout(() => void fetchConfig(), 0)
+    return () => clearTimeout(id)
+  }, [fetchConfig])
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-background p-4">

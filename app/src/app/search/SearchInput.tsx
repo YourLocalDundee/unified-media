@@ -8,7 +8,7 @@
  */
 'use client'
 
-import { useState, useEffect, useRef, useTransition } from 'react'
+import { useState, useRef, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 
 interface SearchInputProps {
@@ -21,10 +21,14 @@ export default function SearchInput({ initialQuery }: SearchInputProps) {
   const [isPending, startTransition] = useTransition()
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  // Sync if the server-side query changes (e.g. browser back/forward)
-  useEffect(() => {
+  // Sync if the server-side query changes (e.g. browser back/forward). Done during
+  // render via the "adjust state on prop change" pattern rather than an effect, so
+  // there is no synchronous setState in an effect (react-hooks/set-state-in-effect).
+  const [prevInitialQuery, setPrevInitialQuery] = useState(initialQuery)
+  if (initialQuery !== prevInitialQuery) {
+    setPrevInitialQuery(initialQuery)
     setValue(initialQuery)
-  }, [initialQuery])
+  }
 
   function navigate(q: string) {
     const trimmed = q.trim()

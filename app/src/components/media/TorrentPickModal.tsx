@@ -1,5 +1,6 @@
 'use client'
 
+import Image from 'next/image'
 import { useState, useEffect, useRef, useCallback } from 'react'
 import type { TorrentSearchResult } from '@/app/api/torrent-search/route'
 import { ModalPortal } from '@/components/ui/ModalPortal'
@@ -192,10 +193,12 @@ export function TorrentPickModal({
     }
   }, [mediaType])
 
-  // Auto-search on open
+  // Auto-search on open. Deferred a tick so runSearch's loading setState runs
+  // outside the effect's synchronous commit path (react-hooks/set-state-in-effect).
   useEffect(() => {
-    void runSearch(title)
+    const id = setTimeout(() => void runSearch(title), 0)
     inputRef.current?.focus()
+    return () => clearTimeout(id)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -343,9 +346,11 @@ export function TorrentPickModal({
         <div className="flex items-start justify-between gap-4 px-5 pt-5 pb-4 border-b border-zinc-800 shrink-0">
           <div className="flex items-center gap-3 min-w-0">
             {posterPath && (
-              <img
+              <Image
                 src={`https://image.tmdb.org/t/p/w92${posterPath}`}
                 alt={title}
+                width={40}
+                height={56}
                 className="h-14 w-10 rounded object-cover shrink-0"
               />
             )}

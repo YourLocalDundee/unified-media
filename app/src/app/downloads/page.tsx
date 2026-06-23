@@ -817,11 +817,13 @@ export default function DownloadsPage() {
   // Load UI prefs from localStorage (A8-H3: wire Interface tab settings to this page)
   const [uiPrefs, setUIPrefs] = useState<UIPrefs>(DEFAULT_UI_PREFS)
   useEffect(() => {
-    setUIPrefs(loadUIPrefs())
+    // Deferred a tick so the initial restore setState runs outside the effect's
+    // synchronous commit path (react-hooks/set-state-in-effect).
+    const id = setTimeout(() => setUIPrefs(loadUIPrefs()), 0)
     // Re-load whenever settings are saved in the slide-over
     const handler = () => setUIPrefs(loadUIPrefs())
     window.addEventListener('storage', handler)
-    return () => window.removeEventListener('storage', handler)
+    return () => { clearTimeout(id); window.removeEventListener('storage', handler) }
   }, [])
 
   // Click-to-cycle header sort: 1st click ascending, 2nd descending, 3rd back to the default
@@ -859,13 +861,18 @@ export default function DownloadsPage() {
   const [speedHistory, setSpeedHistory] = useState<{ dl: number; ul: number }[]>([])
   useEffect(() => {
     if (!transferInfo) return
-    setSpeedHistory((prev) => {
-      const next = [
-        ...prev,
-        { dl: transferInfo.dl_info_speed ?? 0, ul: transferInfo.up_info_speed ?? 0 },
-      ]
-      return next.length > 60 ? next.slice(next.length - 60) : next
-    })
+    // Deferred a tick so the history-append setState runs outside the effect's
+    // synchronous commit path (react-hooks/set-state-in-effect).
+    const id = setTimeout(() => {
+      setSpeedHistory((prev) => {
+        const next = [
+          ...prev,
+          { dl: transferInfo.dl_info_speed ?? 0, ul: transferInfo.up_info_speed ?? 0 },
+        ]
+        return next.length > 60 ? next.slice(next.length - 60) : next
+      })
+    }, 0)
+    return () => clearTimeout(id)
   }, [transferInfo])
 
   // True only during the very first poll before any response (success or error) arrives;

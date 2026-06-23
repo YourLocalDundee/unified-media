@@ -5,6 +5,7 @@
 
 import { Suspense } from 'react'
 import Link from 'next/link'
+import Image from 'next/image'
 import { getResumeItems, getWatchState, getRecentlyAdded, getItemById } from '@/lib/media-server/library'
 import { tmdbImageUrl } from '@/lib/media-server'
 import { getAllRequests } from '@/lib/requests/monitor'
@@ -292,9 +293,11 @@ async function PendingRequestsSection() {
                 <a href="/requests" className="flex items-center gap-4 px-4 py-3">
                 {/* Poster thumbnail */}
                 {req.poster_path ? (
-                  <img
+                  <Image
                     src={`https://image.tmdb.org/t/p/w92${req.poster_path}`}
                     alt={req.title}
+                    width={40}
+                    height={56}
                     className="h-14 w-10 flex-shrink-0 rounded object-cover"
                   />
                 ) : (

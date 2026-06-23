@@ -68,7 +68,12 @@ export default function BridgePage() {
     }
   }, [])
 
-  useEffect(() => { void fetchItems() }, [fetchItems])
+  // Deferred a tick so the loading setState in fetchItems runs outside the effect's
+  // synchronous commit path (react-hooks/set-state-in-effect).
+  useEffect(() => {
+    const id = setTimeout(() => void fetchItems(), 0)
+    return () => clearTimeout(id)
+  }, [fetchItems])
 
   async function handleSync() {
     setSyncing(true)

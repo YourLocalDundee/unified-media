@@ -152,8 +152,10 @@ docker compose -f /opt/docker/compose/docker-compose.yml up -d --force-recreate 
   hook/server but `PartyPanel` only exposes remove + Play next; add drag handles if wanted.
 - **Auto-advance starts the next item playing** — if you'd rather it land paused ("Up next, press play"),
   flip `s.paused = false` → `true` in `handleQueueAdvance` (server.ts).
-- **78 lint warnings** remain (pre-existing warn-level react-hooks rules; my `QueueAdder` effect adds a
-  couple of the same kind). Promote to error + clean up when you want.
+- ~~**78 lint warnings** remain (pre-existing warn-level react-hooks rules; my `QueueAdder` effect adds a
+  couple of the same kind). Promote to error + clean up when you want.~~ **DONE — v0.10.1 (2026-06-23).**
+  All 78 fixed with real code changes (no suppressions); the four react-hooks rules are now enforced at
+  `error`. See `analysis/lint-cleanup-session-2026-06-23.md` and CHANGELOG 0.10.1.
 
 ## 6. Remaining mining backlog (next candidates)
 

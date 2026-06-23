@@ -36,12 +36,17 @@ export default function MonitoringPage() {
 
   // Fetch once on mount — the full list is small enough that client-side
   // filtering is faster than a new request per filter change.
+  // Deferred a tick so setLoading runs outside the effect's synchronous commit
+  // path (react-hooks/set-state-in-effect).
   useEffect(() => {
-    setLoading(true)
-    fetch('/api/admin/monitoring')
-      .then(r => r.json())
-      .then((d: { users: UserMonitor[] }) => setUsers(d.users))
-      .finally(() => setLoading(false))
+    const id = setTimeout(() => {
+      setLoading(true)
+      fetch('/api/admin/monitoring')
+        .then(r => r.json())
+        .then((d: { users: UserMonitor[] }) => setUsers(d.users))
+        .finally(() => setLoading(false))
+    }, 0)
+    return () => clearTimeout(id)
   }, [])
 
   const filtered = users.filter(u => {

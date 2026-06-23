@@ -18,12 +18,17 @@ export default function AdminAuditPage() {
   const [page, setPage] = useState(1)
   const [expanded, setExpanded] = useState<Set<number>>(new Set())
 
+  // Deferred a tick so setLoading runs outside the effect's synchronous commit
+  // path (react-hooks/set-state-in-effect).
   useEffect(() => {
-    setLoading(true)
-    fetch(`/api/admin/audit?page=${page}`)
-      .then(r => r.json())
-      .then(d => setData(d as AuditResponse))
-      .finally(() => setLoading(false))
+    const id = setTimeout(() => {
+      setLoading(true)
+      fetch(`/api/admin/audit?page=${page}`)
+        .then(r => r.json())
+        .then(d => setData(d as AuditResponse))
+        .finally(() => setLoading(false))
+    }, 0)
+    return () => clearTimeout(id)
   }, [page])
 
   function toggleExpand(id: number) {

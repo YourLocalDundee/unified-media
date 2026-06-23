@@ -32,11 +32,13 @@ export default function AdminServerPage() {
   }, [])
 
   useEffect(() => {
-    void refresh()
+    // Deferred a tick so refresh()'s loading setState runs outside the effect's
+    // synchronous commit path (react-hooks/set-state-in-effect).
+    const kick = setTimeout(() => void refresh(), 0)
     // 15s polling keeps the page fresh without hammering the API.
     // clearInterval on unmount prevents stale callbacks after navigation.
     const iv = setInterval(() => void refresh(), 15_000)
-    return () => clearInterval(iv)
+    return () => { clearTimeout(kick); clearInterval(iv) }
   }, [refresh])
 
   const services = data ? [

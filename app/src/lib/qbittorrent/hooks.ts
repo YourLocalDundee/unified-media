@@ -146,7 +146,6 @@ export function useMainData(): {
       document.removeEventListener('visibilitychange', onVisibility)
     }
     // retryCount is included so a manual retry triggers a fresh poll cycle
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [poll, retryCount])
 
   return { torrents, transferInfo, isConnected, error, retry }

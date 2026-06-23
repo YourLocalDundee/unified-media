@@ -43,14 +43,21 @@ export default function ThemeSection() {
   const [importError, setImportError] = useState<string | null>(null)
   const importInputRef = useRef<HTMLInputElement>(null)
 
+  // The imperative style injection stays synchronous; only the React state commit
+  // is deferred a tick so it runs outside the effect's synchronous commit path
+  // (react-hooks/set-state-in-effect).
   useEffect(() => {
     const saved = loadCustomThemes()
-    setCustomThemes(saved)
     // Inject CSS for every custom theme so their color swatches render correctly
     for (const ct of saved) {
       injectCustomThemeStyle(ct.id, buildCustomThemeCSS(ct.id, ct.colors))
     }
-    setActive(getActiveTheme())
+    const active = getActiveTheme()
+    const tid = setTimeout(() => {
+      setCustomThemes(saved)
+      setActive(active)
+    }, 0)
+    return () => clearTimeout(tid)
   }, [])
 
   useEffect(() => {

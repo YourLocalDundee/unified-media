@@ -486,7 +486,10 @@ export default function QualityProfilesPage() {
     if (!selectedId && json.profiles.length > 0) setSelectedId(json.profiles[0].id)
   }, [selectedId])
 
-  useEffect(() => { void load() }, [load])
+  useEffect(() => {
+    const id = setTimeout(() => void load(), 0)
+    return () => clearTimeout(id)
+  }, [load])
 
   async function createProfile() {
     if (!newName.trim()) return

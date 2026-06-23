@@ -18,12 +18,17 @@ export default function AdminActivityPage() {
   const [loading, setLoading] = useState(true)
   const [page, setPage] = useState(1)
 
+  // Deferred a tick so setLoading runs outside the effect's synchronous commit
+  // path (react-hooks/set-state-in-effect).
   useEffect(() => {
-    setLoading(true)
-    fetch(`/api/admin/activity?page=${page}`)
-      .then(r => r.json())
-      .then(d => setData(d as ActivityResponse))
-      .finally(() => setLoading(false))
+    const id = setTimeout(() => {
+      setLoading(true)
+      fetch(`/api/admin/activity?page=${page}`)
+        .then(r => r.json())
+        .then(d => setData(d as ActivityResponse))
+        .finally(() => setLoading(false))
+    }, 0)
+    return () => clearTimeout(id)
   }, [page])
 
   async function exportCsv() {

@@ -163,7 +163,12 @@ export default function QualitySettingsPage() {
     setDefaultId(d.defaultProfileId)
   }, [])
 
-  useEffect(() => { void load() }, [load])
+  // Deferred a tick so load()'s setState runs outside the effect's synchronous
+  // commit path (react-hooks/set-state-in-effect).
+  useEffect(() => {
+    const id = setTimeout(() => void load(), 0)
+    return () => clearTimeout(id)
+  }, [load])
 
   async function handleCreate(name: string, conditions: QualityCondition[]) {
     const res = await fetch('/api/automation/profiles', {

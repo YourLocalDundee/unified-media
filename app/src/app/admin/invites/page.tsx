@@ -31,7 +31,12 @@ export default function AdminInvitesPage() {
     }
   }, [])
 
-  useEffect(() => { void fetchInvites() }, [fetchInvites])
+  // Deferred a tick so fetchInvites' loading setState runs outside the effect's
+  // synchronous commit path (react-hooks/set-state-in-effect).
+  useEffect(() => {
+    const id = setTimeout(() => void fetchInvites(), 0)
+    return () => clearTimeout(id)
+  }, [fetchInvites])
 
   async function createInvite(e: React.FormEvent) {
     e.preventDefault()

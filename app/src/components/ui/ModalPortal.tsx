@@ -1,7 +1,7 @@
 'use client'
 
-import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { useIsClient } from '@/hooks/useIsClient'
 
 /**
  * Renders its children into <body> via a React portal.
@@ -19,10 +19,7 @@ import { createPortal } from 'react-dom'
  * <body> target during SSR), avoiding any hydration mismatch.
  */
 export function ModalPortal({ children }: { children: React.ReactNode }) {
-  const [mounted, setMounted] = useState(false)
-  useEffect(() => {
-    setMounted(true)
-  }, [])
+  const mounted = useIsClient()
   if (!mounted) return null
   return createPortal(children, document.body)
 }

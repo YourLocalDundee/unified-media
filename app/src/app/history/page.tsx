@@ -40,15 +40,20 @@ export default function HistoryPage() {
   const [page, setPage] = useState(1)
   const [filter, setFilter] = useState<'all' | 'movies' | 'episodes' | 'completed'>('all')
 
+  // Deferred a tick so setLoading runs outside the effect's synchronous commit
+  // path (react-hooks/set-state-in-effect).
   useEffect(() => {
-    setLoading(true)
-    const qs = new URLSearchParams({ page: String(page), filter })
-    // Resetting `page` to 1 when filter changes is handled at the call sites
-    // below (filter button onClick), not here, to avoid a double-fetch.
-    fetch(`/api/auth/history?${qs}`)
-      .then(r => r.json())
-      .then(d => setData(d as HistoryResponse))
-      .finally(() => setLoading(false))
+    const id = setTimeout(() => {
+      setLoading(true)
+      const qs = new URLSearchParams({ page: String(page), filter })
+      // Resetting `page` to 1 when filter changes is handled at the call sites
+      // below (filter button onClick), not here, to avoid a double-fetch.
+      fetch(`/api/auth/history?${qs}`)
+        .then(r => r.json())
+        .then(d => setData(d as HistoryResponse))
+        .finally(() => setLoading(false))
+    }, 0)
+    return () => clearTimeout(id)
   }, [page, filter])
 
   // Only summarizes the current page — not the user's all-time total

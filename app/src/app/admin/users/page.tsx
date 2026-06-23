@@ -45,7 +45,12 @@ export default function AdminUsersPage() {
     }
   }, [page, search, roleFilter, statusFilter])
 
-  useEffect(() => { void fetchUsers() }, [fetchUsers])
+  // Deferred a tick so fetchUsers' loading setState runs outside the effect's
+  // synchronous commit path (react-hooks/set-state-in-effect).
+  useEffect(() => {
+    const id = setTimeout(() => void fetchUsers(), 0)
+    return () => clearTimeout(id)
+  }, [fetchUsers])
 
   async function doAction(userId: string, action: 'suspend' | 'activate' | 'reset-password') {
     setActionLoading(`${action}:${userId}`)

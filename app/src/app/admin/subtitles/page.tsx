@@ -61,7 +61,12 @@ export default function AdminSubtitlesPage() {
     finally { setLoading(false) }
   }, [filter])
 
-  useEffect(() => { void fetchItems() }, [fetchItems])
+  // Deferred a tick so fetchItems' loading setState runs outside the effect's
+  // synchronous commit path (react-hooks/set-state-in-effect).
+  useEffect(() => {
+    const id = setTimeout(() => void fetchItems(), 0)
+    return () => clearTimeout(id)
+  }, [fetchItems])
 
   const counts = {
     wanted: items.filter(i => i.status === 'wanted').length,

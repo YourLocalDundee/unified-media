@@ -57,7 +57,12 @@ export default function MediaServerPage() {
     }
   }, [])
 
-  useEffect(() => { void fetchStats() }, [fetchStats])
+  // Deferred a tick so fetchStats' loading setState runs outside the effect's
+  // synchronous commit path (react-hooks/set-state-in-effect).
+  useEffect(() => {
+    const id = setTimeout(() => void fetchStats(), 0)
+    return () => clearTimeout(id)
+  }, [fetchStats])
 
   async function runScan() {
     setScanning(true)

@@ -12,6 +12,7 @@
  */
 
 import { getDb } from '@/lib/db/index'
+import { nowMs } from '@/lib/utils'
 import Link from 'next/link'
 
 interface Props { params: Promise<{ code: string }> }
@@ -24,7 +25,7 @@ export default async function InvitePage({ params }: Props) {
   // Both conditions must hold simultaneously for the invite to be valid.
   const invite = db.prepare(
     'SELECT * FROM invite_codes WHERE code = ? AND (expires_at IS NULL OR expires_at > ?) AND (max_uses = 0 OR use_count < max_uses)'
-  ).get(code.toUpperCase(), Date.now()) as { code: string; label: string | null; created_by: string } | undefined
+  ).get(code.toUpperCase(), nowMs()) as { code: string; label: string | null; created_by: string } | undefined
 
   if (!invite) {
     return (

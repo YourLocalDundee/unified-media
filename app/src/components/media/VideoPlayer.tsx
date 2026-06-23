@@ -71,6 +71,29 @@ interface NextEpisode {
   seasonEpisode?: string
 }
 
+// Maps native dimensions to the closest aspect-ratio mode. Pure (args only), so it
+// lives at module scope — usable from the lazy useState initializer without tripping
+// the "use before declaration" rule and without being recreated each render.
+function detectAspectRatio(w: number, h: number): AspectRatioMode {
+  if (!w || !h) return 'auto'
+  const ar = w / h
+  const RATIO_MAP: [number, AspectRatioMode][] = [
+    [16 / 9,  '16:9'],
+    [4 / 3,   '4:3'],
+    [21 / 9,  '21:9'],
+    [2.35,    '2.35:1'],
+    [1,       '1:1'],
+    [9 / 16,  '9:16'],
+  ]
+  let best: AspectRatioMode = 'auto'
+  let minDiff = Infinity
+  for (const [ratio, mode] of RATIO_MAP) {
+    const diff = Math.abs(ar - ratio)
+    if (diff < minDiff) { minDiff = diff; best = mode }
+  }
+  return minDiff <= 0.15 ? best : 'auto'
+}
+
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
@@ -132,6 +155,9 @@ export default function VideoPlayer(props: PlaybackData) {
   const [isPlaying, setIsPlaying] = useState(false)
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
+  // Decoded resolution for the stats overlay. Captured into state on loadedmetadata
+  // rather than read from videoRef.current during render (refs aren't readable in render).
+  const [videoResolution, setVideoResolution] = useState<{ w: number; h: number }>({ w: 0, h: 0 })
   const [volume, setVolume] = useState(1)
   const [isMuted, setIsMuted] = useState(false)
   const [isFullscreen, setIsFullscreen] = useState(false)
@@ -144,14 +170,22 @@ export default function VideoPlayer(props: PlaybackData) {
 
   // Resume-mode dialog: shown when resumeMode === 'ask' and resumeSeconds > 30
   const [showResumeDialog, setShowResumeDialog] = useState(false)
-  const pendingResumeSecondsRef = useRef<number | null>(null)
+  // State (not a ref) because it is read during render to drive the resume dialog —
+  // reading a ref's .current in render is disallowed. Written only from event handlers.
+  const [pendingResumeSeconds, setPendingResumeSeconds] = useState<number | null>(null)
 
   // Tools panel state
   const [showToolsPanel, setShowToolsPanel] = useState(false)
   const [videoFilter, setVideoFilter] = useState('')
   const [videoTransform, setVideoTransform] = useState('')
   const [videoAlignment, setVideoAlignment] = useState('center center')
-  const [aspectRatioMode, setAspectRatioMode] = useState<AspectRatioMode>('auto')
+  // Lazily initialised from the native dimensions (deterministic, props-only, so it is
+  // SSR-safe) instead of being set in a mount effect — avoids a setState-in-effect.
+  const [aspectRatioMode, setAspectRatioMode] = useState<AspectRatioMode>(() =>
+    props.nativeWidth && props.nativeHeight
+      ? detectAspectRatio(props.nativeWidth, props.nativeHeight)
+      : 'auto',
+  )
   const { initChain } = useAudioChain(videoRef)
 
   // Quality / resolution state
@@ -311,53 +345,51 @@ export default function VideoPlayer(props: PlaybackData) {
   }, [partyId, teardownParty])
 
   // If the host ends the party (server -> party_ended), tear the local party UI down.
-  useEffect(() => {
-    if (party.ended) teardownParty()
-  }, [party.ended, teardownParty])
+  // Done during render via the adjust-on-change pattern (the partyId guard prevents
+  // re-entry once teardown clears it) so there is no synchronous setState in an effect.
+  if (party.ended && partyId !== null) {
+    teardownParty()
+  }
 
   // The keyboard effect is a single mount-once listener with stale closures over
-  // party state, so route its play/seek intents through a live ref instead.
+  // party state, so route its play/seek intents through a live ref instead. The ref
+  // is updated in an effect (not during render) and only read from the keydown
+  // listener that fires after commit, so the update timing is irrelevant.
   const partyKbdRef = useRef<{
     active: boolean
     sendIntent: (action: 'play' | 'pause' | 'seek', positionTicks: number) => void
   }>({ active: false, sendIntent: () => {} })
-  partyKbdRef.current = { active: partyActive, sendIntent: party.sendIntent }
+  useEffect(() => {
+    partyKbdRef.current = { active: partyActive, sendIntent: party.sendIntent }
+  })
+
+  // Same live-ref bridge for the keydown handler's other dependencies, which are
+  // declared further down the component (toggleFullscreen/toggleMute/totalSubCount).
+  // Reading them straight from the mount-once listener would be "use before
+  // declaration"; the ref is populated by an effect after they exist (see below).
+  const kbdActionsRef = useRef<{
+    toggleFullscreen: () => void
+    toggleMute: () => void
+    totalSubCount: number
+  }>({ toggleFullscreen: () => {}, toggleMute: () => {}, totalSubCount: 0 })
 
   // ---------------------------------------------------------------------------
   // Aspect ratio auto-detection + screen-aware quality selection (mount once)
   // ---------------------------------------------------------------------------
 
-  function detectAspectRatio(w: number, h: number): AspectRatioMode {
-    if (!w || !h) return 'auto'
-    const ar = w / h
-    const RATIO_MAP: [number, AspectRatioMode][] = [
-      [16 / 9,  '16:9'],
-      [4 / 3,   '4:3'],
-      [21 / 9,  '21:9'],
-      [2.35,    '2.35:1'],
-      [1,       '1:1'],
-      [9 / 16,  '9:16'],
-    ]
-    let best: AspectRatioMode = 'auto'
-    let minDiff = Infinity
-    for (const [ratio, mode] of RATIO_MAP) {
-      const diff = Math.abs(ar - ratio)
-      if (diff < minDiff) { minDiff = diff; best = mode }
-    }
-    return minDiff <= 0.15 ? best : 'auto'
-  }
 
+  // Screen-aware quality selection. Needs the client window so it stays in an effect,
+  // but the setStates are deferred a tick so they run outside the effect's synchronous
+  // commit path (react-hooks/set-state-in-effect). (Aspect ratio is lazily initialised
+  // above instead.)
   useEffect(() => {
-    if (props.nativeWidth && props.nativeHeight) {
-      setAspectRatioMode(detectAspectRatio(props.nativeWidth, props.nativeHeight))
-    }
-
     const qualities = props.availableQualities
-    if (qualities?.length && props.nativeHeight) {
+    if (!qualities?.length || !props.nativeHeight) return
+    const tid = setTimeout(() => {
       // Screen-aware selection: downgrade when the screen is significantly smaller than native.
       const screenH = (window.screen.height ?? 0) * (window.devicePixelRatio || 1)
       let selected: typeof qualities[number] | undefined
-      if (props.nativeHeight > 0 && screenH > 0 && screenH < props.nativeHeight * 0.75) {
+      if (props.nativeHeight! > 0 && screenH > 0 && screenH < props.nativeHeight! * 0.75) {
         selected = qualities.find((q) => !q.isDirect && q.maxHeight <= screenH)
       }
       // Quality pref: if the user set a preferred max bitrate and screen-aware didn't trigger,
@@ -373,17 +405,20 @@ export default function VideoPlayer(props: PlaybackData) {
         setActiveStreamUrl(selected.streamUrl)
         setActiveIsHls(selected.isHls)
       }
-    }
+    }, 0)
+    return () => clearTimeout(tid)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Apply the active subtitle track to the video element's textTracks
+  // Apply the active subtitle track to the video element's textTracks. Array.from
+  // materialises a plain array of the live TextTrack objects so the per-element `.mode`
+  // write isn't flagged as mutating a value the compiler treats as immutable.
   useEffect(() => {
     const tracks = videoRef.current?.textTracks
     if (!tracks) return
-    for (let i = 0; i < tracks.length; i++) {
-      tracks[i].mode = i === activeSubIndex ? 'showing' : 'hidden'
-    }
+    Array.from(tracks).forEach((track, i) => {
+      track.mode = i === activeSubIndex ? 'showing' : 'hidden'
+    })
   }, [activeSubIndex])
 
   // Keep ref current so the keydown closure (empty deps) can read the latest value.
@@ -507,23 +542,29 @@ export default function VideoPlayer(props: PlaybackData) {
     if (!prefsReady || defaultsApplied.current) return
     defaultsApplied.current = true
 
-    const preferredAudioRel = selectPreferredAudioRel(
-      audioStreams,
-      prefs.audioLang,
-      serverDefaultAudioRel,
-    )
-    if (preferredAudioRel !== serverDefaultAudioRel) {
-      handleAudioChange(preferredAudioRel)
-    }
+    // Deferred a tick so the default-applying setStates run outside the effect's
+    // synchronous commit path (react-hooks/set-state-in-effect). The once-only guard
+    // above is set synchronously so a re-render during the defer window cannot double-run.
+    const tid = setTimeout(() => {
+      const preferredAudioRel = selectPreferredAudioRel(
+        audioStreams,
+        prefs.audioLang,
+        serverDefaultAudioRel,
+      )
+      if (preferredAudioRel !== serverDefaultAudioRel) {
+        handleAudioChange(preferredAudioRel)
+      }
 
-    // Build a combined SubTrackInfo list so language matching considers both embedded
-    // and downloaded tracks. Downloaded tracks are appended after embedded ones so the
-    // returned index matches the unified subtitleTracks array.
-    const allSubTrackInfo = [
-      ...subtitleStreams.map(s => ({ language: s.language, title: s.title, forced: s.forced, extractable: s.extractable })),
-      ...(downloadedSubtitles ?? []).map(s => ({ language: s.language, title: s.label, forced: s.forced, extractable: true })),
-    ]
-    setActiveSubIndex(selectPreferredSubtitleIndex(allSubTrackInfo, prefs.subtitleLang))
+      // Build a combined SubTrackInfo list so language matching considers both embedded
+      // and downloaded tracks. Downloaded tracks are appended after embedded ones so the
+      // returned index matches the unified subtitleTracks array.
+      const allSubTrackInfo = [
+        ...subtitleStreams.map(s => ({ language: s.language, title: s.title, forced: s.forced, extractable: s.extractable })),
+        ...(downloadedSubtitles ?? []).map(s => ({ language: s.language, title: s.label, forced: s.forced, extractable: true })),
+      ]
+      setActiveSubIndex(selectPreferredSubtitleIndex(allSubTrackInfo, prefs.subtitleLang))
+    }, 0)
+    return () => clearTimeout(tid)
   }, [
     prefsReady,
     prefs,
@@ -531,6 +572,7 @@ export default function VideoPlayer(props: PlaybackData) {
     subtitleStreams,
     serverDefaultAudioRel,
     handleAudioChange,
+    downloadedSubtitles,
   ])
 
   // ---------------------------------------------------------------------------
@@ -695,7 +737,7 @@ export default function VideoPlayer(props: PlaybackData) {
   // player by didReportStart, so it is safe to call once here. Keep the latest closure
   // in a ref so the empty-dep effect fires only on true unmount.
   const reportStopRef = useRef(reportStop)
-  reportStopRef.current = reportStop
+  useEffect(() => { reportStopRef.current = reportStop })
   useEffect(() => {
     return () => {
       endedAbortRef.current?.abort()
@@ -760,12 +802,12 @@ export default function VideoPlayer(props: PlaybackData) {
         case 'f':
         case 'F':
           e.preventDefault()
-          toggleFullscreen()
+          kbdActionsRef.current.toggleFullscreen()
           break
         case 'm':
         case 'M':
           e.preventDefault()
-          toggleMute()
+          kbdActionsRef.current.toggleMute()
           break
         case 'k':
         case 'K':
@@ -842,8 +884,11 @@ export default function VideoPlayer(props: PlaybackData) {
         case 'S':
           // Cycle through all subtitle tracks (embedded + downloaded): off → 0 → … → off
           e.preventDefault()
-          if (totalSubCount > 0) {
-            setActiveSubIndex((cur) => cur >= totalSubCount - 1 ? -1 : cur + 1)
+          {
+            const subCount = kbdActionsRef.current.totalSubCount
+            if (subCount > 0) {
+              setActiveSubIndex((cur) => cur >= subCount - 1 ? -1 : cur + 1)
+            }
           }
           break
         case 'n':
@@ -872,6 +917,8 @@ export default function VideoPlayer(props: PlaybackData) {
   const handleLoadedMetadata = () => {
     const video = videoRef.current
     if (!video) return
+    // Capture the decoded resolution for the stats overlay (updates on quality/audio switches).
+    setVideoResolution({ w: video.videoWidth, h: video.videoHeight })
     // A pending seek (from an audio-track switch) takes precedence and resumes at the exact
     // position captured before the switch — the same currentTime path as everything else.
     if (pendingSeekRef.current != null) {
@@ -889,7 +936,7 @@ export default function VideoPlayer(props: PlaybackData) {
         resumeApplied.current = true
       } else if (prefs.resumeMode === 'ask') {
         // Show the resume dialog; actual seek is deferred until the user chooses.
-        pendingResumeSecondsRef.current = resumeSeconds
+        setPendingResumeSeconds(resumeSeconds)
         setShowResumeDialog(true)
       } else {
         // 'resume' (default): seek to the saved position automatically.
@@ -1201,6 +1248,12 @@ export default function VideoPlayer(props: PlaybackData) {
   const subtitleTracks = [...embeddedTracks, ...downloadedTracks, ...extraTrackList]
   const totalSubCount = subtitleTracks.length
 
+  // Keep the keydown handler's live ref current (declared up near partyKbdRef). These
+  // values change per render but the mount-once listener reads the latest via the ref.
+  useEffect(() => {
+    kbdActionsRef.current = { toggleFullscreen, toggleMute, totalSubCount }
+  })
+
   // Append a freshly grabbed subtitle as a live <track> and select it. extraTracks is
   // read from the current render closure (the handler is recreated each render), and
   // de-dupes by wantId so re-adding the same pick just re-selects it.
@@ -1325,24 +1378,24 @@ export default function VideoPlayer(props: PlaybackData) {
       <style>{`::cue { font-size: ${cueFontSize}; color: ${cueColor}; background-color: ${cueBg}; }`}</style>
 
       {/* Resume-mode dialog ("Always ask") */}
-      {showResumeDialog && pendingResumeSecondsRef.current != null && (
+      {showResumeDialog && pendingResumeSeconds != null && (
         <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/60">
           <div className="rounded-xl bg-zinc-900 border border-zinc-700 p-6 flex flex-col gap-4 max-w-xs w-full mx-4 text-white">
             <p className="text-base font-semibold">Resume playback?</p>
             <p className="text-sm text-zinc-400">
-              You were at {new Date(pendingResumeSecondsRef.current * 1000).toISOString().slice(11, 19).replace(/^00:/, '')}
+              You were at {new Date(pendingResumeSeconds * 1000).toISOString().slice(11, 19).replace(/^00:/, '')}
             </p>
             <div className="flex gap-3">
               <button
                 className="flex-1 rounded-lg bg-primary py-2 text-sm font-medium hover:bg-primary/90 transition-colors"
                 onClick={() => {
                   const video = videoRef.current
-                  const t = pendingResumeSecondsRef.current
+                  const t = pendingResumeSeconds
                   if (video && t != null) {
                     resumeApplied.current = true
                     video.currentTime = t
                   }
-                  pendingResumeSecondsRef.current = null
+                  setPendingResumeSeconds(null)
                   setShowResumeDialog(false)
                 }}
               >
@@ -1352,7 +1405,7 @@ export default function VideoPlayer(props: PlaybackData) {
                 className="flex-1 rounded-lg border border-zinc-700 py-2 text-sm font-medium hover:bg-zinc-800 transition-colors"
                 onClick={() => {
                   resumeApplied.current = true
-                  pendingResumeSecondsRef.current = null
+                  setPendingResumeSeconds(null)
                   setShowResumeDialog(false)
                 }}
               >
@@ -1385,7 +1438,7 @@ export default function VideoPlayer(props: PlaybackData) {
       {/* Stats overlay */}
       {showStats && !isLoading && (
         <div className="absolute top-16 left-4 z-30 bg-black/80 text-white text-xs font-mono p-3 rounded-lg pointer-events-none space-y-1">
-          <div>Resolution: {videoRef.current?.videoWidth ?? 0}×{videoRef.current?.videoHeight ?? 0}</div>
+          <div>Resolution: {videoResolution.w}×{videoResolution.h}</div>
           <div>Quality: {currentQuality?.label ?? 'Unknown'}</div>
           <div>Duration: {formatPlayerTime(duration)}</div>
           <div className="text-zinc-400 text-[10px] mt-1">Press I to toggle</div>

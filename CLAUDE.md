@@ -1,6 +1,6 @@
 # unified-frontend
 
-A single-pane-of-glass web app for the minime home server media stack (v0.10.0). Replaces the multi-tab workflow
+A single-pane-of-glass web app for the minime home server media stack (v0.10.1). Replaces the multi-tab workflow
 (Jellyfin + Seerr + qBittorrent) with one unified interface for browsing, requesting, watching, and
 monitoring downloads.
 
@@ -810,6 +810,29 @@ Setting `video.currentTime` before `loadedmetadata` fires causes silent stalls o
 ### Sidebar/MobileNav active-highlight: use `pathname.startsWith(href + '/')`
 
 The isActive check for nav items must use `pathname === href || pathname.startsWith(href + '/')` — note the trailing slash. Using bare `pathname.startsWith(href)` causes `/browse` to falsely match any route that starts with those characters. The Sidebar no longer uses `useSearchParams` for active state; all nav hrefs are plain paths with no query strings.
+
+### react-hooks (React Compiler) rules are enforced at `error` (v0.10.1)
+
+`eslint.config.mjs` keeps `react-hooks/set-state-in-effect`, `refs`, `purity`, and `immutability` at
+**`error`** (not the default `warn`). `npm run lint` is clean and a new violation fails the build, so use
+the established compliant patterns rather than adding an `eslint-disable`:
+
+- **`set-state-in-effect`** — don't call `setState` synchronously in an effect body. For fetch/restore-on-mount
+  effects, defer the work a tick (`const id = setTimeout(fn, 0); return () => clearTimeout(id)`); the rule
+  flags any synchronous setState *reachable* from the effect, including calling an `async` function that
+  setStates (so deferral, not just removing a leading `setLoading(true)`, is what clears it). For "reset state
+  when a prop changes" use the during-render adjust pattern (`if (prop !== prev) { setPrev(prop); setX(...) }`).
+  For SSR-safe localStorage hydration use `useSyncExternalStore` (see `useSettings`/`useIsClient`), or a lazy
+  `useState(() => …)` initializer for components that never render during SSR (e.g. the player-tool panels,
+  which only mount after the Sliders click).
+- **`refs`** — never read or write `ref.current` during render. Keep "latest value" refs current in an effect
+  (`useEffect(() => { ref.current = value })`); if a value is needed *in render*, make it state and set it from
+  an event handler (see `pendingResumeSeconds` and the stats-overlay resolution in `VideoPlayer`).
+- **`purity`** — no `Date.now()`/`Math.random()` in a render body; route clock reads through `nowMs()` (`lib/utils.ts`).
+- **`immutability`** — "use before declaration" inside a mount-once listener (the keydown handler referencing
+  `toggleFullscreen`/`totalSubCount` declared lower) goes through a live ref populated by a later effect; hoist
+  pure helpers (`detectAspectRatio`) to module scope; iterate live DOM lists via `Array.from(...)` before
+  mutating element properties.
 
 ---
 

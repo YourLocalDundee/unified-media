@@ -64,20 +64,25 @@ export default function MediaSubtitles({ videoRef }: Props) {
   const [shadow, setShadow] = useState<Shadow>('outline')
   const [opacity, setOpacity] = useState(100)
 
+  // Deferred a tick so the restore setStates run outside the effect's synchronous
+  // commit path (react-hooks/set-state-in-effect).
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY)
-      if (raw) {
-        const stored = JSON.parse(raw)
-        if (stored.delay !== undefined) setDelay(stored.delay)
-        if (stored.fontSize) setFontSize(stored.fontSize)
-        if (stored.color) setColor(stored.color)
-        if (stored.background !== undefined) setBackground(stored.background)
-        if (stored.align) setAlign(stored.align)
-        if (stored.shadow) setShadow(stored.shadow)
-        if (stored.opacity !== undefined) setOpacity(stored.opacity)
-      }
-    } catch {}
+    const tid = setTimeout(() => {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY)
+        if (raw) {
+          const stored = JSON.parse(raw)
+          if (stored.delay !== undefined) setDelay(stored.delay)
+          if (stored.fontSize) setFontSize(stored.fontSize)
+          if (stored.color) setColor(stored.color)
+          if (stored.background !== undefined) setBackground(stored.background)
+          if (stored.align) setAlign(stored.align)
+          if (stored.shadow) setShadow(stored.shadow)
+          if (stored.opacity !== undefined) setOpacity(stored.opacity)
+        }
+      } catch {}
+    }, 0)
+    return () => clearTimeout(tid)
   }, [])
 
   useEffect(() => {

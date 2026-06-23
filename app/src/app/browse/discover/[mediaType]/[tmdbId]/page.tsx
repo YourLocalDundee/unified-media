@@ -1,4 +1,5 @@
 import Image from 'next/image'
+import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { requireAuth } from '@/lib/dal'
 import { getMovieDetail, getTVDetail, getArcs } from '@/lib/media-server/tmdb'
@@ -124,9 +125,9 @@ export default async function DiscoverDetailPage({ params }: PageProps) {
       <div className="mx-auto max-w-screen-xl px-4 sm:px-6 lg:px-8">
         {/* Back link */}
         <div className={`${backdropUrl ? '-mt-8' : 'pt-8'} pb-2`}>
-          <a href="/browse?type=discover" className="text-sm text-zinc-400 hover:text-white transition">
+          <Link href="/browse?type=discover" className="text-sm text-zinc-400 hover:text-white transition">
             ← Back to Discover
-          </a>
+          </Link>
         </div>
 
         {/* Hero section */}

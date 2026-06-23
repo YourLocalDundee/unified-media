@@ -316,17 +316,23 @@ export default function ThemeToggle() {
   const [modalOpen, setModalOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
 
-  // On mount: restore theme + inject any saved custom theme styles
+  // On mount: restore theme + inject any saved custom theme styles. The imperative
+  // theme apply (inject styles + applyTheme) stays synchronous so there is no theme
+  // flash; only the React state commit is deferred a tick so it runs outside the
+  // effect's synchronous commit path (react-hooks/set-state-in-effect).
   useEffect(() => {
     const saved = loadCustomThemes()
-    setCustomThemes(saved)
     for (const ct of saved) {
       const css = buildCustomThemeCSS(ct.id, ct.colors)
       injectCustomThemeStyle(ct.id, css)
     }
     const t = getInitialTheme()
-    setActive(t)
     applyTheme(t)
+    const tid = setTimeout(() => {
+      setCustomThemes(saved)
+      setActive(t)
+    }, 0)
+    return () => clearTimeout(tid)
   }, [])
 
   // Close dropdown on outside click

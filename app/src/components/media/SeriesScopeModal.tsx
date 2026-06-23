@@ -147,29 +147,34 @@ export function SeriesScopeModal({ tmdbId, title, onConfirm, onClose }: Props) {
   // Load seasons on mount
   // ---------------------------------------------------------------------------
 
+  // Deferred a tick so setSeasonsLoading runs outside the effect's synchronous
+  // commit path (react-hooks/set-state-in-effect).
   useEffect(() => {
-    setSeasonsLoading(true)
-    fetch(`/api/tmdb/tv/${tmdbId}`)
-      .then(r => {
-        if (!r.ok) throw new Error(`TMDB ${r.status}`)
-        return r.json() as Promise<{
-          seasons: {
-            seasonNumber: number
-            name: string | null
-            episodeCount: number | null
-            airDate: string | null
-          }[]
-        }>
-      })
-      .then(data => {
-        // Filter out season 0 (specials) — grabbers don't handle them well
-        const regular = (data.seasons ?? []).filter(s => s.seasonNumber > 0)
-        setSeasons(regular)
-        // Pre-select all seasons for 'seasons' scope default
-        setSelectedSeasons(new Set(regular.map(s => s.seasonNumber)))
-      })
-      .catch(err => setSeasonsError(String(err)))
-      .finally(() => setSeasonsLoading(false))
+    const id = setTimeout(() => {
+      setSeasonsLoading(true)
+      fetch(`/api/tmdb/tv/${tmdbId}`)
+        .then(r => {
+          if (!r.ok) throw new Error(`TMDB ${r.status}`)
+          return r.json() as Promise<{
+            seasons: {
+              seasonNumber: number
+              name: string | null
+              episodeCount: number | null
+              airDate: string | null
+            }[]
+          }>
+        })
+        .then(data => {
+          // Filter out season 0 (specials) — grabbers don't handle them well
+          const regular = (data.seasons ?? []).filter(s => s.seasonNumber > 0)
+          setSeasons(regular)
+          // Pre-select all seasons for 'seasons' scope default
+          setSelectedSeasons(new Set(regular.map(s => s.seasonNumber)))
+        })
+        .catch(err => setSeasonsError(String(err)))
+        .finally(() => setSeasonsLoading(false))
+    }, 0)
+    return () => clearTimeout(id)
   }, [tmdbId])
 
   // ---------------------------------------------------------------------------

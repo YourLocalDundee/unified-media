@@ -56,19 +56,26 @@ export function TorrentDetailPanel({ hash, colSpan, onClose }: Props) {
     }
   }, [hash])
 
+  // Deferred a tick so the reset setStates run outside the effect's synchronous
+  // commit path (react-hooks/set-state-in-effect).
   useEffect(() => {
-    setLoading(true)
-    setTab('overview')
-    setProps(null)
-    setFiles([])
-    setTrackers([])
-    setPeers([])
-    setError(null)
-    fetchOverview().finally(() => setLoading(false))
+    const id = setTimeout(() => {
+      setLoading(true)
+      setTab('overview')
+      setProps(null)
+      setFiles([])
+      setTrackers([])
+      setPeers([])
+      setError(null)
+      fetchOverview().finally(() => setLoading(false))
+    }, 0)
+    return () => clearTimeout(id)
   }, [fetchOverview])
 
   useEffect(() => {
-    if (tab === 'peers') fetchPeers()
+    if (tab !== 'peers') return
+    const id = setTimeout(() => void fetchPeers(), 0)
+    return () => clearTimeout(id)
   }, [tab, fetchPeers])
 
   useEffect(() => {

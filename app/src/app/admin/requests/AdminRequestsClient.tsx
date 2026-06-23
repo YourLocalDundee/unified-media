@@ -1,5 +1,6 @@
 'use client'
 
+import Image from 'next/image'
 import { useState, useCallback } from 'react'
 import type { NativeRequestWithUser, RequestStatus, PreferredRelease } from '@/lib/requests/types'
 import type { ScoredCandidate, GrabResultRow } from '@/lib/automation/grab-results'
@@ -610,9 +611,11 @@ function RequestRow({ req, localStatus, expanded, onToggleExpand, onApprove, onD
         {/* Poster */}
         <td className="py-3 pl-4 pr-3 w-14">
           {req.poster_path ? (
-            <img
+            <Image
               src={tmdbImageUrl(req.poster_path, 'w92')}
               alt={req.title}
+              width={44}
+              height={64}
               className="h-16 w-11 rounded object-cover"
             />
           ) : (
