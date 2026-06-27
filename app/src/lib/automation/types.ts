@@ -12,8 +12,11 @@
 export type MediaType = 'movie' | 'tv'
 // 'grabbing' is a transient atomic-claim state (D3) preventing the immediate-grab path and the
 // 15-min cron from grabbing the same row twice; 'grabbed' means sent to download client;
-// 'imported' means confirmed in media_items table
-export type ItemStatus = 'wanted' | 'grabbing' | 'grabbed' | 'imported' | 'ignored'
+// 'imported' means confirmed in media_items table.
+// 'failed' is terminal: the reaper sets it after MAX_GRAB_ATTEMPTS reaps leave no healthy
+// download, so the grab cron stops re-searching a title with no good release (getWantedItems
+// only selects 'wanted', so a 'failed' row is never re-grabbed). Surfaced to the admin queue.
+export type ItemStatus = 'wanted' | 'grabbing' | 'grabbed' | 'imported' | 'ignored' | 'failed'
 // import_status lives on grab_history, not monitored_items; updated by availability.ts
 export type ImportStatus = 'pending' | 'imported' | 'failed'
 

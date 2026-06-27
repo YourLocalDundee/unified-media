@@ -1,7 +1,7 @@
 // POST /api/admin/users/[id]/suspend
-// Sets is_active = 0 which blocks login for the user. The self-suspension guard
-// is a safety net — existing sessions are not invalidated here (admins must do
-// that separately via the sessions tab).
+// Sets is_active = 0 which blocks login for the user, and deletes their existing sessions so
+// the suspension takes effect immediately rather than only on the user's next server request
+// (A-5). The self-suspension guard is a safety net.
 
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAdmin, logEvent } from '@/lib/dal'
@@ -14,7 +14,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const { id } = await params
   // Prevent an admin from locking themselves out.
   if (id === session.userId) return NextResponse.json({ error: 'Cannot suspend yourself' }, { status: 400 })
-  getDb().prepare('UPDATE users SET is_active = 0 WHERE id = ?').run(id)
+  const db = getDb()
+  db.prepare('UPDATE users SET is_active = 0 WHERE id = ?').run(id)
+  // A-5: invalidate any live sessions so the suspended user is logged out now.
+  db.prepare('DELETE FROM sessions WHERE user_id = ?').run(id)
   await logEvent('user_suspended', { targetId: id }, { userId: session.userId, username: session.username })
   return NextResponse.json({ ok: true })
 }

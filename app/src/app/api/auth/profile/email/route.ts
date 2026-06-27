@@ -32,7 +32,9 @@ export async function PATCH(req: NextRequest) {
   const db = getDb()
   // Exclude the current user's own ID so they can "update" to the same email
   // they already have (e.g. to normalize casing) without a spurious conflict.
-  const conflict = db.prepare('SELECT id FROM users WHERE LOWER(email) = ? AND id != ?').get(trimmed, session.userId)
+  // email is stored lowercased on every write, so compare the bare (UNIQUE-indexed) column to a
+  // lowercased bind — LOWER(email) would defeat the index and force a full scan (C-1).
+  const conflict = db.prepare('SELECT id FROM users WHERE email = ? AND id != ?').get(trimmed, session.userId)
   if (conflict) {
     return NextResponse.json({ error: 'That email address is already in use' }, { status: 409 })
   }

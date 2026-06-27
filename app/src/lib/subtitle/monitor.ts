@@ -6,6 +6,15 @@
 import { getDb } from '@/lib/db/index'
 import type { SubtitleStatus, SubtitleWant } from './types'
 
+// ISO 639 language tags are 2 or 3 lowercase letters. Anything else is rejected so a
+// crafted `language` value can never escape the media directory when it is used to build
+// a subtitle filename on disk (path-traversal-on-write guard — audit A-2). Returns the
+// normalized tag, or null when the input is not a valid language code.
+export function normalizeSubtitleLang(raw: string | null | undefined): string | null {
+  const v = (raw ?? '').toLowerCase().trim()
+  return /^[a-z]{2,3}$/.test(v) ? v : null
+}
+
 export function getWantedSubtitles(): SubtitleWant[] {
   const db = getDb()
   return db

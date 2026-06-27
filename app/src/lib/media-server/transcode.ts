@@ -88,6 +88,14 @@ export type TranscodeTier = 'remux' | 'audio_transcode' | 'full_vaapi'
 const activeJobs   = new Map<string, ChildProcess>()
 const startingJobs = new Set<string>()   // guard against double-spawn on concurrent requests
 
+// Global cap on concurrently-RUNNING ffmpeg transcodes (audit B-2). A transcode runs linearly to
+// the end of the file, so the slot is held until the process exits — that is what actually bounds
+// competing VAAPI encodes on the N100, not merely serialising the spawn moment. Default 2 (an
+// active stream plus one audio-track switch or a second viewer); a genuine third transcode queues
+// until a slot frees. Override with TRANSCODE_MAX_CONCURRENT.
+const MAX_CONCURRENT_TRANSCODES = Math.max(1, parseInt(process.env.TRANSCODE_MAX_CONCURRENT ?? '2', 10))
+const transcodeLimit = pLimit(MAX_CONCURRENT_TRANSCODES)
+
 // ---------------------------------------------------------------------------
 // Path helpers
 // ---------------------------------------------------------------------------
@@ -261,6 +269,12 @@ async function evictLruIfNeeded(): Promise<void> {
 // Spawn ffmpeg
 // ---------------------------------------------------------------------------
 
+// The returned promise resolves once the ffmpeg process has STARTED (so ensureHls can begin
+// polling for the manifest while the transcode runs). The global concurrency slot, however, is
+// held until the process EXITS — scheduled through transcodeLimit — so a long-running transcode
+// keeps gating other encodes for its whole lifetime, not just at spawn time (B-2). When the limit
+// is saturated the run is queued, so the returned `started` promise (and the caller's manifest
+// poll) only resolves once a slot frees and ffmpeg has actually been spawned.
 async function spawnFfmpeg(
   mediaId:  string,
   filePath: string,
@@ -270,37 +284,64 @@ async function spawnFfmpeg(
   seekSec?: number,
 ): Promise<void> {
   const cacheDir = getCacheDir(mediaId, audioIdx)
-  await fs.mkdir(cacheDir, { recursive: true })
   const key = jobKey(mediaId, audioIdx)
 
-  const args = buildArgs(filePath, cacheDir, tier, startNum, audioIdx, seekSec)
-  console.log(`[transcode] start tier=${tier} id=${mediaId} a${audioIdx}`, FFMPEG_BIN, args.slice(0, 14).join(' '), '...')
+  let markStarted!: () => void
+  let markStartFailed!: (err: unknown) => void
+  const started = new Promise<void>((res, rej) => { markStarted = res; markStartFailed = rej })
 
-  const proc = spawn(FFMPEG_BIN, args, { stdio: ['ignore', 'ignore', 'pipe'] })
-  activeJobs.set(key, proc)
+  void transcodeLimit(
+    () =>
+      // The slot promise stays pending until ffmpeg exits (resolveSlot on close/error), which is
+      // how the concurrency cap is enforced across the full transcode, not just the spawn.
+      new Promise<void>((resolveSlot) => {
+        void (async () => {
+          try {
+            await fs.mkdir(cacheDir, { recursive: true })
 
-  let stderr = ''
-  proc.stderr?.on('data', (chunk: Buffer) => { stderr += chunk.toString() })
+            const args = buildArgs(filePath, cacheDir, tier, startNum, audioIdx, seekSec)
+            console.log(`[transcode] start tier=${tier} id=${mediaId} a${audioIdx}`, FFMPEG_BIN, args.slice(0, 14).join(' '), '...')
 
-  proc.on('close', (code) => {
-    activeJobs.delete(key)
-    if (code === 0) {
-      console.log(`[transcode] done tier=${tier} id=${mediaId}`)
-    } else {
-      // Tier C failures are flagged as ERROR because they commonly indicate a device
-      // or permission problem that must be fixed rather than retried silently.
-      const prefix = tier === 'full_vaapi'
-        ? `[transcode][ERROR] VAAPI encode failed (code=${code}) for ${mediaId}. ` +
-          `Verify /dev/dri/renderD128 is mounted and the process is in group 990 (render).`
-        : `[transcode] ffmpeg exited code=${code} for ${mediaId}`
-      console.error(prefix + '\n' + stderr.slice(-1200))
-    }
-  })
+            const proc = spawn(FFMPEG_BIN, args, { stdio: ['ignore', 'ignore', 'pipe'] })
+            activeJobs.set(key, proc)
 
-  proc.on('error', (err) => {
-    activeJobs.delete(key)
-    console.error(`[transcode] spawn error for ${mediaId} a${audioIdx}:`, err)
-  })
+            let stderr = ''
+            proc.stderr?.on('data', (chunk: Buffer) => { stderr += chunk.toString() })
+
+            proc.on('close', (code) => {
+              activeJobs.delete(key)
+              if (code === 0) {
+                console.log(`[transcode] done tier=${tier} id=${mediaId}`)
+              } else {
+                // Tier C failures are flagged as ERROR because they commonly indicate a device
+                // or permission problem that must be fixed rather than retried silently.
+                const prefix = tier === 'full_vaapi'
+                  ? `[transcode][ERROR] VAAPI encode failed (code=${code}) for ${mediaId}. ` +
+                    `Verify /dev/dri/renderD128 is mounted and the process is in group 990 (render).`
+                  : `[transcode] ffmpeg exited code=${code} for ${mediaId}`
+                console.error(prefix + '\n' + stderr.slice(-1200))
+              }
+              resolveSlot()
+            })
+
+            proc.on('error', (err) => {
+              activeJobs.delete(key)
+              console.error(`[transcode] spawn error for ${mediaId} a${audioIdx}:`, err)
+              resolveSlot()
+            })
+
+            // ffmpeg is now running and registered in activeJobs — let the caller start polling.
+            markStarted()
+          } catch (err) {
+            // mkdir (or a synchronous spawn) failed before the process existed — never started.
+            markStartFailed(err)
+            resolveSlot()
+          }
+        })()
+      }),
+  )
+
+  return started
 }
 
 // ---------------------------------------------------------------------------

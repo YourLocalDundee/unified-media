@@ -6,72 +6,12 @@ monitoring downloads.
 
 ---
 
-## ⚠️ Known Issues — Full Audit 2026-06-13
+## Known Issues
 
-A 21-agent read-only audit ran on 2026-06-13 covering every page, all 105 API routes, and the lib layer, plus
-cross-cutting passes (a11y/mobile, resilience, deploy/runtime, input validation, temporal, untrusted-input). Build was
-clean (`type-check` + `build` pass, `npm audit` 0 vulns). ~379 findings; the 19 raw criticals collapse to ~10 distinct
-issues. **Full detail and per-domain reports live in [`analysis/audit-2026-06-13/00-SUMMARY.md`](analysis/audit-2026-06-13/00-SUMMARY.md)
-plus `analysis/audit-2026-06-13/01..21-*.md`.** Fix the P0 block before shipping further features.
-
-> **Remediation status — 2026-06-19 (all criticals closed).** Reconciled live tracker at
-> [`analysis/open-issues.md`](analysis/open-issues.md) (read that for the current state; this block is
-> the original audit). **All P0 and P1 items are now closed.** Closed since the audit: **S1/S2** (auth
-> + CSRF on every mutating route — qbit/torznab/jellyfin metadata + all admin/automation/subtitle/profile
-> routes; `proxy.ts` is intentionally a UX-only redirect guard per DAL pattern, not a security boundary),
-> **S3** (force-pw-change confirmed correct — `requireAuth()` redirects those sessions, the change route
-> uses `getSession()`), **S4** (indexer `api_key` redacted), **D1** (auto-delete ownership guards),
-> **D2** (monitored_items unique index + fetch-or-create), **D3** (atomic `grabbing` status),
-> **F3** (healthcheck + caddy fragment), and **P1** (heavy work moved to background job queue).
-> Note: `stream`/`playback`/`subtitles`/`sessions/*` jellyfin routes were already gated via
-> `getSession()`; the bullet below overstated S1. Open items: P2 no-op settings (product decision
-> needed), a11y modal focus traps + light-theme contrast.
-
-### Critical (deduped)
-
-**Security**
-- **Unauthenticated internal proxies.** `src/proxy.ts` only checks a session cookie is *present*, not valid. The
-  qBittorrent `[...path]` proxy, most jellyfin routes (`stream`, `playback/[id]`, `sessions/*`, `subtitles/*`,
-  `image/[itemId]`, `series/[id]*`, `seasons/[seasonId]/episodes`), and `api/torznab/search` all run with **no
-  `requireAuth()`**, handing attacker input to qBit/Jellyfin with server credentials. (A7-01, A4, A13-01, A12-02, A14-C1/C2)
-- **CSRF effectively off.** `verifyOrigin` runs on only ~12 of 51 mutating routes, and uses `origin.startsWith()` so
-  `unified.minijoe.dev.evil.com` passes; a missing Origin is allowed. (`lib/csrf.ts:11`; A6-01, A9-01, A1-002)
-- **Forced password change is bypassable.** The 30-day session cookie is set before the `force_pw_change` check.
-  (`api/auth/login/route.ts:97`; A1-001)
-- **Indexer `api_key` leaked to the browser** in plaintext on every indexer GET. (`lib/indexer/config.ts:7`; A12-01)
-
-**Data loss / engine**
-- **auto-delete can delete user-owned media** — matches `media_items` by `tmdb_id`+`type` with no ownership link.
-  (`lib/automation/auto-delete.ts:50`; A11-C1) Highest-risk behavior in the app.
-- **`monitored_items` has no unique index** → dead dedup guards → duplicate rows and double grabs.
-  (`db/migrations.ts:160`, `automation/monitor.ts:88`; A6-02, A11-C2) Plus a fire-and-forget grab that races the cron (A11-C3).
-
-**Functional / resource / deploy**
-- **Watch history is permanently empty** — nothing writes `watch_events`; the player writes `media_watch_state`.
-  (`history/page.tsx:48`; A3-01, A20-03)
-- **Player AudioContext never torn down** — browsers cap ~6, so long sessions break all audio tools. (`useAudioChain.ts:16`; A4)
-- **Deploy fragments broken** — healthcheck uses `curl` (absent from the `node:24-slim` runtime image → container
-  unhealthy forever); committed `caddy.fragment`/`docker-compose.fragment.yml` lack the party `ws` route. (A18-C1/C2)
-
-### Systemic patterns (HIGH)
-- Many client mutations never check `res.ok` (failed delete/suspend/save report success). (A7-04, A9-10/11, A10-03/06/07)
-- ~13 of 18 `components/media/*` are dead, plus the alt `downloads/components/*` UI and `party/JoinByCodeModal`; full
-  delete-or-wire list in `analysis/audit-2026-06-13/17-resilience-deadcode.md`.
-- No-op settings: the Display page (except Theme), 9 of 11 Playback prefs, the Torrent Interface tab. (A08)
-- Heavy work synchronously in request handlers: `media/scan` (ffprobe+TMDB), subtitle download, embedded-subtitle
-  ffmpeg — needs a job queue. (A10-08, A15-H1/H2)
-- All `next/image` are `unoptimized`. (A02-006, A15-G)
-- No `error.tsx`/`not-found.tsx`/`loading.tsx`/`aria-live` anywhere in the app. (A16, A17)
-
-### Remediation order
-- **P0** — add auth to qbit/jellyfin/torznab routes (+ make `proxy.ts` validate sessions); fix and enforce `verifyOrigin`
-  on all mutations; give auto-delete an ownership key; gate force-password-change; stop returning `api_key` to the client.
-- **P1** — unique index on `monitored_items` (dedupe existing rows first); atomic `grabbing` status; fix healthcheck +
-  edge fragments; resolve the `auto_approved`/`auto_delete_at` mismatch (A20-01); move scan/subtitle/ffmpeg work to a job queue.
-- **P2** — wire or remove watch history; tear down the AudioContext; add broad `res.ok` handling; add `error.tsx`/
-  `not-found.tsx` + `aria-live`; enable image optimization; delete the ~27 dead modules; fix continue-watching ordering (A20-02).
-
----
+A 21-agent read-only audit (2026-06-13) covered every page, all 105 API routes, and the lib layer
+(~379 findings; build clean). All P0/P1 criticals are closed. **The live tracker is
+[`analysis/open-issues.md`](analysis/open-issues.md)** — read that for current state. Original audit
+reports: [`analysis/audit-2026-06-13/`](analysis/audit-2026-06-13/).
 
 ## 1. Project Overview
 
@@ -1700,7 +1640,7 @@ exact BunkerWeb variable against the running config first. Tailnet clients do no
 
 ### Audit and remediation (v0.9.5)
 
-A full 10-domain code audit of this feature is recorded in `PARTY_PLAY_AUDIT.md` at the repo root, and
+A full 10-domain code audit of this feature is recorded in `analysis/PARTY_PLAY_AUDIT.md`, and
 **all of its Critical/High/Medium/Low findings have since been fixed** (one round, 10 agents, one file
 group each). What was hardened:
 

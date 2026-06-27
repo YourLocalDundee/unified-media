@@ -28,7 +28,7 @@ interface MonitoredItem {
   quality_profile_id: number
   root_path: string
   monitored: number
-  status: 'wanted' | 'grabbed' | 'imported' | 'ignored'
+  status: 'wanted' | 'grabbed' | 'imported' | 'ignored' | 'failed'
   created_at: number
   updated_at: number
   // Decision gate-chain fields (LEFT JOINed from grab_results)
@@ -98,6 +98,7 @@ const STATUS_BADGE: Record<MonitoredItem['status'], string> = {
   grabbed:  'bg-blue-500/20 text-blue-400 border border-blue-500/30',
   imported: 'bg-green-500/20 text-green-400 border border-green-500/30',
   ignored:  'bg-muted text-muted-foreground border border-border',
+  failed:   'bg-red-500/20 text-red-400 border border-red-500/30',
 }
 
 // import_status lives on grab_history rows; separate map from item status badges
@@ -662,8 +663,9 @@ export default function AdminAutomationPage() {
         </div>
 
         <p className="mb-3 text-xs text-muted-foreground">
-          Releases here are never auto-grabbed. The metadata reaper adds dead stuck torrents
-          automatically; you can also block a hash by hand or remove one to allow it again.
+          Releases here are never auto-grabbed. The reaper adds dead torrents automatically (stuck
+          metadata with no peers, or a stalled/errored download), then re-searches the item for the
+          next-best release; you can also block a hash by hand or remove one to allow it again.
         </p>
 
         {blockError && (

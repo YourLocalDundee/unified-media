@@ -76,6 +76,17 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
   fields.push('updated_at = ?'); values.push(Date.now())
   getDb().prepare(`UPDATE users SET ${fields.join(', ')} WHERE id = ?`).run(...values, id)
+
+  // A-5: revoke the target's sessions when a change must not leave an existing login usable —
+  // demotion, suspension, or a forced password change — so it takes effect immediately rather
+  // than waiting for the getSession is_active JOIN to catch them on their next request.
+  const demoted = body.role !== undefined && body.role !== 'admin' && user.role === 'admin'
+  const suspended = body.is_active !== undefined && !body.is_active
+  const forcedPwChange = body.force_pw_change !== undefined && !!body.force_pw_change
+  if (demoted || suspended || forcedPwChange) {
+    getDb().prepare('DELETE FROM sessions WHERE user_id = ?').run(id)
+  }
+
   await logEvent('admin_action', { action: 'patch_user', targetId: id, changes: body }, { userId: session.userId, username: session.username })
   return NextResponse.json({ ok: true })
 }

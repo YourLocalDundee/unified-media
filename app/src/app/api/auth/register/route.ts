@@ -128,7 +128,10 @@ export async function POST(req: NextRequest) {
     if (db.prepare('SELECT id FROM users WHERE LOWER(username) = LOWER(?)').get(username)) {
       return USERNAME_TAKEN_RESPONSE()
     }
-    if (db.prepare('SELECT id FROM users WHERE LOWER(email) = LOWER(?)').get(email)) {
+    // email is stored lowercased on write, so compare the bare UNIQUE-indexed column to a
+    // lowercased bind (was LOWER(email)=LOWER(?), which defeated the index and was the one site
+    // diverging from the app-wide email comparison convention — C-1).
+    if (db.prepare('SELECT id FROM users WHERE email = ?').get(email.toLowerCase())) {
       return EMAIL_EXISTS_RESPONSE()
     }
 
@@ -174,7 +177,7 @@ export async function POST(req: NextRequest) {
     // Purge any existing pending row for this email (e.g. user re-registered after
     // losing the code) AND stale expired rows for any email to prevent table bloat.
     // There is no background cleanup job — expiry enforcement is opportunistic here.
-    db.prepare('DELETE FROM pending_registrations WHERE LOWER(email) = ? OR expires_at < ?').run(email.toLowerCase(), now)
+    db.prepare('DELETE FROM pending_registrations WHERE email = ? OR expires_at < ?').run(email.toLowerCase(), now)
 
     const pendingId = makeId(32)
     const code = makeCode()

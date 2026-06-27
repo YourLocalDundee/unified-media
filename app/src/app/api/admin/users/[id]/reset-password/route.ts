@@ -28,8 +28,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   // bcrypt cost factor 12 matches the app-wide password policy in lib/password.ts.
   const hash = bcrypt.hashSync(tempPassword, 12)
   // force_pw_change = 1 forces the user to set a new password before they can use the app.
-  getDb().prepare('UPDATE users SET password_hash = ?, force_pw_change = 1, updated_at = ? WHERE id = ?')
+  const db = getDb()
+  db.prepare('UPDATE users SET password_hash = ?, force_pw_change = 1, updated_at = ? WHERE id = ?')
     .run(hash, Date.now(), id)
+  // A-5: drop existing sessions so the forced temp-password change can't be ridden past by an
+  // already-authenticated session — the user must log in with the temp password.
+  db.prepare('DELETE FROM sessions WHERE user_id = ?').run(id)
   await logEvent('password_changed', { byAdmin: true, targetId: id }, { userId: session.userId, username: session.username })
   return NextResponse.json({ tempPassword })
 }

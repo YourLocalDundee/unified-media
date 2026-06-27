@@ -42,7 +42,8 @@ export async function POST(req: NextRequest) {
   if (!email) return NextResponse.json({ ok: true })
 
   const db = getDb()
-  const user = db.prepare('SELECT id, username, email FROM users WHERE LOWER(email) = ? AND is_active = 1').get(email) as UserRow | undefined
+  // email is bound already-lowercased; compare the bare UNIQUE-indexed column (C-1).
+  const user = db.prepare('SELECT id, username, email FROM users WHERE email = ? AND is_active = 1').get(email) as UserRow | undefined
 
   // Always return 200 — never reveal whether email exists
   if (!user) return NextResponse.json({ ok: true })

@@ -18,6 +18,20 @@ import fs from 'fs'
 import path from 'path'
 import { getDb } from '@/lib/db/index'
 
+// C-4: configured library roots (colon-separated container paths, e.g. /media/movies:/media/tv).
+// The empty-dir cleanup below only removes directories that live STRICTLY inside one of these, so
+// it can never delete a media root itself or walk upward past the boundary.
+const MEDIA_ROOTS = (process.env.MEDIA_ROOTS ?? '')
+  .split(':')
+  .map((s) => s.trim())
+  .filter(Boolean)
+  .map((p) => path.resolve(p))
+
+function isPrunableDir(dir: string): boolean {
+  const resolved = path.resolve(dir)
+  return MEDIA_ROOTS.some((root) => resolved !== root && resolved.startsWith(root + path.sep))
+}
+
 interface ExpiredRequest {
   id: number
   tmdb_id: number
@@ -104,13 +118,17 @@ export async function runAutoDelete(): Promise<number> {
 
       // Remove empty directories (season dirs for TV, movie dir).
       // Also try the parent in case the season dir was the only child (show root for TV).
+      // C-4: each rmdir is gated on isPrunableDir so a momentarily-empty intermediate — or the
+      // MEDIA_ROOTS boundary itself — is never removed by the upward walk.
       for (const dir of dirs) {
         try {
-          const remaining = fs.readdirSync(dir)
-          if (remaining.length === 0) fs.rmdirSync(dir)
+          if (isPrunableDir(dir) && fs.readdirSync(dir).length === 0) {
+            fs.rmdirSync(dir)
+          }
           const parent = path.dirname(dir)
-          const parentFiles = fs.readdirSync(parent)
-          if (parentFiles.length === 0) fs.rmdirSync(parent)
+          if (isPrunableDir(parent) && fs.readdirSync(parent).length === 0) {
+            fs.rmdirSync(parent)
+          }
         } catch { /* directory not empty or already gone — ok */ }
       }
 

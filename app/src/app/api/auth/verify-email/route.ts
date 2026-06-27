@@ -90,7 +90,8 @@ export async function POST(req: NextRequest) {
 
   // Re-check uniqueness: another user could have registered with the same
   // username or email between Step 1 and now.
-  if (db.prepare('SELECT id FROM users WHERE LOWER(email) = ?').get(pending.email)) {
+  // pending.email was stored lowercased; compare the bare UNIQUE-indexed users.email column (C-1).
+  if (db.prepare('SELECT id FROM users WHERE email = ?').get(pending.email)) {
     db.prepare('DELETE FROM pending_registrations WHERE id = ?').run(pendingId)
     return NextResponse.json({ error: 'An account with that email already exists.' }, { status: 400 })
   }

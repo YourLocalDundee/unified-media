@@ -5,6 +5,12 @@ import { requireAuth } from '@/lib/dal'
 const VALID_SIZES = new Set(['w92', 'w154', 'w185', 'w300', 'w342', 'w500', 'w780', 'original'])
 const DEFAULT_SIZE = 'w300'
 
+// TMDB poster/backdrop/logo paths are a single `/<hash>.<ext>` segment. Requiring exactly that
+// shape structurally rejects `..`, extra path segments, `@`, whitespace, and any trailing `?`/`#`
+// that could otherwise steer the upstream request (A-4). The single dot (before the extension)
+// means `..` can never appear.
+const IMAGE_PATH_RE = /^\/[A-Za-z0-9_-]+\.(jpg|jpeg|png|webp|svg|avif)$/i
+
 export async function GET(req: NextRequest) {
   await requireAuth()
 
@@ -12,7 +18,7 @@ export async function GET(req: NextRequest) {
   const path = searchParams.get('path') ?? ''
   const sizeParam = searchParams.get('size') ?? DEFAULT_SIZE
 
-  if (!path || !path.startsWith('/')) {
+  if (!IMAGE_PATH_RE.test(path)) {
     return NextResponse.json({ error: 'Missing or invalid path parameter' }, { status: 400 })
   }
 

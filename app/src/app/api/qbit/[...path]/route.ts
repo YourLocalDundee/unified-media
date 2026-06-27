@@ -10,7 +10,7 @@
 //  2. Query params are preserved on POST requests.
 //  3. 403 responses trigger one re-auth-and-retry before returning the error.
 import { NextRequest, NextResponse } from 'next/server'
-import { requireAuth } from '@/lib/dal'
+import { requireAuth, requireAdmin } from '@/lib/dal'
 import { verifyOrigin } from '@/lib/csrf'
 import { qbitFetch, getQbitSession, clearSession } from '@/lib/qbittorrent/session'
 
@@ -36,9 +36,11 @@ export async function GET(req: NextRequest, { params }: Params) {
 }
 
 export async function POST(req: NextRequest, { params }: Params) {
-  // A7-01: same gate as GET, plus CSRF — POST can add/delete torrents and rewrite qBit preferences.
+  // A-3: qBittorrent POST is the write surface (add/delete torrents, setPreferences, speed limits)
+  // over shared download infrastructure, so it requires admin — not just any authenticated user.
+  // GET (viewing the queue) stays open to authed users so the downloads page still renders for them.
   if (!verifyOrigin(req)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
-  await requireAuth()
+  await requireAdmin()
   const { path } = await params
   const endpoint = '/api/v2/' + path.join('/')
   const search = req.nextUrl.search

@@ -3,7 +3,8 @@
  * is ever exposed to the browser.
  */
 import { NextRequest, NextResponse } from 'next/server'
-import { requireAuth } from '@/lib/dal'
+import { requireAdmin } from '@/lib/dal'
+import { verifyOrigin } from '@/lib/csrf'
 
 const PROWLARR_URL = process.env.PROWLARR_URL ?? 'http://192.168.0.50:9696'
 const PROWLARR_API_KEY = process.env.PROWLARR_API_KEY ?? ''
@@ -11,7 +12,14 @@ const PROWLARR_API_KEY = process.env.PROWLARR_API_KEY ?? ''
 type Params = { params: Promise<{ path: string[] }> }
 
 async function proxy(req: NextRequest, { params }: Params) {
-  await requireAuth()
+  // A-3: the only consumer is the admin media-settings page, and an indexer GET can return
+  // indexer credentials, so the whole proxy is admin-gated. State-changing verbs additionally
+  // require a same-origin request (CSRF) since requireAdmin alone would accept a cross-site
+  // form POST carrying the admin's cookie.
+  await requireAdmin()
+  if (req.method !== 'GET' && req.method !== 'HEAD' && !verifyOrigin(req)) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  }
   const { path } = await params
   const endpoint = '/api/v1/' + path.join('/')
   const search = req.nextUrl.search

@@ -30,6 +30,18 @@ export function getDb(): Database.Database {
     _db.pragma('journal_mode = WAL')
     // SQLite disables FK checks by default for backwards-compat; opt in explicitly
     _db.pragma('foreign_keys = ON')
+    // Performance pragmas (audit B-3). Safe under WAL on this single-process, single-file DB.
+    //   synchronous=NORMAL : biggest write-latency win — fsync only at checkpoints, not every
+    //                        commit; durable under WAL (a crash can lose only the last txn, never
+    //                        corrupt the DB).
+    //   busy_timeout=5000  : wait up to 5s for the writer instead of throwing SQLITE_BUSY when a
+    //                        page render reads while a background job (scanner/party/automation) writes.
+    //   cache_size=-16000  : ~16 MB page cache (negative value = KiB).
+    //   mmap_size=256MB    : memory-mapped I/O to cut read syscalls.
+    _db.pragma('synchronous = NORMAL')
+    _db.pragma('busy_timeout = 5000')
+    _db.pragma('cache_size = -16000')
+    _db.pragma('mmap_size = 268435456')
     runMigrations(_db)
     seedAdmin(_db)
     // Prune sessions at startup so the table doesn't grow unbounded between restarts

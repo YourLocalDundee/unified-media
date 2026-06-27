@@ -78,16 +78,22 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'Failed to read body' }, { status: 400 })
   }
 
-  // Signature verification
+  // Signature verification — fail closed. Without a configured secret this endpoint
+  // queues grabs (MEDIA_APPROVED/REQUEST_APPROVED -> arbitrary tmdbId) for any POST,
+  // which is an unauthenticated action surface on a publicly-routable host. If no
+  // secret is set the webhook is treated as disabled and every POST is rejected.
   const secret = process.env.SEERR_WEBHOOK_SECRET
-  if (secret) {
-    const signature = req.headers.get('x-webhook-signature') ?? ''
-    if (!verifySignature(rawBody, signature, secret)) {
-      console.log('[seerr-webhook] Signature mismatch — rejecting request')
-      return NextResponse.json({ error: 'Invalid signature' }, { status: 401 })
-    }
-  } else {
-    console.log('[seerr-webhook] WARNING: SEERR_WEBHOOK_SECRET is not set — skipping signature verification')
+  if (!secret) {
+    console.log('[seerr-webhook] SEERR_WEBHOOK_SECRET is not set — webhook disabled, rejecting request')
+    return NextResponse.json(
+      { error: 'Webhook not configured' },
+      { status: 403 },
+    )
+  }
+  const signature = req.headers.get('x-webhook-signature') ?? ''
+  if (!verifySignature(rawBody, signature, secret)) {
+    console.log('[seerr-webhook] Signature mismatch — rejecting request')
+    return NextResponse.json({ error: 'Invalid signature' }, { status: 401 })
   }
 
   // Parse JSON payload

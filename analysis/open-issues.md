@@ -6,7 +6,7 @@ Single source of truth for what is still broken or missing, reconciled against t
 for the question "what is still open."
 
 Sources scanned: `CLAUDE.md`, `analysis/audit-2026-06-13/00..21`, `FEATURE_STATUS.md`,
-`implementation-status.md`, `PARTY_PLAY_AUDIT.md`, `CHANGELOG.md`, `docs/{claude-md-audit,stack-audit}.md`.
+`implementation-status.md`, `PARTY_PLAY_AUDIT.md`, `CHANGELOG.md`, `{claude-md-audit,stack-audit}.md`.
 
 Severity tags mirror the audit (S = security, D = data/engine, F = functional, A##-## = audit finding id).
 

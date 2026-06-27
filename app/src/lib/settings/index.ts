@@ -1,5 +1,18 @@
 import { getDb } from '@/lib/db/index'
 
+// Allowlist of persistable app_settings keys. The admin settings PUT rejects anything not listed
+// here so a typo'd key can't silently persist and the table can't be stuffed with arbitrary pairs
+// (C-3). Add new setting keys here when introducing them.
+export const KNOWN_SETTING_KEYS = new Set<string>([
+  'auto_approve',
+  'gate_min_seeders',
+  'gate_max_size_movie_gb',
+  'gate_max_size_tv_gb',
+  'reaper_metadata_minutes',
+  'reaper_stall_minutes',
+  'reaper_max_grab_attempts',
+])
+
 export function getSetting(key: string, defaultValue = ''): string {
   const db = getDb()
   const row = db.prepare('SELECT value FROM app_settings WHERE key = ?').get(key) as

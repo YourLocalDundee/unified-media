@@ -4,7 +4,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAdmin } from '@/lib/dal'
-import { getSettings, setSetting } from '@/lib/settings/index'
+import { getSettings, setSetting, KNOWN_SETTING_KEYS } from '@/lib/settings/index'
 import { verifyOrigin } from '@/lib/csrf'
 
 export const dynamic = 'force-dynamic'
@@ -20,10 +20,15 @@ export async function PUT(req: NextRequest) {
   let body: Record<string, string>
   try { body = await req.json() as Record<string, string> }
   catch { return NextResponse.json({ error: 'Invalid request' }, { status: 400 }) } // A19: parse guard
-  // Only persist entries where both key and value are strings — silently drops
-  // anything malformed rather than erroring, to be tolerant of future field additions.
-  for (const [key, value] of Object.entries(body)) {
-    if (typeof key === 'string' && typeof value === 'string') {
+  // Reject unknown keys (C-3): only allowlisted settings may be persisted, so a typo'd key surfaces
+  // as a 400 instead of silently bloating app_settings. Values must be strings (storage is text).
+  const entries = Object.entries(body)
+  const unknown = entries.filter(([key]) => !KNOWN_SETTING_KEYS.has(key)).map(([key]) => key)
+  if (unknown.length > 0) {
+    return NextResponse.json({ error: `Unknown setting key(s): ${unknown.join(', ')}` }, { status: 400 })
+  }
+  for (const [key, value] of entries) {
+    if (typeof value === 'string') {
       setSetting(key, value)
     }
   }

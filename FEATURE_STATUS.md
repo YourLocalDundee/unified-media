@@ -10,38 +10,13 @@ Legend:
 
 ---
 
-## ⚠️ Audit Correction (2026-06-13) — "done" items that are broken / no-op / insecure
+## ⚠️ Audit Correction (2026-06-13)
 
-The 21-agent audit (`analysis/audit-2026-06-13/`, summary in `00-SUMMARY.md`) found that several items marked `[x]`
-in the phases below are not actually functional or are insecure. Re-flag these as `[!]` until fixed.
-
-> **Some of these are now fixed (2026-06-15).** The qBittorrent-proxy auth, automation dedup, auto-delete
-> safety, and interactive-pick behavior below have been remediated; watch history is also writing now.
-> See [`analysis/open-issues.md`](analysis/open-issues.md) for the reconciled current state — trust that
-> over the `[!]` flags here. (Also stale: the "Watch party sync — Not done" backlog line; party play
-> shipped in v0.9.5, see CLAUDE.md §16 and `PARTY_PLAY_AUDIT.md`.)
-
-- [!] **Watch history** (`/history`) — page reads `watch_events`, which **nothing writes** (player writes
-  `media_watch_state`). Permanently empty; admin watch stats share the dead table. (A3-01, A20-03)
-- [!] **qBittorrent proxy** (`/api/qbit/[...path]`) — **no `requireAuth()`**; unauthenticated full qBit control incl.
-  delete-with-files and `setPreferences`. (A7-01, A14-C1)
-- [!] **Jellyfin routes** (`stream`, `playback`, `sessions/*`, `subtitles/*`, `image`, `series/*`, `seasons/*`) — **no
-  `requireAuth()`**; open key-injecting relay. Only `continue-watching` is gated. (A4, A13-01)
-- [!] **CSRF protection** (`src/lib/csrf.ts`, Phase 1) — `verifyOrigin` is on only ~12 of 51 mutating routes and is
-  bypassable (`startsWith` host check). Effectively absent. (A6-01, A9-01, A1-002)
-- [!] **Display settings page** — every control except Theme is a no-op (no reader exists). (A08-H1)
-- [!] **Playback settings** — 9 of 11 prefs are no-ops; the player reads only audio/subtitle language. (A08-H2)
-- [!] **Torrent → Interface settings tab** — writes prefs the live `/downloads` page never reads. (A08-H3)
-- [!] **Two-mode requests / interactive picks** — interactive picks are auto-approved, contradicting CLAUDE.md §15. (A7-03)
-- [!] **Party "join by code"** (`JoinByCodeModal`) — component never mounted; only the `?party=` link works. (A5-01)
-- [!] **Automation dedup** — `monitored_items` has no unique index; "already exists" guards are dead → duplicate grabs. (A11-C2)
-- [!] **auto-delete safety** — can delete user-owned media sharing a title with an expiring quick request. (A11-C1)
-- [~] **Dead components** — ~13 of 18 `components/media/*` (detail-panel + episode-carousel chains, `SeasonSelector`,
-  shadowed `RequestButton`) and the `downloads/components/*` alt UI are unmounted. See `17-resilience-deadcode.md`.
-
-The phase checklist below is left as originally written for history; trust the flags above over the `[x]` marks.
-
----
+The 21-agent audit (`analysis/audit-2026-06-13/`, summary `00-SUMMARY.md`) found several items marked
+`[x]` in the phases below are broken, no-op, or insecure. Many were since remediated (2026-06-15 onward),
+including the qBittorrent-proxy auth, automation dedup, auto-delete safety, interactive picks, and watch
+history. **For the reconciled current state, trust [`analysis/open-issues.md`](analysis/open-issues.md)**
+over the `[x]`/`[!]` flags in the phase checklist below (left as-written for history).
 
 ## Completed Phases (Independence Build)
 
@@ -253,7 +228,7 @@ The phase checklist below is left as originally written for history; trust the f
 
 ### From Section 13 (Future Ideas)
 
-- [x] **Watch party sync** — shipped v0.9.5. Native party play with WebSocket sync, presence, text chat, emoji reactions. Dedicated WS server on port 3002 (`src/lib/party/`). Full audit in `PARTY_PLAY_AUDIT.md`; all findings remediated. See CLAUDE.md §16.
+- [x] **Watch party sync** — shipped v0.9.5. Native party play with WebSocket sync, presence, text chat, emoji reactions. Dedicated WS server on port 3002 (`src/lib/party/`). Full audit in `analysis/PARTY_PLAY_AUDIT.md`; all findings remediated. See CLAUDE.md §16.
 - [ ] **Jellyfin user linking** — no `jellyfin_user_id` column in DB migrations, not in users table schema
 - [ ] **Push notifications** — no VAPID keys, no push subscription storage, no Web Push API code
 - [ ] **Mobile PWA** — no `manifest.json`, no service worker (`sw.js`) found in app directory

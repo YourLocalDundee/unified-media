@@ -15,11 +15,32 @@
  */
 
 import cron from 'node-cron'
+import { getDb } from '@/lib/db/index'
 import { getWantedItems } from './monitor'
 import { grabItem } from './grabber'
 import { checkAvailability } from './availability'
 import { runImportCheck } from './importer'
 import type { MonitoredItem } from './types'
+
+// C-5: login_attempts and audit_log are otherwise never pruned (one row per attempt / per event,
+// forever), so they bloat on a long-lived self-host. login_attempts only needs a 5-minute window
+// for its failure count; audit_log keeps a longer history.
+const LOGIN_ATTEMPTS_RETENTION_MS = 24 * 60 * 60 * 1000        // 24 hours
+const AUDIT_LOG_RETENTION_MS = 90 * 24 * 60 * 60 * 1000        // 90 days
+
+function pruneAuthTables(): void {
+  try {
+    const db = getDb()
+    const now = Date.now()
+    const la = db.prepare('DELETE FROM login_attempts WHERE created_at < ?').run(now - LOGIN_ATTEMPTS_RETENTION_MS)
+    const al = db.prepare('DELETE FROM audit_log WHERE created_at < ?').run(now - AUDIT_LOG_RETENTION_MS)
+    if (la.changes > 0 || al.changes > 0) {
+      console.log(`[maintenance] Pruned login_attempts=${la.changes} audit_log=${al.changes}`)
+    }
+  } catch (err) {
+    console.error('[maintenance] Auth-table prune failed:', err)
+  }
+}
 
 // Produce a short scope suffix like " S13E521" or " S02+03" for log lines so
 // 101 identical "One Piece: not_found" entries are distinguishable per episode.
@@ -75,21 +96,25 @@ export function initScheduler(): void {
     await runImportCheck()
   })
 
-  // Stalled-metadata reaper (Regression 2): every 10 min, remove torrents stuck in metaDL/forcedMetaDL
-  // with 0 peers older than app_settings 'reaper_metadata_minutes' (default 60). Torrent-only, never
-  // touches data or anything with peers/downloading/seeding. Dynamic import keeps the qBit session
-  // module out of the initial graph.
+  // Stalled-torrent reaper: every 10 min, two failure classes — (1) metaDL/forcedMetaDL stuck with
+  // 0 peers past 'reaper_metadata_minutes' (default 60), and (2) a grabbed download stalled in
+  // stalledDL/error/missingFiles past 'reaper_stall_minutes' (default 120). Each reaped torrent is
+  // blocklisted + removed (DownloadClient), and its monitored_item is reset to 'wanted' to re-search
+  // the next-best candidate — or parked at 'failed' after 'reaper_max_grab_attempts' (default 3).
+  // Torrent-only delete; an actively downloading or seeding torrent is never touched. Dynamic import
+  // keeps the qBit session module out of the initial graph.
   cron.schedule('*/10 * * * *', async () => {
-    const { reapStalledMetadata } = await import('./reaper')
-    const count = await reapStalledMetadata()
+    const { reapStalledTorrents } = await import('./reaper')
+    const count = await reapStalledTorrents()
     if (count > 0) {
-      console.log(`[reaper] Removed ${count} stalled-metadata torrent(s)`)
+      console.log(`[reaper] Reaped ${count} stalled torrent(s)`)
     }
   })
 
   // Auto-delete: runs at the top of every hour; dynamic import keeps the fs-heavy
   // auto-delete module out of the initial module graph
   cron.schedule('0 * * * *', async () => {
+    pruneAuthTables()
     const { runAutoDelete } = await import('./auto-delete')
     const count = await runAutoDelete()
     if (count > 0) {

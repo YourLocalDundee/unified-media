@@ -6,7 +6,7 @@
 // call does.
 import fs from 'fs/promises'
 import path from 'path'
-import { getWantedSubtitles, updateSubtitleStatus } from './monitor'
+import { getWantedSubtitles, updateSubtitleStatus, normalizeSubtitleLang } from './monitor'
 import { searchSubtitles, getDownloadLink, pickBestSubtitle } from './opensubtitles'
 import type { SubtitleWant } from './types'
 
@@ -37,10 +37,19 @@ async function writeSrtFile(want: SubtitleWant, content: string): Promise<string
     return null
   }
 
+  // Defensive guard: the language is used as a filename segment, so reject anything that
+  // is not a clean ISO 639 tag rather than letting `../` escape the media directory.
+  // Want rows are validated on insert, but this also covers any legacy/unsanitized row.
+  const safeLang = normalizeSubtitleLang(want.language)
+  if (!safeLang) {
+    console.error(`[subtitle] Refusing to write subtitle with invalid language tag: ${JSON.stringify(want.language)}`)
+    return null
+  }
+
   try {
     const ext = path.extname(want.media_path)
     const base = want.media_path.slice(0, want.media_path.length - ext.length)
-    const outPath = `${base}.${want.language}.srt`
+    const outPath = `${base}.${safeLang}.srt`
     // Atomic write: write to a temp file then rename so a crash mid-write
     // cannot corrupt an existing subtitle file (A15-M4).
     const tmpPath = `${outPath}.${process.pid}.tmp`

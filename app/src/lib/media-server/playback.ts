@@ -6,53 +6,6 @@ import type { MediaItem, PlaybackData } from './types'
 import type { QualityOption } from '@/components/player/types'
 import { getDb } from '@/lib/db/index'
 
-export interface PlaybackSession {
-  sessionId: string
-  mediaId: string
-  filePath: string
-  method: 'direct' | 'hls'
-  streamUrl: string
-  qualityLabel?: string
-}
-
-const sessions = new Map<string, PlaybackSession>()
-
-export function createSession(
-  mediaId: string,
-  method: 'direct' | 'hls',
-  qualityLabel?: string
-): PlaybackSession | null {
-  const item = getItemById(mediaId)
-  if (!item?.file_path) return null
-
-  const sessionId = crypto.randomUUID()
-  const session: PlaybackSession = {
-    sessionId,
-    mediaId,
-    filePath: item.file_path,
-    method,
-    streamUrl:
-      method === 'direct'
-        ? `/api/media/stream/${mediaId}?session=${sessionId}`
-        : `/api/media/hls/${sessionId}/master.m3u8`,
-    qualityLabel,
-  }
-  sessions.set(sessionId, session)
-  return session
-}
-
-export function getSession(sessionId: string): PlaybackSession | undefined {
-  return sessions.get(sessionId)
-}
-
-export function endSession(sessionId: string): void {
-  sessions.delete(sessionId)
-}
-
-export function buildDirectUrl(mediaId: string): string {
-  return `/api/media/stream/${mediaId}`
-}
-
 // ---------------------------------------------------------------------------
 // getNativePlaybackData — full PlaybackData from the native media_items DB
 // ---------------------------------------------------------------------------

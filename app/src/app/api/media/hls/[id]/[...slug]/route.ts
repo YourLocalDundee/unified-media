@@ -20,6 +20,8 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import fs from 'fs/promises'
+import { createReadStream } from 'fs'
+import { Readable } from 'stream'
 import { requireAuth } from '@/lib/dal'
 import { getItemById } from '@/lib/media-server/library'
 import { probeFile } from '@/lib/media-server/probe'
@@ -28,16 +30,31 @@ import { ensureHls, getSegmentPath, waitForSegment } from '@/lib/media-server/tr
 
 export const dynamic = 'force-dynamic'
 
-async function serveFile(
-  filePath: string,
-  contentType: string,
-): Promise<NextResponse> {
+// The manifest grows as the linear transcode appends segments (-hls_list_size 0), so it must
+// never be cached. It is small, so buffering it is fine.
+async function serveManifest(filePath: string): Promise<NextResponse> {
   const data = await fs.readFile(filePath)
   return new NextResponse(data, {
     status: 200,
     headers: {
-      'Content-Type':  contentType,
+      'Content-Type':  'application/x-mpegURL',
       'Cache-Control': 'no-cache, no-store',
+    },
+  })
+}
+
+// Segments are immutable once written. Cache them aggressively so a scrub-back / replay does not
+// re-fetch an already-played segment (each re-fetch otherwise re-runs auth + a full buffer read).
+// Stream from disk instead of buffering the whole .ts into the Node heap (B-1).
+async function serveSegment(filePath: string): Promise<NextResponse> {
+  const stat = await fs.stat(filePath)
+  const webStream = Readable.toWeb(createReadStream(filePath)) as unknown as ReadableStream<Uint8Array>
+  return new NextResponse(webStream, {
+    status: 200,
+    headers: {
+      'Content-Type':   'video/mp2t',
+      'Cache-Control':  'public, max-age=31536000, immutable',
+      'Content-Length': String(stat.size),
     },
   })
 }
@@ -102,7 +119,7 @@ export async function GET(
       )
     }
 
-    return serveFile(manifestPath, 'application/x-mpegURL')
+    return serveManifest(manifestPath)
   }
 
   // -------------------------------------------------------------------------
@@ -125,5 +142,5 @@ export async function GET(
     })
   }
 
-  return serveFile(segPath, 'video/mp2t')
+  return serveSegment(segPath)
 }

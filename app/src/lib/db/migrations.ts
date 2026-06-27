@@ -702,6 +702,68 @@ export function runMigrations(db: Database.Database): void {
   }
 
   // --------------------------------------------------------------------------
+  // Stall-reaper retry ceiling — widen monitored_items.status CHECK to include the terminal
+  // 'failed' state (set by reaper.ts after MAX_GRAB_ATTEMPTS reaps without a healthy download).
+  // SQLite cannot ALTER a CHECK, so recreate the table when the constraint is absent. Runs AFTER
+  // the 'grabbing' widening + all additive columns, and BEFORE the dedup/unique-index block below
+  // (which recreates idx_monitored_scope_unique on the result). Columns are copied by PRAGMA
+  // intersection so this never drops a column the column set may have gained/lost across migrations.
+  // --------------------------------------------------------------------------
+  {
+    const tblInfo = db.prepare(
+      "SELECT sql FROM sqlite_master WHERE type='table' AND name='monitored_items'"
+    ).get() as { sql: string } | undefined
+    if (tblInfo && !tblInfo.sql.includes("'failed'")) {
+      db.exec('BEGIN')
+      try {
+        db.exec(`
+          CREATE TABLE monitored_items_new (
+            id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+            tmdb_id            INTEGER,
+            tvdb_id            INTEGER,
+            type               TEXT NOT NULL CHECK(type IN ('movie','tv')),
+            title              TEXT NOT NULL,
+            year               INTEGER,
+            quality_profile_id INTEGER NOT NULL DEFAULT 1,
+            root_path          TEXT NOT NULL DEFAULT '',
+            monitored          INTEGER NOT NULL DEFAULT 1,
+            status             TEXT NOT NULL DEFAULT 'wanted'
+                                 CHECK(status IN ('wanted','grabbing','grabbed','imported','ignored','failed')),
+            created_at         INTEGER NOT NULL,
+            updated_at         INTEGER NOT NULL,
+            download_completed_at INTEGER,
+            scope_type         TEXT DEFAULT 'full',
+            scope_seasons      TEXT,
+            scope_episodes     TEXT,
+            monitor_future     INTEGER DEFAULT 0,
+            language           TEXT NOT NULL DEFAULT 'any',
+            scope_label        TEXT,
+            scope_key          TEXT NOT NULL DEFAULT ''
+          )
+        `)
+        // Copy only columns present in BOTH tables so a column added by a later migration (or one
+        // briefly dropped by the 'grabbing' rebuild on a very old DB) never breaks the INSERT/SELECT.
+        const newCols = new Set(
+          (db.prepare('PRAGMA table_info(monitored_items_new)').all() as Array<{ name: string }>).map((c) => c.name)
+        )
+        const shared = (db.prepare('PRAGMA table_info(monitored_items)').all() as Array<{ name: string }>)
+          .map((c) => c.name)
+          .filter((name) => newCols.has(name))
+          .join(', ')
+        db.exec(`INSERT INTO monitored_items_new (${shared}) SELECT ${shared} FROM monitored_items`)
+        db.exec('DROP TABLE monitored_items')
+        db.exec('ALTER TABLE monitored_items_new RENAME TO monitored_items')
+        db.exec('CREATE INDEX IF NOT EXISTS idx_monitored_status ON monitored_items(status)')
+        db.exec('CREATE INDEX IF NOT EXISTS idx_monitored_tmdb ON monitored_items(tmdb_id)')
+        db.exec('COMMIT')
+      } catch (e) {
+        db.exec('ROLLBACK')
+        throw e
+      }
+    }
+  }
+
+  // --------------------------------------------------------------------------
   // A6-02 — enforce one monitored_items row per (tmdb_id, type, scope_key).
   //
   // A bare (tmdb_id, type) unique index would break the season/episode fan-out, which

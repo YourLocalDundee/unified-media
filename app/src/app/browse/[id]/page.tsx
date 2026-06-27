@@ -22,14 +22,19 @@ interface ArrStatus {
 
 async function getArrStatus(item: MediaItem): Promise<ArrStatus | null> {
   if (!item.tmdb_id) return null
+  // D-2: this badge is cosmetic and Sonarr/Radarr are fully severable. The try/catch hides the
+  // badge if the *arr container is down (connection refused throws fast), and the 3s abort signal
+  // bounds the page render if the container is reachable-but-unresponsive (a hung fetch would
+  // otherwise stall this server component). Either way the page renders without the badge.
+  const signal = AbortSignal.timeout(3000)
   try {
     if (item.type === 'movie') {
-      const movies = await radarrFetch<RadarrMovie[]>(`/movie?tmdbId=${item.tmdb_id}`)
+      const movies = await radarrFetch<RadarrMovie[]>(`/movie?tmdbId=${item.tmdb_id}`, { signal })
       if (!Array.isArray(movies) || movies.length === 0) return null
       return { monitored: movies[0].monitored, arr: 'radarr' }
     }
     if (item.type === 'series') {
-      const series = await sonarrFetch<SonarrSeries[]>(`/series?tmdbId=${item.tmdb_id}`)
+      const series = await sonarrFetch<SonarrSeries[]>(`/series?tmdbId=${item.tmdb_id}`, { signal })
       if (!Array.isArray(series) || series.length === 0) return null
       return { monitored: series[0].monitored, arr: 'sonarr' }
     }

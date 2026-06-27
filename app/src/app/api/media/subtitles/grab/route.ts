@@ -3,7 +3,7 @@ import { requireAuth } from '@/lib/dal'
 import { verifyOrigin } from '@/lib/csrf'
 import { checkRateLimit } from '@/lib/rate-limit'
 import { getItemById } from '@/lib/media-server/library'
-import { upsertSubtitleWant, updateSubtitleStatus } from '@/lib/subtitle/monitor'
+import { upsertSubtitleWant, updateSubtitleStatus, normalizeSubtitleLang } from '@/lib/subtitle/monitor'
 import { getDownloadLink } from '@/lib/subtitle/opensubtitles'
 import fs from 'fs/promises'
 import path from 'path'
@@ -96,12 +96,18 @@ export async function POST(req: NextRequest) {
 
   const mediaId = body.mediaId
   const fileId = body.fileId
-  const language = (body.language || '').trim()
+  // Validate the language to a strict ISO 639 tag before it is stored or used to build a
+  // filename on disk. A crafted value (e.g. containing `../`) would otherwise escape the
+  // media directory when writeVariantSrt() interpolates it into the output path (A-2).
+  const language = normalizeSubtitleLang(body.language)
   const hi = !!body.hi
   const forced = !!body.forced
 
-  if (!mediaId || typeof fileId !== 'number' || !Number.isFinite(fileId) || !language) {
-    return NextResponse.json({ error: 'mediaId, fileId, and language are required' }, { status: 400 })
+  if (!mediaId || typeof fileId !== 'number' || !Number.isFinite(fileId)) {
+    return NextResponse.json({ error: 'mediaId and fileId are required' }, { status: 400 })
+  }
+  if (!language) {
+    return NextResponse.json({ error: 'A valid ISO 639 language code is required' }, { status: 400 })
   }
 
   const item = getItemById(mediaId)
