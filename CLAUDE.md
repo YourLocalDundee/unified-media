@@ -1,6 +1,6 @@
 # unified-frontend
 
-A single-pane-of-glass web app for the minime home server media stack (v0.10.2). Replaces the
+A single-pane-of-glass web app for the minime home server media stack (v0.11.2). Replaces the
 old multi-tab workflow with one fully native interface for browsing, requesting, watching, and
 monitoring downloads. The app runs its own media server, indexer aggregation, download automation,
 and subtitle management — zero Jellyfin dependency.
@@ -14,7 +14,7 @@ and subtitle management — zero Jellyfin dependency.
 
 ## Status & docs map
 
-- **Current version:** v0.10.2 (`app/package.json` + this header).
+- **Current version:** v0.11.2 (`app/package.json` + this header).
 - **Audit:** the 2026-06-13 21-agent audit is closed (all P0/P1 fixed). History +
   remediation: `docs/analysis/audit-2026-06-13-summary.md`; live tracker `analysis/open-issues.md`.
 - **What's shipped:** `docs/complete/FEATURES.md`.
