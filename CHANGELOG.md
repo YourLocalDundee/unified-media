@@ -8,6 +8,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Removed
+- **unified-media is now fully Authentik-free in docs too.** Authentik left the request path at
+  v0.4.0 (the app uses its own SQLite sessions); this scrubs the last textual leftovers so the string
+  appears nowhere in the repo. Deleted the stale `AUTHENTIK_SETUP.md` setup guide; reworded the auth
+  notes in `CLAUDE.md`, `SETUP.md`, `docs/complete/FEATURES.md`, and the `update-caddyfile.py`
+  docstring to describe self-managed auth without naming a provider; fixed two stale audit lines that
+  implied email re-verification was gated "behind Authentik"; and genericized the historical CHANGELOG
+  release notes and the pre-build seerr-analysis suggestion. No code changed (there was none to
+  change); build stays green.
 - **unified-media is now fully Jellyfin-free.** Removed the last leftover Jellyfin references from
   the app. The native media-server stack already handled all in-app browse/playback; nothing called
   Jellyfin at runtime. Specifically: dropped the dead `JELLYFIN_*` startup-warning check
@@ -391,7 +399,7 @@ shipped with an API/engine but no UI, plus a subtitle-matching improvement. See
 - **Registration** — invite code removed entirely from form, Zod schema, and API handler; email is now required (validated with format check); rate limit raised from 3/hour to 10/15min to match login handler; subtitle changed to "Create your account to get started"
 - **About page** — removed Jellyfin/Seerr/qBittorrent version rows; removed Service Links section; replaced static blurb with parsed CHANGELOG accordion
 - **Theme system** — each `[data-theme="*"]` block now includes full set of Tailwind CSS variables (`--background`, `--foreground`, etc.) alongside `--theme-*` vars; light/dim/midnight/cinema themes now correctly update all component colors
-- **Profile page** — all Authentik header references (`X-Authentik-Username`) removed; page now reads from SQLite via `requireAuth()` and DB query
+- **Profile page** — all external SSO trusted-auth header references removed; page now reads from SQLite via `requireAuth()` and DB query
 - **qBit proxy** — POST handler now detects `multipart/form-data` and passes raw `ArrayBuffer` with original `Content-Type` (including `boundary=`) instead of destroying it with `URLSearchParams`; query params forwarded on POST; `Torrent` interface extended with `magnet_uri`, `availability`, `super_seeding`, `force_start`, `seq_dl`, `f_l_piece_prio`, and other extended API fields
 - **Settings nav** — Torrent tab added between Display and Advanced
 - **Jellyfin image proxy** — accepts `?type=Backdrop&index=0` and constructs `/Images/Backdrop/{index}` path correctly
@@ -501,8 +509,8 @@ shipped with an API/engine but no UI, plus a subtitle-matching improvement. See
 - **IP geolocation** — `src/lib/geo.ts` uses ip-api.com with 1h cache and private-IP short-circuit for audit log enrichment.
 
 ### Changed
-- **Caddy block** — Removed Authentik `forward_auth` from `unified.minijoe.dev`. App now handles its own auth entirely.
-- **AppLayout / Header** — Switched from reading `X-Authentik-*` headers to using `useAuth()` from AuthContext.
+- **Caddy block** — Removed the external SSO `forward_auth` from `unified.minijoe.dev`. App now handles its own auth entirely.
+- **AppLayout / Header** — Switched from reading external SSO trusted-auth headers to using `useAuth()` from AuthContext.
 - **Login / Register pages** — Fully rewritten. Login shows specific error messages by status code. Register has zxcvbn strength meter (dynamic import), rule checklist, username availability check (debounced 500ms).
 - **Middleware** — Rewritten to redirect unauthenticated users to `/login?from={pathname}` and bounce authenticated users away from auth pages.
 - **`/watch/[id]`** — `requireAuth()` enforced at server component level.
@@ -513,7 +521,7 @@ shipped with an API/engine but no UI, plus a subtitle-matching improvement. See
 - **Dockerfile** — Added `/data` directory with correct ownership for non-root `nextjs` user, `VOLUME ["/data"]`.
 
 ### Removed
-- `src/app/api/auth/local/route.ts` — dev-only Authentik mock stub, no longer needed.
+- `src/app/api/auth/local/route.ts` — dev-only external-SSO mock stub, no longer needed.
 
 ### Security
 - Auth is enforced in server components and route handlers (DAL), never relying solely on middleware.

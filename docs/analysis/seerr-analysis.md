@@ -966,7 +966,7 @@ Uses `react-intl`. All user-facing strings are defined via a custom `defineMessa
 
 ### What to Rebuild
 
-1. **Auth flow** — seerr's auth ties tightly to Plex/Jellyfin login. In the unified app you likely want Authentik SSO as the primary auth path (matching your BunkerWeb/Headscale stack). Keep the session pattern (`req.session.userId`) but replace the login handlers.
+1. **Auth flow** — seerr's auth ties tightly to Plex/Jellyfin login. In the unified app you likely want an external SSO provider as the primary auth path (matching your BunkerWeb/Headscale stack). Keep the session pattern (`req.session.userId`) but replace the login handlers.
 
 2. **Settings storage** — seerr uses a JSON file on disk (`config/settings.json`) via a singleton. In a unified app, consolidate into a proper config store or environment variables for the merged services.
 
@@ -1012,6 +1012,6 @@ Seerr has no qBittorrent integration whatsoever. The download tracking (`downloa
 ### Architecture Considerations
 
 - **Monorepo structure**: seerr keeps frontend (`src/`) and backend (`server/`) in the same package with separate tsconfigs and path aliases. This is a good model for the unified app — `@app/` for frontend, `@server/` for backend.
-- **Session-based auth vs JWT**: seerr uses express-session with TypeORM session store. If Authentik replaces the login page, you can keep the session store but delegate credential validation to Authentik's OAuth2 flow.
+- **Session-based auth vs JWT**: seerr uses express-session with TypeORM session store. If an external SSO provider replaces the login page, you can keep the session store but delegate credential validation to its OAuth2 flow.
 - **Image proxy**: `/imageproxy/tmdb/` and `/imageproxy/tvdb/` routes proxy TMDB/TVDB images locally for caching. The `avatarproxy` route proxies Jellyfin user avatars. Both patterns are useful in a unified app for self-hosted image caching behind your reverse proxy.
 - **Single Next.js + Express binary**: the production build outputs to `dist/` (server) and `.next/` (frontend), both started by `dist/index.js`. This single-process model works well in Docker and is worth preserving in the unified app.

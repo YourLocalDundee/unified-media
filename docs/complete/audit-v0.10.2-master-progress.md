@@ -37,7 +37,7 @@ Status legend: TODO · WIP · DONE · SKIP (with reason) · VERIFY (needs runtim
 | 13 | (optional) move react-query-devtools + @types/nodemailer to devDeps | H | N/A | already in devDependencies (both). Brief assumed they were in deps. No change. Note: ReactQueryDevtools is imported unconditionally in providers.tsx — fine for the full-`npm ci` Dockerfile, would break `--omit=dev` |
 
 Other flagged-only (no action unless decided): C-6 reset-password slice(0,16) PK (negligible);
-auth/profile/email no re-verification (intentional behind Authentik).
+auth/profile/email no re-verification (intentional; re-verification not implemented).
 
 D-3 (download-client independence: move importer's two raw qbitFetch calls behind DownloadClient
 interface) is NOT scheduled — only needed if swapping qBittorrent. Recorded, not actioned.
@@ -210,6 +210,6 @@ Move @tanstack/react-query-devtools + @types/nodemailer to devDependencies.
 
 ## ALL 12 EXECUTION-ORDER ITEMS COMPLETE (2026-06-24).
 Not actioned (recorded decisions, not gaps): C-6 reset-password slice(0,16) PK (negligible);
-auth/profile/email no re-verification (intentional behind Authentik); D-3 importer raw qbitFetch
+auth/profile/email no re-verification (intentional; re-verification not implemented); D-3 importer raw qbitFetch
 behind DownloadClient interface (only needed if swapping qBittorrent); item 13 devDependencies move
 (optional hygiene — see below). Section E feature backlog is build-when-ready, not part of this pass.

@@ -110,7 +110,7 @@ If you see `[seed] ADMIN_USERNAME and ADMIN_PASSWORD are required`, the env vars
 
 ## 4. Caddy configuration
 
-The app handles its own auth — no `forward_auth` to Authentik needed.
+The app handles its own auth — no `forward_auth` / external auth gateway needed.
 
 Run the update script to replace the Caddyfile block:
 

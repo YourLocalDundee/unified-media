@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Replaces the unified.minijoe.dev block in the live Caddyfile with the
-simple version (no Authentik forward_auth).
+simple version (plain reverse_proxy, no forward_auth).
 """
 import re
 import sys

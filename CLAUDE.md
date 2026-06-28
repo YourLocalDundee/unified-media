@@ -93,8 +93,8 @@ CORS entirely.
 
 ### Auth strategy (v0.4.0+)
 
-The app manages its own auth. Authentik is **not** in the request path for `unified.minijoe.dev`;
-Caddy simply reverse-proxies — no `forward_auth`. Auth is SQLite-backed (`better-sqlite3`) at
+The app manages its own auth end-to-end. Caddy is a plain reverse proxy with **no external auth
+gateway / `forward_auth`** in front of `unified.minijoe.dev`. Auth is SQLite-backed (`better-sqlite3`) at
 `$DB_PATH` (default `./unified.db`, production `/data/unified.db` via Docker volume `unified-db:/data`).
 
 Key components:
@@ -234,8 +234,9 @@ These are the live "don't trip over this" rules. Kept in full because they're lo
   status 200 — looks like a garbage success to any caller checking only `res.ok`.
 
 ### Auth / Next.js 16
-- **Authentik is out (v0.4.0+):** `unified.minijoe.dev` uses its own SQLite sessions; no `X-Authentik-*`
-  read anywhere. If `ADMIN_PASSWORD` is missing/weak, a random one is logged to stderr on first start.
+- **Self-managed auth (v0.4.0+):** `unified.minijoe.dev` uses its own SQLite sessions. No external
+  SSO / `forward_auth` gateway and no trusted-auth request headers — never reintroduce header-based
+  auth. If `ADMIN_PASSWORD` is missing/weak, a random one is logged to stderr on first start.
   Never delete the `unified-db` volume without a backup.
 - **Proxy file naming:** Next.js 16 replaced `middleware` with `proxy`. The guard must be `src/proxy.ts`
   exporting `export function proxy(...)`; the old names silently fail to register. UX-only, not a
@@ -373,7 +374,7 @@ Former §10 / §10a / §10b are consolidated under `docs/player/` (see §9).
 
 ## 11. Profile and Account Settings (v0.5.2+)
 
-`/settings/profile` is self-contained — no Authentik. All mutations go through server routes
+`/settings/profile` is self-contained — no external identity provider. All mutations go through server routes
 (`requireAuth()`), never client→DB.
 
 | Route | Method | Purpose |

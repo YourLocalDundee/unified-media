@@ -69,7 +69,7 @@ secret in both Seerr and `SEERR_WEBHOOK_SECRET`. `/api/seerr/webhook` receives `
 | Decision engine — hard gates + custom formats | v0.10.0 | `docs/features/decision-engine.md` |
 | Season/arc grab pipeline (TMDB episode_groups, interactive picker) | v0.9.7–0.9.10 | CLAUDE.md §5 (browse) |
 | Admin user monitoring + per-user detail | v0.5.3 | CLAUDE.md §5 |
-| Profile/account settings (self-contained, no Authentik) | v0.5.2+ | CLAUDE.md §11 |
+| Profile/account settings (self-contained, no external identity provider) | v0.5.2+ | CLAUDE.md §11 |
 
 ## Done items pulled from the old §13 backlog
 
