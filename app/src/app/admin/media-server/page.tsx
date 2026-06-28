@@ -196,9 +196,9 @@ export default function MediaServerPage() {
       <section className="rounded-xl border border-border bg-card p-6">
         <h2 className="text-lg font-semibold text-foreground mb-2">About Phase 5</h2>
         <p className="text-sm text-muted-foreground leading-relaxed">
-          Phase 5 is in active development. The built-in media server runs alongside Jellyfin
-          — configure <code className="font-mono text-primary">MEDIA_ROOTS</code> to point to
-          the same directories Jellyfin monitors. Direct-play streaming is handled via the{' '}
+          Phase 5 is in active development. The built-in media server scans your library
+          directly — configure <code className="font-mono text-primary">MEDIA_ROOTS</code> to point
+          to your media directories. Direct-play streaming is handled via the{' '}
           <code className="font-mono text-primary">/api/media/stream/[id]</code> route with full
           range-request support. HLS transcoding requires <code className="font-mono text-primary">
           ffmpeg</code> available in the container. Metadata enrichment uses TMDB at 250 ms/request

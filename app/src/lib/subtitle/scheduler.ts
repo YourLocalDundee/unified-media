@@ -15,7 +15,7 @@ export function initSubtitleScheduler(): void {
   if (started) return
   started = true
 
-  // Daily at 3 AM: scan Jellyfin library for missing subtitles
+  // Daily at 3 AM: scan the media library for missing subtitles
   cron.schedule('0 3 * * *', async () => {
     try {
       console.log('[subtitle] Starting library scan...')

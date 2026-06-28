@@ -6,9 +6,6 @@ per-user tools, Sonarr/Radarr status — are in `docs/complete/FEATURES.md`, not
 
 ## Buildable
 
-- **Jellyfin user linking** — associate a unified-frontend account with a specific Jellyfin user ID so
-  watch history + resume reflect that user's actual Jellyfin state rather than the admin API-key user.
-  Store `jellyfin_user_id` on `users`; use it for all `/Users/<id>/...` calls when present.
 - **Push notifications (Web Push / VAPID)** — fire when a requested item becomes available (polled from
   Seerr or via the existing webhook). Store VAPID-encrypted push subscriptions in the DB.
 - **Mobile PWA** — `manifest.json` + service worker for home-screen install (iOS/Android). Offline

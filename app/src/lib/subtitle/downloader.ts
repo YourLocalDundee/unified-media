@@ -14,7 +14,7 @@ function buildSearchParams(want: SubtitleWant) {
   return {
     imdb_id: want.imdb_id ?? undefined,
     languages: want.language,
-    type: (want.jellyfin_item_type === 'Episode' ? 'episode' : 'movie') as 'movie' | 'episode',
+    type: (want.media_item_type === 'Episode' ? 'episode' : 'movie') as 'movie' | 'episode',
     hearing_impaired: (want.hi === 1 ? 'only' : 'include') as 'only' | 'include',
   }
 }

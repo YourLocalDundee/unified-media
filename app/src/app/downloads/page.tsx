@@ -648,6 +648,7 @@ function TorrentDetailFragment({
       {expanded && (
         <TorrentDetailPanel
           hash={torrent.hash}
+          name={torrent.name}
           colSpan={8}
           onClose={onCloseDetail}
         />

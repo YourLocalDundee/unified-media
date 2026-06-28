@@ -8,8 +8,8 @@ export type SubtitleStatus = 'wanted' | 'downloaded' | 'skipped' | 'failed'
 
 export interface SubtitleWant {
   id: number
-  jellyfin_item_id: string
-  jellyfin_item_type: string        // 'Movie' | 'Episode'
+  media_item_id: string
+  media_item_type: string           // 'Movie' | 'Episode'
   title: string
   imdb_id: string | null
   media_path: string | null         // absolute path to the media file on disk

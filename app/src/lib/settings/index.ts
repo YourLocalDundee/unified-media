@@ -11,6 +11,12 @@ export const KNOWN_SETTING_KEYS = new Set<string>([
   'reaper_metadata_minutes',
   'reaper_stall_minutes',
   'reaper_max_grab_attempts',
+  // Notifications (lib/notify) — fired when a requested item becomes available.
+  'notify_on_available',
+  'notify_discord_webhook',
+  'notify_ntfy_url',
+  // Import lists (lib/automation/import-lists) — Trakt API client id for trakt-type lists.
+  'trakt_client_id',
 ])
 
 export function getSetting(key: string, defaultValue = ''): string {

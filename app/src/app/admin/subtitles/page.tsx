@@ -8,8 +8,8 @@ import { Loader2, Trash2 } from 'lucide-react'
 
 interface SubtitleWant {
   id: number
-  jellyfin_item_id: string
-  jellyfin_item_type: string
+  media_item_id: string
+  media_item_type: string
   title: string
   imdb_id: string | null
   media_path: string | null
@@ -245,7 +245,7 @@ export default function AdminSubtitlesPage() {
                       {item.language}
                     </span>
                   </td>
-                  <td className="px-4 py-3 text-muted-foreground">{item.jellyfin_item_type}</td>
+                  <td className="px-4 py-3 text-muted-foreground">{item.media_item_type}</td>
                   <td className="px-4 py-3">
                     {/* Guard against blank/malformed IMDB IDs before constructing the URL */}
                     {item.imdb_id && /\d/.test(item.imdb_id) ? (

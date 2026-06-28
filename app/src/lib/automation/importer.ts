@@ -24,6 +24,7 @@ import path from 'path'
 import fs from 'fs'
 import { getDb } from '@/lib/db/index'
 import { updateItem } from './monitor'
+import { collectAvailableNotifications, notifyAll } from '@/lib/notify/available'
 import type { MonitoredItem } from './types'
 
 // qBit states that mean "download is complete, file is fully written"
@@ -181,8 +182,10 @@ export async function runImportCheck(): Promise<void> {
         if (alreadyInLibrary) {
           updateItem(item.id, { status: 'imported' })
           const now = Date.now()
+          const payloads = collectAvailableNotifications(item.tmdb_id, mediaType, ['approved'])
           db.prepare(`UPDATE media_requests SET status='available', updated_at=? WHERE tmdb_id=? AND media_type=? AND status='approved'`)
             .run(now, item.tmdb_id, mediaType)
+          await notifyAll(payloads)
           console.log(`[importer] "${item.title}" already in library (tmdb_id=${item.tmdb_id}) — marked imported`)
           continue
         }
@@ -269,8 +272,10 @@ export async function runImportCheck(): Promise<void> {
             if (item.tmdb_id != null) {
               const mediaType = item.type === 'movie' ? 'movie' : 'tv'
               const now2 = Date.now()
+              const payloads = collectAvailableNotifications(item.tmdb_id, mediaType, ['approved'])
               db.prepare(`UPDATE media_requests SET status='available', updated_at=? WHERE tmdb_id=? AND media_type=? AND status='approved'`)
                 .run(now2, item.tmdb_id, mediaType)
+              await notifyAll(payloads)
             }
 
             console.log(`[importer] Moved "${item.title}" from downloads/complete to ${targetPath}`)
@@ -311,11 +316,13 @@ export async function runImportCheck(): Promise<void> {
       if (item.tmdb_id != null) {
         const mediaType = item.type === 'movie' ? 'movie' : 'tv'
         const now = Date.now()
+        const payloads = collectAvailableNotifications(item.tmdb_id, mediaType, ['approved'])
         db.prepare(`
           UPDATE media_requests
           SET status = 'available', updated_at = ?
           WHERE tmdb_id = ? AND media_type = ? AND status = 'approved'
         `).run(now, item.tmdb_id, mediaType)
+        await notifyAll(payloads)
       }
 
       console.log(`[importer] Imported "${item.title}" (${item.type}) from hash ${infoHash} to ${targetPath}`)

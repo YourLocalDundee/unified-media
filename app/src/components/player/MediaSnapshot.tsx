@@ -28,9 +28,9 @@ export default function MediaSnapshot({ videoRef, title }: MediaSnapshotProps) {
     canvas.width = video.videoWidth
     canvas.height = video.videoHeight
     // drawImage/toBlob throw a SecurityError on a tainted canvas (cross-origin stream
-    // without CORS). The native /api/media/stream is same-origin, but the Jellyfin
-    // proxy path could taint it — catch so it surfaces as feedback, not an uncaught
-    // exception (A4-L1).
+    // without CORS). The native /api/media/stream is same-origin so this should not
+    // taint, but catch anyway so any SecurityError surfaces as feedback, not an
+    // uncaught exception (A4-L1).
     try {
       canvas.getContext('2d')!.drawImage(video, 0, 0)
       canvas.toBlob((blob) => {

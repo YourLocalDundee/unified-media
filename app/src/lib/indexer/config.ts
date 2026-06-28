@@ -27,6 +27,80 @@ export function getEnabledIndexers(): Indexer[] {
     .all() as Indexer[]
 }
 
+// ── Health / backoff ──────────────────────────────────────────────────────────
+// One flaky tracker should not degrade every search, so a torznab indexer that fails
+// HEALTH_FAILURE_THRESHOLD searches in a row enters exponential backoff and is skipped by the
+// search fan-out until disabled_until passes. Any success resets it immediately. The admin
+// `enabled` flag is independent — backoff is an automatic, self-healing layer on top of it.
+const HEALTH_FAILURE_THRESHOLD = 3
+const HEALTH_BASE_BACKOFF_MS = 10 * 60 * 1000        // 10 min after the threshold is hit
+const HEALTH_MAX_BACKOFF_MS = 6 * 60 * 60 * 1000     // capped at 6 h
+
+// Per-indexer request-rate limiting (account safety). An in-memory token bucket per indexer id, refilled
+// at rate_limit_per_min tokens/min (burst = one minute's worth). 0 = unlimited. This is a soft local cap
+// to avoid tripping a private tracker's hourly query limit; a throttled search just skips that indexer for
+// the tick (not a failure → no backoff). In-memory is fine: the cap is per-process and resets on restart.
+interface RateBucket { tokens: number; lastRefill: number }
+const rateBuckets = new Map<number, RateBucket>()
+
+export function tryConsumeIndexerToken(id: number, perMin: number): boolean {
+  if (!perMin || perMin <= 0) return true // unlimited
+  const now = Date.now()
+  let b = rateBuckets.get(id)
+  if (!b) {
+    b = { tokens: perMin, lastRefill: now }
+    rateBuckets.set(id, b)
+  } else {
+    const refill = ((now - b.lastRefill) / 60_000) * perMin
+    if (refill > 0) {
+      b.tokens = Math.min(perMin, b.tokens + refill)
+      b.lastRefill = now
+    }
+  }
+  if (b.tokens >= 1) {
+    b.tokens -= 1
+    return true
+  }
+  return false
+}
+
+/** Enabled indexers that are not currently in backoff — the set the search fan-out queries. */
+export function getSearchableIndexers(): Indexer[] {
+  return getDb()
+    .prepare('SELECT * FROM indexers WHERE enabled = 1 AND (disabled_until IS NULL OR disabled_until <= ?) ORDER BY name')
+    .all(Date.now()) as Indexer[]
+}
+
+/**
+ * Record the outcome of a search against an indexer. A success clears the failure count and any
+ * backoff; a failure increments the count and, at/after the threshold, sets an exponentially growing
+ * backoff window (capped). Also updates health_status/last_health_check so the admin UI reflects it.
+ */
+export function recordIndexerResult(id: number, ok: boolean): void {
+  const db = getDb()
+  if (ok) {
+    db.prepare(
+      'UPDATE indexers SET consecutive_failures = 0, disabled_until = NULL, health_status = ?, last_health_check = ? WHERE id = ?',
+    ).run('ok', Date.now(), id)
+    return
+  }
+  const row = db.prepare('SELECT consecutive_failures FROM indexers WHERE id = ?').get(id) as
+    | { consecutive_failures: number }
+    | undefined
+  const failures = (row?.consecutive_failures ?? 0) + 1
+  let disabledUntil: number | null = null
+  if (failures >= HEALTH_FAILURE_THRESHOLD) {
+    const backoff = Math.min(
+      HEALTH_BASE_BACKOFF_MS * 2 ** (failures - HEALTH_FAILURE_THRESHOLD),
+      HEALTH_MAX_BACKOFF_MS,
+    )
+    disabledUntil = Date.now() + backoff
+  }
+  db.prepare(
+    'UPDATE indexers SET consecutive_failures = ?, disabled_until = ?, health_status = ?, last_health_check = ? WHERE id = ?',
+  ).run(failures, disabledUntil, 'error', Date.now(), id)
+}
+
 export function getIndexerById(id: number): Indexer | undefined {
   return getDb()
     .prepare('SELECT * FROM indexers WHERE id = ?')
@@ -62,10 +136,11 @@ export function updateIndexer(
     requires_flaresolverr: number
     search_type: string
     pending_credentials: string
+    rate_limit_per_min: number
   }>
 ): Indexer | undefined {
   // Allowlist prevents arbitrary column injection through the dynamic SET clause.
-  const allowed = ['name', 'torznab_url', 'api_key', 'enabled', 'description', 'base_url', 'requires_auth', 'requires_flaresolverr', 'search_type', 'pending_credentials'] as const
+  const allowed = ['name', 'torznab_url', 'api_key', 'enabled', 'description', 'base_url', 'requires_auth', 'requires_flaresolverr', 'search_type', 'pending_credentials', 'rate_limit_per_min'] as const
   const keys = (Object.keys(data) as (keyof typeof data)[]).filter(k =>
     allowed.includes(k as (typeof allowed)[number])
   )

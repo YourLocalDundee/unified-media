@@ -19,6 +19,7 @@ import { getDb } from '@/lib/db/index'
 import { findItemForRequest, extractTitle } from '@/lib/automation/bridge'
 import { createItem } from '@/lib/automation/monitor'
 import { grabItem } from '@/lib/automation/grabber'
+import { collectAvailableNotifications, notifyAll } from '@/lib/notify/available'
 
 export const dynamic = 'force-dynamic'
 
@@ -170,6 +171,15 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       const mediaType = media.media_type
 
       const db = getDb()
+
+      // Capture the rows this event will transition (everything not already 'available') before the
+      // UPDATE so we can notify their requesters. The status guard dedupes against the availability
+      // cron/importer — whichever flips the row first changes it; the other finds 0 rows and notifies
+      // no one.
+      const payloads = collectAvailableNotifications(tmdbId, mediaType, [
+        'pending', 'approved', 'declined', 'expired',
+      ])
+
       const result = db
         .prepare(
           `UPDATE media_requests
@@ -184,6 +194,8 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         `[seerr-webhook] MEDIA_AVAILABLE: updated ${result.changes} media_requests row(s) to available`,
         `(tmdbId=${tmdbId} type=${mediaType})`,
       )
+
+      await notifyAll(payloads)
 
       return NextResponse.json({ ok: true, action: 'status_updated' })
     }

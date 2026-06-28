@@ -118,8 +118,8 @@ export async function POST(req: NextRequest) {
   // Persist (or reuse) the want row so the grab survives a reload and shows on the
   // admin subtitle page alongside auto-downloads.
   const want = upsertSubtitleWant({
-    jellyfin_item_id: item.id,
-    jellyfin_item_type: item.type === 'movie' ? 'Movie' : 'Episode',
+    media_item_id: item.id,
+    media_item_type: item.type === 'movie' ? 'Movie' : 'Episode',
     title: item.title,
     imdb_id: item.imdb_id ? item.imdb_id.replace(/^tt/i, '') : undefined,
     media_path: item.file_path,

@@ -18,6 +18,11 @@ export interface Indexer {
   description: string | null
   pending_credentials: string | null // JSON: { fieldName: label }
   base_url: string | null
+  // health/backoff (config.ts: recordIndexerResult / getSearchableIndexers)
+  consecutive_failures: number       // failures in a row; 0 after any success
+  disabled_until: number | null      // Unix ms; in active backoff while > now (NULL = searchable)
+  // per-indexer request-rate cap (searches/min) — account safety. 0 = unlimited.
+  rate_limit_per_min: number
 }
 
 export interface IndexerDefinition {

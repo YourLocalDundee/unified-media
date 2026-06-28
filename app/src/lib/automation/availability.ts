@@ -17,6 +17,8 @@
 
 import { getDb } from '@/lib/db/index'
 import { updateItem } from './monitor'
+import { collectAvailableNotifications, notifyAll } from '@/lib/notify/available'
+import type { MediaAvailablePayload } from '@/lib/notify/index'
 import type { MonitoredItem } from './types'
 
 // Quick requests auto-delete 48 hours after DOWNLOAD COMPLETION (not library scan time)
@@ -106,6 +108,9 @@ export async function checkAvailability(): Promise<number> {
   if (grabbed.length === 0) return 0
 
   let imported = 0
+  // Notifications are collected during the scan and fired after it, so a slow/blocked webhook
+  // never holds the DB write path open. Best-effort — failures are swallowed by notifyMediaAvailable.
+  const pendingNotifications: MediaAvailablePayload[] = []
 
   for (const item of grabbed) {
     if (isInNativeLibrary(item)) {
@@ -117,17 +122,26 @@ export async function checkAvailability(): Promise<number> {
       const autoDeleteAt = completedAt + AUTO_DELETE_MS
 
       const mediaType = item.type === 'movie' ? 'movie' : 'tv'
+      const tmdbId = item.tmdb_id as number // non-null: isInNativeLibrary returns false when null
+
+      // Capture the requesters this run is about to transition BEFORE the UPDATE (status guard means
+      // only a real approved->available transition notifies). Fired after the loop so a slow webhook
+      // never holds the write path open.
+      pendingNotifications.push(...collectAvailableNotifications(tmdbId, mediaType, ['approved']))
+
       const now = Date.now()
       db.prepare(
         `UPDATE media_requests
          SET status = 'available', available_at = ?,
              auto_delete_at = CASE WHEN request_type = 'quick' THEN ? ELSE NULL END
          WHERE tmdb_id = ? AND media_type = ? AND status = 'approved'`
-      ).run(now, autoDeleteAt, item.tmdb_id, mediaType)
+      ).run(now, autoDeleteAt, tmdbId, mediaType)
 
       imported++
     }
   }
+
+  await notifyAll(pendingNotifications)
 
   return imported
 }

@@ -1,8 +1,8 @@
 /**
  * Shared type definitions for the native media server (Phase 5).
  * All four row types live in a single `media_items` table — type discriminates them.
- * Ticks are 100-nanosecond units (multiply seconds by 10_000_000) to match the
- * Jellyfin wire format so the same player components work with both backends.
+ * Ticks are 100-nanosecond units (multiply seconds by 10_000_000) — the tick
+ * format the player components consume for position and duration.
  */
 
 export type MediaItemType = 'movie' | 'episode' | 'series' | 'season'

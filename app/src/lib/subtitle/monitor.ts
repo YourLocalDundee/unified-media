@@ -46,8 +46,8 @@ export function getSubtitleById(id: number): SubtitleWant | undefined {
 }
 
 export function upsertSubtitleWant(data: {
-  jellyfin_item_id: string
-  jellyfin_item_type: string
+  media_item_id: string
+  media_item_type: string
   title: string
   imdb_id?: string
   media_path?: string
@@ -60,14 +60,14 @@ export function upsertSubtitleWant(data: {
 
   db.prepare(
     `INSERT OR IGNORE INTO subtitle_wants
-      (jellyfin_item_id, jellyfin_item_type, title, imdb_id, media_path,
+      (media_item_id, media_item_type, title, imdb_id, media_path,
        language, forced, hi, status, created_at, updated_at)
      VALUES
-      (@jellyfin_item_id, @jellyfin_item_type, @title, @imdb_id, @media_path,
+      (@media_item_id, @media_item_type, @title, @imdb_id, @media_path,
        @language, @forced, @hi, 'wanted', @created_at, @updated_at)`
   ).run({
-    jellyfin_item_id: data.jellyfin_item_id,
-    jellyfin_item_type: data.jellyfin_item_type,
+    media_item_id: data.media_item_id,
+    media_item_type: data.media_item_type,
     title: data.title,
     imdb_id: data.imdb_id ?? null,
     media_path: data.media_path ?? null,
@@ -81,10 +81,10 @@ export function upsertSubtitleWant(data: {
   return db
     .prepare(
       `SELECT * FROM subtitle_wants
-       WHERE jellyfin_item_id = ? AND language = ? AND forced = ? AND hi = ?`
+       WHERE media_item_id = ? AND language = ? AND forced = ? AND hi = ?`
     )
     .get(
-      data.jellyfin_item_id,
+      data.media_item_id,
       data.language,
       data.forced ?? 0,
       data.hi ?? 0
@@ -119,13 +119,13 @@ export function updateSubtitleStatus(
   }
 }
 
-export function markSkipped(jellyfin_item_id: string, language: string): void {
+export function markSkipped(media_item_id: string, language: string): void {
   const db = getDb()
   db.prepare(
     `UPDATE subtitle_wants
      SET status = 'skipped', updated_at = ?
-     WHERE jellyfin_item_id = ? AND language = ?`
-  ).run(Date.now(), jellyfin_item_id, language)
+     WHERE media_item_id = ? AND language = ?`
+  ).run(Date.now(), media_item_id, language)
 }
 
 export function deleteSubtitleWant(id: number): boolean {

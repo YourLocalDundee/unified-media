@@ -1,5 +1,5 @@
 // Chapter navigation panel inside MediaToolsPanel's Info tab.
-// Chapter data comes from Jellyfin (MediaChapter[] with startPositionTicks in 100ns ticks).
+// Chapter data is a MediaChapter[] with startPositionTicks in 100ns ticks.
 // The current chapter is determined by scanning the list for the last chapter whose
 // start time is <= the current playback position.
 'use client'

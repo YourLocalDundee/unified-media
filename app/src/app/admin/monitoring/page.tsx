@@ -33,6 +33,8 @@ export default function MonitoringPage() {
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState<'all' | 'active' | 'suspended'>('all')
+  const [revoking, setRevoking] = useState(false)
+  const [revokeMsg, setRevokeMsg] = useState<string | null>(null)
 
   // Fetch once on mount — the full list is small enough that client-side
   // filtering is faster than a new request per filter change.
@@ -66,9 +68,34 @@ export default function MonitoringPage() {
   const totalWatches = users.reduce((s, u) => s + u.watch_count, 0)
   const activeSessions = users.reduce((s, u) => s + u.active_sessions, 0)
 
+  async function revokeAllSessions() {
+    if (!confirm('Revoke ALL sessions for every user (except your own)? Everyone else will be logged out.')) return
+    setRevoking(true)
+    try {
+      const res = await fetch('/api/admin/sessions/revoke-all', { method: 'POST' })
+      const d = (await res.json().catch(() => ({}))) as { revoked?: number }
+      setRevokeMsg(res.ok ? `Revoked ${d.revoked ?? 0} session(s).` : 'Failed to revoke sessions.')
+      setTimeout(() => setRevokeMsg(null), 3000)
+    } finally {
+      setRevoking(false)
+    }
+  }
+
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold text-foreground">User Monitoring</h1>
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <h1 className="text-2xl font-bold text-foreground">User Monitoring</h1>
+        <div className="flex items-center gap-3">
+          {revokeMsg && <span className="text-xs text-muted-foreground">{revokeMsg}</span>}
+          <button
+            onClick={revokeAllSessions}
+            disabled={revoking}
+            className="rounded-lg border border-destructive/40 px-3 py-1.5 text-xs font-medium text-destructive hover:bg-destructive/10 disabled:opacity-50"
+          >
+            {revoking ? 'Revoking…' : 'Revoke all sessions'}
+          </button>
+        </div>
+      </div>
 
       {/* Summary stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">

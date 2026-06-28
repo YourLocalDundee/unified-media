@@ -142,7 +142,7 @@ export function runMigrations(db: Database.Database): void {
   `)
 
   // --------------------------------------------------------------------------
-  // Independence build tables — replace external *arr / Jellyfin services
+  // Independence build tables — the native stack that replaced the external *arr / media services
   // --------------------------------------------------------------------------
 
   // Indexer aggregation (Phase 1 independence build)
@@ -224,6 +224,53 @@ export function runMigrations(db: Database.Database): void {
       reason     TEXT,
       blocked_at INTEGER NOT NULL
     );
+
+    -- Upgrade-until-cutoff (lib/automation/upgrade.ts). One row per in-flight or completed upgrade:
+    -- scanForUpgrades inserts 'pending' after grabbing a better release; completeUpgrades flips it to
+    -- 'completed' (old file deleted) or 'failed' (timed out, old file kept). v1 is movies only.
+    CREATE TABLE IF NOT EXISTS pending_upgrades (
+      id             INTEGER PRIMARY KEY AUTOINCREMENT,
+      item_id        INTEGER NOT NULL,
+      tmdb_id        INTEGER NOT NULL,
+      media_type     TEXT NOT NULL,
+      old_info_hash  TEXT,
+      old_file_paths TEXT NOT NULL,          -- JSON array of file paths superseded by the upgrade
+      old_score      INTEGER NOT NULL,       -- packed quality snapshot (logging only)
+      new_info_hash  TEXT NOT NULL,
+      new_release    TEXT NOT NULL,
+      status         TEXT NOT NULL DEFAULT 'pending',  -- pending | completed | failed
+      created_at     INTEGER NOT NULL,
+      completed_at   INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_pending_upgrades_item ON pending_upgrades(item_id);
+    CREATE INDEX IF NOT EXISTS idx_pending_upgrades_status ON pending_upgrades(status);
+
+    -- Import lists (lib/automation/import-lists.ts). A list pulls movies/shows from Trakt or an RSS
+    -- feed and auto-adds them as LONG-TERM monitored items (never quick, so never auto-deleted).
+    CREATE TABLE IF NOT EXISTS import_lists (
+      id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+      name               TEXT NOT NULL,
+      list_type          TEXT NOT NULL,                 -- 'trakt' | 'rss'
+      url                TEXT NOT NULL,
+      enabled            INTEGER NOT NULL DEFAULT 1,
+      quality_profile_id INTEGER NOT NULL DEFAULT 1,
+      media_type         TEXT NOT NULL DEFAULT 'movie', -- 'movie' | 'tv' (RSS resolution hint)
+      last_sync_at       INTEGER,
+      last_error         TEXT,
+      added_count        INTEGER NOT NULL DEFAULT 0,
+      created_at         INTEGER NOT NULL
+    );
+    -- Per-list dedup ledger: an item is added at most once per list, so deleting it from the library
+    -- later never causes the next sync to re-add it.
+    CREATE TABLE IF NOT EXISTS import_list_items (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      list_id     INTEGER NOT NULL,
+      tmdb_id     INTEGER NOT NULL,
+      media_type  TEXT NOT NULL,
+      added_at    INTEGER NOT NULL,
+      UNIQUE(list_id, tmdb_id, media_type)
+    );
+    CREATE INDEX IF NOT EXISTS idx_import_list_items_list ON import_list_items(list_id);
   `)
 
   // PIECE 1: new quality system tables
@@ -299,8 +346,8 @@ export function runMigrations(db: Database.Database): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS subtitle_wants (
       id                   INTEGER PRIMARY KEY AUTOINCREMENT,
-      jellyfin_item_id     TEXT NOT NULL,
-      jellyfin_item_type   TEXT NOT NULL DEFAULT 'Movie',
+      media_item_id        TEXT NOT NULL,
+      media_item_type      TEXT NOT NULL DEFAULT 'Movie',
       title                TEXT NOT NULL,
       imdb_id              TEXT,
       media_path           TEXT,
@@ -315,10 +362,21 @@ export function runMigrations(db: Database.Database): void {
       updated_at           INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_subtitle_wants_status ON subtitle_wants(status);
-    CREATE INDEX IF NOT EXISTS idx_subtitle_wants_item ON subtitle_wants(jellyfin_item_id, language);
+    CREATE INDEX IF NOT EXISTS idx_subtitle_wants_item ON subtitle_wants(media_item_id, language);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_subtitle_wants_unique
-      ON subtitle_wants(jellyfin_item_id, language, forced, hi);
+      ON subtitle_wants(media_item_id, language, forced, hi);
   `)
+
+  // Rename the legacy jellyfin_item_* columns to media_item_* on databases created before the
+  // Jellyfin-independence cleanup. RENAME COLUMN (SQLite 3.25+) auto-rewrites the index definitions
+  // above; on a fresh or already-migrated DB the column is absent and the statement no-ops via catch.
+  const subtitleRenames = [
+    'ALTER TABLE subtitle_wants RENAME COLUMN jellyfin_item_id TO media_item_id',
+    'ALTER TABLE subtitle_wants RENAME COLUMN jellyfin_item_type TO media_item_type',
+  ]
+  for (const sql of subtitleRenames) {
+    try { db.exec(sql) } catch { /* already migrated or fresh DB */ }
+  }
 
   // Media requests — Phase 7 independence build
   // request_type: 'quick' = auto-approved + auto-deleted after 48h (old content only, slot-limited)
@@ -469,7 +527,7 @@ export function runMigrations(db: Database.Database): void {
       sort_title      TEXT,
       year            INTEGER,
       overview        TEXT,
-      runtime_ticks   INTEGER,                    -- duration in 100-nanosecond ticks (Jellyfin compat)
+      runtime_ticks   INTEGER,                    -- duration in 100-nanosecond ticks
       tmdb_id         INTEGER,
       tvdb_id         INTEGER,
       imdb_id         TEXT,
@@ -604,6 +662,17 @@ export function runMigrations(db: Database.Database): void {
     // monitored_items — per-item language constraint ('any' = no constraint; ISO 639-1 = strict).
     // The grab cron passes this to grabItem so background grabs honor the chosen language.
     "ALTER TABLE monitored_items ADD COLUMN language TEXT NOT NULL DEFAULT 'any'",
+    // monitored_items — last time the upgrade-until-cutoff scan looked at this item (NULL = never).
+    // The scan orders by this NULLS FIRST so it rotates fairly through a large library.
+    'ALTER TABLE monitored_items ADD COLUMN last_upgrade_scan_at INTEGER',
+    // indexers — health/backoff (lib/indexer). consecutive_failures counts failures in a row (reset
+    // on any success); disabled_until is the unix-ms time an indexer in exponential backoff becomes
+    // searchable again (NULL = not backed off). getSearchableIndexers() skips rows in active backoff.
+    'ALTER TABLE indexers ADD COLUMN consecutive_failures INTEGER NOT NULL DEFAULT 0',
+    'ALTER TABLE indexers ADD COLUMN disabled_until INTEGER',
+    // indexers — per-indexer request-rate cap (searches/min) for account safety. 0 = unlimited.
+    // Enforced by an in-memory token bucket in lib/indexer/config.ts (tryConsumeIndexerToken).
+    'ALTER TABLE indexers ADD COLUMN rate_limit_per_min INTEGER NOT NULL DEFAULT 0',
     // media_requests — mirrors monitored_items scope columns
     "ALTER TABLE media_requests ADD COLUMN scope_type TEXT DEFAULT 'full'",
     'ALTER TABLE media_requests ADD COLUMN scope_seasons TEXT',

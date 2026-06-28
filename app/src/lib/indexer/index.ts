@@ -4,7 +4,7 @@
 // All network I/O here is direct from the Next.js server to the indexer URLs —
 // not proxied through Prowlarr.
 import { parseStringPromise } from 'xml2js'
-import { getEnabledIndexers } from './config'
+import { getSearchableIndexers, recordIndexerResult, tryConsumeIndexerToken } from './config'
 import type { Indexer, TorznabResult, TorznabSearchParams, IndexerHealth } from './types'
 import { searchYts } from './adapters/yts'
 import { searchEztv } from './adapters/eztv'
@@ -187,15 +187,21 @@ export async function searchIndexer(
       process.stderr.write(
         `[indexer] ${indexer.name} returned HTTP ${res.status}\n`,
       )
+      // A non-2xx response is a real failure (auth/ratelimit/down) — feed it to backoff. An empty
+      // result set from a 200 below is NOT a failure (a healthy "no matches"), so it records success.
+      recordIndexerResult(indexer.id, false)
       return []
     }
     const xml = await res.text()
-    return await parseXml(xml, indexer.name)
+    const results = await parseXml(xml, indexer.name)
+    recordIndexerResult(indexer.id, true)
+    return results
   } catch (err) {
     const isTimeout = err instanceof Error && err.name === 'AbortError'
     process.stderr.write(
       `[indexer] ${indexer.name} ${isTimeout ? 'timed out' : `error: ${err}`}\n`,
     )
+    recordIndexerResult(indexer.id, false)
     return []
   } finally {
     clearTimeout(timer)
@@ -214,23 +220,45 @@ export async function searchIndexer(
 export async function searchAllIndexers(
   params: TorznabSearchParams,
 ): Promise<TorznabResult[]> {
-  const indexers = getEnabledIndexers()
+  // getSearchableIndexers() excludes any indexer in active backoff so one flaky tracker can't keep
+  // slowing every search (the torznab path feeds backoff via recordIndexerResult inside searchIndexer).
+  const indexers = getSearchableIndexers()
   if (indexers.length === 0) return []
 
   const limit = createLimit(3)
 
   const settled = await Promise.allSettled(
     indexers.map(indexer => limit(async () => {
-      switch (indexer.search_type) {
-        case 'yts':
-          return params.q ? searchYts(params.q) : []
-        case 'eztv':
-          return params.imdbid ? searchEztv(params.imdbid) : []
-        case 'nyaa':
-          return params.q ? searchNyaa(params.q) : []
-        default:
-          // 'torznab' or any unrecognized type — use existing Torznab path
-          return searchIndexer(indexer, params)
+      // D1: per-indexer request-rate gate (rate_limit_per_min, 0 = unlimited). A throttled indexer is
+      // skipped for this tick — that is NOT a failure, so it does not record a backoff hit.
+      if (!tryConsumeIndexerToken(indexer.id, indexer.rate_limit_per_min)) return []
+      // The adapters now throw on a hard failure (D2), so they feed backoff just like the torznab path:
+      // a thrown error here records a failure; a completed call (even with 0 results) records success.
+      // searchIndexer records its own health and never throws, so it bypasses this try/catch's recording.
+      try {
+        switch (indexer.search_type) {
+          case 'yts': {
+            const r = params.q ? await searchYts(params.q) : []
+            recordIndexerResult(indexer.id, true)
+            return r
+          }
+          case 'eztv': {
+            const r = params.imdbid ? await searchEztv(params.imdbid) : []
+            recordIndexerResult(indexer.id, true)
+            return r
+          }
+          case 'nyaa': {
+            const r = params.q ? await searchNyaa(params.q) : []
+            recordIndexerResult(indexer.id, true)
+            return r
+          }
+          default:
+            // 'torznab' or any unrecognized type — Torznab path (records its own health, never throws)
+            return await searchIndexer(indexer, params)
+        }
+      } catch {
+        recordIndexerResult(indexer.id, false)
+        return []
       }
     })),
   )

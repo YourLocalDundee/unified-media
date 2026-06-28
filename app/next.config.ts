@@ -6,12 +6,6 @@ const nextConfig: NextConfig = {
   images: {
     remotePatterns: [
       {
-        protocol: 'http',
-        hostname: '192.168.0.50',
-        port: '8096',
-        pathname: '/Items/**',
-      },
-      {
         protocol: 'https',
         hostname: 'image.tmdb.org',
         pathname: '/t/p/**',

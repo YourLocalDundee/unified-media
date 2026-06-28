@@ -71,7 +71,7 @@ function Toggle({
   )
 }
 
-// Values are bit-per-second ceilings passed to Jellyfin's transcoding API; 0 = uncapped
+// Values are bit-per-second ceilings passed to the transcoding pipeline; 0 = uncapped
 const QUALITY_OPTIONS: { value: PlaybackPrefs['quality']; label: string }[] = [
   { value: 0, label: 'Auto (Best available)' },
   { value: 120000000, label: '4K (120 Mbps)' },

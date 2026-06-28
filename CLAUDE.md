@@ -1,8 +1,9 @@
 # unified-frontend
 
 A single-pane-of-glass web app for the minime home server media stack (v0.10.2). Replaces the
-multi-tab workflow (Jellyfin + Seerr + qBittorrent) with one unified interface for browsing,
-requesting, watching, and monitoring downloads.
+old multi-tab workflow with one fully native interface for browsing, requesting, watching, and
+monitoring downloads. The app runs its own media server, indexer aggregation, download automation,
+and subtitle management — zero Jellyfin dependency.
 
 > **This file is the lean entry point.** Deep-dives, shipped-feature history, and the backlog now
 > live under `docs/`. Start with `docs/README.md` for the index and conventions. Section pointers
@@ -29,7 +30,7 @@ requesting, watching, and monitoring downloads.
 | Two-mode request system | §15 | — |
 | Party Play (watch together) | pointer §16 | `docs/features/party-play.md` |
 | Decision engine (gates + custom formats) | pointer §17 | `docs/features/decision-engine.md` |
-| Independence build (native *arr/Jellyfin replacement) | pointer §14 | `docs/complete/FEATURES.md` |
+| Independence build (native media stack) | pointer §14 | `docs/complete/FEATURES.md` |
 
 ---
 
@@ -37,25 +38,26 @@ requesting, watching, and monitoring downloads.
 
 ### What this is
 
-A Next.js 16+ web app that acts as a **UX aggregation layer** on top of three existing services:
+A Next.js 16+ web app with a **fully native** media stack. Library browsing, playback, indexer
+aggregation, download automation, and subtitle management all run inside the app — it does not call
+Jellyfin. Two external services are still used at the edges:
 
-- **Jellyfin** — browse the local media library, play content
-- **Seerr** — search TMDB, create requests for new movies/shows, check request status
-- **qBittorrent** — monitor the download queue that feeds the library
+- **Seerr** — TMDB metadata + the request/approval admin surface
+- **qBittorrent** — the download client that feeds the library (via the native automation layer)
 
 The end goal is a single URL (`media.minijoe.dev`) that handles the complete workflow: discover →
 request → watch, with download status visible inline.
 
-> **Note:** the app has since grown a **native** stack (own indexer aggregation, download automation,
-> subtitle management, and media server) that replaces the external *arr services + Jellyfin for the
-> in-app experience. See §14 and `docs/complete/FEATURES.md`. The three services above remain the
-> conceptual model and several are still used (TMDB metadata via Seerr, Jellyfin for power-user admin).
+> **Note:** the native stack (own indexer aggregation, download automation, subtitle management, and
+> media server) replaced the external *arr services and Jellyfin for the in-app experience. See §14
+> and `docs/complete/FEATURES.md`.
 
 ### What this is NOT
 
 - Not a replacement for Sonarr, Radarr, Prowlarr, or Bazarr at the ops level. They still exist for
   power use; the native stack handles the in-app path.
-- Not a full Jellyfin replacement. Jellyfin itself still exists at `jellyfin.minijoe.dev`.
+- The app no longer calls Jellyfin. A standalone Jellyfin still runs at `jellyfin.minijoe.dev` for
+  direct TV use, fully independent of this app and out of scope for it.
 - Not a full Seerr replacement. Seerr still runs at `seerr.minijoe.dev` for admin/approval.
 - Not a torrent manager. qBittorrent's full UI is still at `qbt.minijoe.dev`.
 - Not a new backend in the cloud sense — all data is local.
@@ -69,7 +71,7 @@ request → watch, with download status visible inline.
 ```
 /home/minijoe/dev/unified-frontend/
   app/                  # The Next.js application (run npm run dev from here)
-  sources/              # Read-only reference copies of upstream source (seerr, jellyfin-web, qbittorrent-webui)
+  sources/              # Read-only reference copies of upstream source (seerr, qbittorrent-webui)
   analysis/             # Audit reports + per-service analysis notes
   docs/                 # Deep-dives, feature history, backlog (see docs/README.md)
   CLAUDE.md             # This file
@@ -88,9 +90,6 @@ Internet
 The app calls backing services from **Next.js server components and API routes** — never directly
 from the browser. This keeps API keys and qBittorrent session cookies out of client code and avoids
 CORS entirely.
-
-**Jellyfin note:** the Jellyfin container uses `network_mode: host`, so it is not reachable by
-container name. Use the host IP `192.168.0.50:8096` from within the Docker network.
 
 ### Auth strategy (v0.4.0+)
 
@@ -138,7 +137,6 @@ All service-to-service calls run from Next.js server code. Credentials live in e
 | Service | Internal URL | Auth | Proxy route | Env |
 | ------- | ------------ | ---- | ----------- | --- |
 | Seerr | `http://seerr:5055` (`/api/v1`) | `X-API-Key` header | (native `/api/requests/`; old `/api/seerr/[...path]` removed in Phase 7) | `SEERR_URL`, `SEERR_API_KEY` |
-| Jellyfin | `http://192.168.0.50:8096` (host net — use IP) | `X-Emby-Authorization` w/ `Token=` | `/api/jellyfin/[...path]` | `JELLYFIN_URL`, `JELLYFIN_API_KEY`, `JELLYFIN_USER_ID` |
 | qBittorrent | `http://qbittorrent:8080` (`/api/v2`) | cookie session (SID), held server-side | `/api/qbit/[...path]` (**`qbit`** with an `i`) | `UMT_URL`, `UMT_USERNAME`, `UMT_PASSWORD` |
 | Sonarr | `http://sonarr:8989` | `X-Api-Key` | `/api/sonarr/[...path]` | `SONARR_URL`, `SONARR_API_KEY` |
 | Radarr | `http://radarr:7878` | `X-Api-Key` | `/api/radarr/[...path]` | `RADARR_URL`, `RADARR_API_KEY` |
@@ -154,9 +152,10 @@ typo trap. Full endpoint catalogue: `docs/features/torrent-system.md`.
 primary; `transmission.ts` / `deluge.ts` are stubs. Active client chosen by `DOWNLOAD_CLIENT`
 (default `umt`).
 
-Per-service API operation tables (Seerr search/request, Jellyfin items/playback, qBt torrents) have
-moved out of this file to keep it lean — they live alongside the feature deep-dives in `docs/` and in
-the upstream `sources/` reference. The env + URL + proxy facts above are the daily-reference subset.
+Per-service API operation tables (Seerr search/request, qBt torrents) have moved out of this file to
+keep it lean — they live alongside the feature deep-dives in `docs/`. Native media browse/playback
+is documented in `docs/complete/FEATURES.md` and `docs/player/`. The env + URL + proxy facts above
+are the daily-reference subset.
 
 ---
 
@@ -168,13 +167,12 @@ the upstream `sources/` reference. The env + URL + proxy facts above are the dai
 | Styling | Tailwind CSS v4 (no `tailwind.config.js`; `@tailwindcss/postcss`) + shadcn/ui |
 | Server state | TanStack Query (React Query) |
 | Client state | Zustand |
-| Jellyfin API | `@jellyfin/sdk` |
 | qBittorrent API | direct fetch via Next.js API routes (VueTorrent `QbitProvider.ts` is the reference) |
 | Seerr API | direct fetch, typed wrappers (`seerr-api.yml` spec in sources) |
 | Lint | ESLint + Prettier; react-hooks rules at **error** (see §7) |
 
 **Installed versions (v0.9.1 baseline):** `next ^16.2.7`, `react ^19.0.0`, `typescript ^6.0.3`,
-`tailwindcss ^4.3.0`, `@tanstack/react-query ^5.100.14`, `zustand ^5.0.14`, `@jellyfin/sdk ^0.13.0`.
+`tailwindcss ^4.3.0`, `@tanstack/react-query ^5.100.14`, `zustand ^5.0.14`.
 
 ---
 
@@ -194,7 +192,7 @@ app/app/
   play/[id]/                    # video player route (chrome-suppressed)
   admin/…                       # monitoring, users/[id], indexers, automation, subtitles, media-server, quality-profiles
   settings/…                    # profile, playback, torrent, display; admin link if role===admin
-  api/…                         # jellyfin/qbit/sonarr/radarr proxies, requests, admin, grab, media, party, subtitles
+  api/…                         # media/qbit/sonarr/radarr proxies, requests, admin, grab, party, subtitles
 ```
 
 **Routing rule (ownership determines destination):**
@@ -235,11 +233,6 @@ These are the live "don't trip over this" rules. Kept in full because they're lo
 - **Proxy is `/api/qbit/...` (with an `i`):** `/api/qbt/...` is not a route and returns 404 HTML with
   status 200 — looks like a garbage success to any caller checking only `res.ok`.
 
-### Jellyfin
-- **`network_mode: host`:** use `http://192.168.0.50:8096`, never `http://jellyfin:8096`.
-- **Stream URLs need the token:** append `?api_key=<token>` to the `<video src>` — browsers don't
-  forward custom headers on video requests.
-
 ### Auth / Next.js 16
 - **Authentik is out (v0.4.0+):** `unified.minijoe.dev` uses its own SQLite sessions; no `X-Authentik-*`
   read anywhere. If `ADMIN_PASSWORD` is missing/weak, a random one is logged to stderr on first start.
@@ -260,7 +253,7 @@ These are the live "don't trip over this" rules. Kept in full because they're lo
   password-field CRS triggers). Rate limiting stays on. Fix per-domain, not globally.
 - **Pi-hole wildcard DNS:** resolves `*.minijoe.dev` → `192.168.0.50` for LAN + Docker host; no
   `/etc/hosts` needed in the container.
-- **Docker network:** all containers except Jellyfin are on the implicit `compose_default` bridge.
+- **Docker network:** the app's backing containers are on the implicit `compose_default` bridge.
   *arr services are reachable by container name or host IP; `.env.local` uses host IPs.
 
 ### Data model / routing
@@ -304,9 +297,6 @@ Auth in dev is the same SQLite session system as prod — no header injection.
 
 ### `.env.local` (core keys)
 ```
-# Jellyfin (host network — use IP)
-JELLYFIN_URL=http://192.168.0.50:8096
-JELLYFIN_API_KEY=<dashboard>          JELLYFIN_USER_ID=<GET /Users/Me → Id>
 # Seerr
 SEERR_URL=http://192.168.0.50:5055    SEERR_API_KEY=<settings.json main.apiKey>
 # UMT → qBittorrent
@@ -352,7 +342,7 @@ Update via `python3 scripts/update-caddyfile.py`, then
 
 ### Reference material
 - `sources/` (read-only): `seerr/seerr-api.yml`, `seerr/server/routes/`,
-  `qbittorrent-webui/src/services/qbit/QbitProvider.ts`, `jellyfin-web/src/apiclient.d.ts`.
+  `qbittorrent-webui/src/services/qbit/QbitProvider.ts`.
 - `analysis/` — audit + per-service notes. `docs/` — feature deep-dives + history.
 
 ---

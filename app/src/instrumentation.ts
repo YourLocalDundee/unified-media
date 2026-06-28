@@ -11,12 +11,6 @@ export async function register() {
       process.exit(1)
     }
 
-    const jellyfinVars = ['JELLYFIN_URL', 'JELLYFIN_API_KEY', 'JELLYFIN_USER_ID']
-    const missingJellyfin = jellyfinVars.filter((k) => !process.env[k])
-    if (missingJellyfin.length > 0) {
-      console.warn(`[config] Warning: Jellyfin env vars not set: ${missingJellyfin.join(', ')} — Jellyfin features will be unavailable`)
-    }
-
     const { initScheduler } = await import('@/lib/automation/scheduler')
     initScheduler()
 

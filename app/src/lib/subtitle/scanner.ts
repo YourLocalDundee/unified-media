@@ -27,7 +27,7 @@ function hasExistingSubtitle(mediaId: string, language: string): boolean {
   const row = db
     .prepare(
       `SELECT id FROM subtitle_wants
-       WHERE jellyfin_item_id = ? AND language = ? AND status != 'failed'`
+       WHERE media_item_id = ? AND language = ? AND status != 'failed'`
     )
     .get(mediaId, language) as SubtitleWantRow | undefined
   return row !== undefined
@@ -71,8 +71,8 @@ export async function scanLibrary(): Promise<{ scanned: number; created: number 
       const imdb_id = rawImdb ? rawImdb.replace(/^tt/i, '') : undefined
 
       const existing = upsertSubtitleWant({
-        jellyfin_item_id: item.id,
-        jellyfin_item_type: item.type === 'movie' ? 'Movie' : 'Episode',
+        media_item_id: item.id,
+        media_item_type: item.type === 'movie' ? 'Movie' : 'Episode',
         title,
         imdb_id,
         media_path: item.file_path ?? undefined,

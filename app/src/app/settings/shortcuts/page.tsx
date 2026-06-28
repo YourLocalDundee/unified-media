@@ -1,33 +1,32 @@
 import type { Metadata } from 'next'
+import { PLAYER_SHORTCUTS } from '@/lib/shortcuts'
 
 export const metadata: Metadata = { title: 'Keyboard Shortcuts — Settings' }
 
-const SHORTCUTS: { key: string; action: string }[] = [
-  { key: 'Space / K', action: 'Play / Pause' },
-  { key: 'F', action: 'Toggle fullscreen' },
-  { key: 'M', action: 'Toggle mute' },
-  { key: '← → / J L', action: 'Seek ±10 seconds' },
-  { key: 'Shift + ← →', action: 'Seek ±30 seconds' },
-  { key: '↑ ↓', action: 'Volume ±10%' },
-  { key: ', .', action: 'Step one frame backward / forward (paused)' },
-  { key: '0 – 9', action: 'Seek to 0% – 90% of duration' },
-  { key: 'S', action: 'Cycle subtitle tracks (off → first → … → off)' },
-  { key: 'N', action: 'Skip to next episode' },
-  { key: 'I', action: 'Toggle stats overlay' },
-]
-
+// The list is generated from the PLAYER_SHORTCUTS registry (src/lib/shortcuts.ts), which is
+// the same source the player's keydown cases are annotated against — there is no separately
+// maintained table here, so a binding can't drift out of the docs.
 export default function ShortcutsPage() {
   return (
     <div className="space-y-6">
       <section className="rounded-lg border border-border bg-card p-6">
         <h2 className="text-lg font-semibold mb-4">Player Shortcuts</h2>
-        <div className="divide-y divide-border">
-          {SHORTCUTS.map(({ key, action }) => (
-            <div key={key} className="flex items-center justify-between py-3">
-              <span className="text-sm text-muted-foreground">{action}</span>
-              <kbd className="inline-flex items-center rounded border border-border bg-muted px-2 py-1 text-xs font-mono font-medium">
-                {key}
-              </kbd>
+        <div className="space-y-6">
+          {PLAYER_SHORTCUTS.map(group => (
+            <div key={group.title}>
+              <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">
+                {group.title}
+              </h3>
+              <div className="divide-y divide-border">
+                {group.shortcuts.map(({ id, action, display }) => (
+                  <div key={id} className="flex items-center justify-between py-3">
+                    <span className="text-sm text-muted-foreground">{action}</span>
+                    <kbd className="inline-flex items-center rounded border border-border bg-muted px-2 py-1 text-xs font-mono font-medium">
+                      {display}
+                    </kbd>
+                  </div>
+                ))}
+              </div>
             </div>
           ))}
         </div>

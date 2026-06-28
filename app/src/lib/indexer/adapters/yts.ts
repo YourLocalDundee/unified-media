@@ -41,7 +41,9 @@ export async function searchYts(q: string): Promise<TorznabResult[]> {
   try {
     const url = `${YTS_API}?query_term=${encodeURIComponent(q)}&limit=20&sort_by=seeds`
     const res = await fetch(url)
-    if (!res.ok) return []
+    // Throw on a hard HTTP failure so the fan-out feeds it to indexer backoff; a 200 with no movies
+    // below is a healthy empty result (returns []), not a failure.
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
     const data = await res.json() as YtsResponse
     if (data.status !== 'ok' || !data.data?.movies) return []
 
@@ -71,7 +73,8 @@ export async function searchYts(q: string): Promise<TorznabResult[]> {
     }
 
     return results
-  } catch {
-    return []
+  } catch (err) {
+    // Propagate network/HTTP/parse failures so the fan-out records a backoff hit.
+    throw err instanceof Error ? err : new Error(String(err))
   }
 }

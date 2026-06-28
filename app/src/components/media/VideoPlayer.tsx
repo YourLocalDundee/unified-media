@@ -794,45 +794,48 @@ export default function VideoPlayer(props: PlaybackData) {
           video.currentTime = clamped
         }
       }
+      // These bindings are documented in the PLAYER_SHORTCUTS registry (src/lib/shortcuts.ts),
+      // which generates the /settings/shortcuts reference. The `shortcut:` id on each group ties
+      // a case back to its registry entry so the docs and this hot path stay in sync.
       switch (e.key) {
-        case ' ':
+        case ' ': // shortcut: playPause
           e.preventDefault()
           partyTogglePlay()
           break
-        case 'f':
+        case 'f': // shortcut: fullscreen
         case 'F':
           e.preventDefault()
           kbdActionsRef.current.toggleFullscreen()
           break
-        case 'm':
+        case 'm': // shortcut: mute
         case 'M':
           e.preventDefault()
           kbdActionsRef.current.toggleMute()
           break
-        case 'k':
+        case 'k': // shortcut: playPause
         case 'K':
           e.preventDefault()
           partyTogglePlay()
           break
-        case 'j':
+        case 'j': // shortcut: seek10
         case 'J':
           e.preventDefault()
           if (video) partySeekTo(video.currentTime - 10)
           break
-        case 'l':
+        case 'l': // shortcut: seek10
         case 'L':
           e.preventDefault()
           if (video) partySeekTo(video.currentTime + 10)
           break
-        case 'ArrowLeft':
+        case 'ArrowLeft': // shortcut: seek10 / seek30 (shift)
           e.preventDefault()
           if (video) partySeekTo(video.currentTime - (e.shiftKey ? 30 : 10))
           break
-        case 'ArrowRight':
+        case 'ArrowRight': // shortcut: seek10 / seek30 (shift)
           e.preventDefault()
           if (video) partySeekTo(video.currentTime + (e.shiftKey ? 30 : 10))
           break
-        case 'ArrowUp':
+        case 'ArrowUp': // shortcut: volume
           e.preventDefault()
           if (video) {
             const newVol = Math.min(1, video.volume + 0.1)
@@ -851,7 +854,7 @@ export default function VideoPlayer(props: PlaybackData) {
             if (newVol === 0) setIsMuted(true)
           }
           break
-        case ',':
+        case ',': // shortcut: frameStep
           e.preventDefault()
           if (video && pty.active) {
             partySeekTo(video.currentTime - 1 / 24)
@@ -859,7 +862,7 @@ export default function VideoPlayer(props: PlaybackData) {
             video.currentTime = Math.max(0, video.currentTime - 1 / 24)
           }
           break
-        case '.':
+        case '.': // shortcut: frameStep
           e.preventDefault()
           if (video && pty.active) {
             partySeekTo(video.currentTime + 1 / 24)
@@ -868,19 +871,19 @@ export default function VideoPlayer(props: PlaybackData) {
             video.currentTime = Math.min(video.duration || 0, video.currentTime + 1 / 24)
           }
           break
-        case '0': case '1': case '2': case '3': case '4':
+        case '0': case '1': case '2': case '3': case '4': // shortcut: seekPercent
         case '5': case '6': case '7': case '8': case '9':
           e.preventDefault()
           if (video && video.duration) {
             partySeekTo((parseInt(e.key) / 10) * video.duration)
           }
           break
-        case 'i':
+        case 'i': // shortcut: statsOverlay
         case 'I':
           e.preventDefault()
           setShowStats((s) => !s)
           break
-        case 's':
+        case 's': // shortcut: cycleSubtitles
         case 'S':
           // Cycle through all subtitle tracks (embedded + downloaded): off → 0 → … → off
           e.preventDefault()
@@ -891,7 +894,7 @@ export default function VideoPlayer(props: PlaybackData) {
             }
           }
           break
-        case 'n':
+        case 'n': // shortcut: nextEpisode
         case 'N':
           e.preventDefault()
           if (nextEpisodeRef.current) {

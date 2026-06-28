@@ -18,7 +18,7 @@ import { useIsClient } from './useIsClient'
 // ---------------------------------------------------------------------------
 
 export interface PlaybackPrefs {
-  // 0 = "Auto" — let Jellyfin choose the highest quality it can direct-play
+  // 0 = "Auto" — let the server choose the highest quality it can direct-play
   quality: 0 | 120000000 | 20000000 | 8000000 | 4000000 | 1500000
   audioLang: string
   subtitleLang: string

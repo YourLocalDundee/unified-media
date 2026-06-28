@@ -50,6 +50,7 @@ export async function PATCH(
     requires_flaresolverr: number
     search_type: string
     pending_credentials: string
+    rate_limit_per_min: number
   }>
   try { body = await req.json() }
   catch { return NextResponse.json({ error: 'Invalid request' }, { status: 400 }) } // A19: parse guard

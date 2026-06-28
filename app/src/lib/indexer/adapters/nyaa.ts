@@ -27,7 +27,9 @@ export async function searchNyaa(q: string): Promise<TorznabResult[]> {
   try {
     const url = `${NYAA_RSS}&q=${encodeURIComponent(q)}&c=0_0&f=0`
     const res = await fetch(url)
-    if (!res.ok) return []
+    // Throw on a hard HTTP failure so the fan-out feeds it to indexer backoff; a 200 with no items
+    // below is a healthy empty result (returns []), not a failure.
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
     const xml = await res.text()
 
     const parsed = await parseStringPromise(xml, { explicitArray: true }) as NyaaFeed
@@ -73,7 +75,8 @@ export async function searchNyaa(q: string): Promise<TorznabResult[]> {
     }
 
     return results
-  } catch {
-    return []
+  } catch (err) {
+    // Propagate network/HTTP/parse failures so the fan-out records a backoff hit.
+    throw err instanceof Error ? err : new Error(String(err))
   }
 }

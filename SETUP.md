@@ -1,14 +1,15 @@
 # Unified Frontend — Setup Guide
 
-Self-hosted single-pane-of-glass for the minime media stack. Aggregates Jellyfin, Seerr, and
-qBittorrent into one interface with its own SQLite-backed auth.
+Self-hosted single-pane-of-glass for the minime media stack. A fully native media server for
+browsing and playback, integrated with Seerr (requests) and qBittorrent (downloads), with its own
+SQLite-backed auth. No Jellyfin dependency.
 
 ---
 
 ## Prerequisites
 
 - Docker + Docker Compose (running `compose_default` network alongside existing stack)
-- Jellyfin, Seerr, qBittorrent containers already running
+- Seerr and qBittorrent containers already running
 - Caddy reverse proxy already running
 - BunkerWeb WAF already running
 
@@ -27,9 +28,6 @@ Required variables:
 
 | Variable | Where to find it |
 |---|---|
-| `JELLYFIN_URL` | `http://192.168.0.50:8096` (host-network container — always use IP) |
-| `JELLYFIN_API_KEY` | Jellyfin → Dashboard → API Keys → New API Key |
-| `JELLYFIN_USER_ID` | Jellyfin → Dashboard → Users → click user → UUID in URL |
 | `SEERR_URL` | `http://seerr:5055` (container name on compose_default) |
 | `SEERR_API_KEY` | `/opt/docker/configs/seerr/settings.json` → `main.apiKey` |
 | `QBIT_URL` | `http://qbittorrent:8080` |
@@ -216,7 +214,7 @@ Powered by the Web Audio API, initialized on first use to avoid autoplay restric
 **Info tab**
 
 - Bookmarks: saved to `localStorage` per media item, with named timestamp entries
-- Chapter navigation: chapter list pulled from Jellyfin item metadata
+- Chapter navigation: chapter list pulled from the media item metadata
 - Snapshot: downloads the current video frame as a PNG file
 
 ---

@@ -13,12 +13,16 @@ const TRACKER_STATUS = ['Disabled', 'Not contacted', 'Working', 'Updating', 'Not
 
 interface Props {
   hash: string
+  name: string
   colSpan: number
   onClose: () => void
 }
 
-export function TorrentDetailPanel({ hash, colSpan, onClose }: Props) {
+export function TorrentDetailPanel({ hash, name, colSpan, onClose }: Props) {
   const [tab, setTab] = useState<DetailTab>('overview')
+  // Download-to-browse linking: lazily resolve this torrent to a library item by name (once, on open)
+  // via the hardened /api/media/match-torrent route. null = no match (or not yet resolved).
+  const [matchedId, setMatchedId] = useState<string | null>(null)
   const [props, setProps] = useState<QbtTorrentProperties | null>(null)
   const [files, setFiles] = useState<QbtFileInfo[]>([])
   const [trackers, setTrackers] = useState<QbtTrackerInfo[]>([])
@@ -77,6 +81,20 @@ export function TorrentDetailPanel({ hash, colSpan, onClose }: Props) {
     const id = setTimeout(() => void fetchPeers(), 0)
     return () => clearTimeout(id)
   }, [tab, fetchPeers])
+
+  // Resolve the library match once per torrent (not on the 2s poll). A null response = no match.
+  // All setState is deferred a tick so none runs synchronously in the effect (react-hooks/set-state-in-effect).
+  useEffect(() => {
+    const id = setTimeout(() => {
+      setMatchedId(null)
+      if (!name) return
+      fetch(`/api/media/match-torrent?name=${encodeURIComponent(name)}`)
+        .then(r => (r.ok ? r.json() : null))
+        .then((d: { id: string } | null) => { if (d && d.id) setMatchedId(d.id) })
+        .catch(() => {})
+    }, 0)
+    return () => clearTimeout(id)
+  }, [name])
 
   useEffect(() => {
     const id = setInterval(() => {
@@ -137,6 +155,15 @@ export function TorrentDetailPanel({ hash, colSpan, onClose }: Props) {
 
             {/* Overview */}
             {!loading && !error && tab === 'overview' && props && (
+              <div className="space-y-3">
+              {matchedId && (
+                <a
+                  href={`/library/${matchedId}`}
+                  className="inline-flex items-center gap-1.5 rounded-md bg-primary/15 px-2.5 py-1 text-xs font-medium text-primary hover:bg-primary/25"
+                >
+                  View in library →
+                </a>
+              )}
               <div className="grid grid-cols-2 gap-x-8 gap-y-2 text-xs sm:grid-cols-3 lg:grid-cols-4">
                 {([
                   ['Download speed', fmtSpeed(props.dl_speed)],
@@ -161,6 +188,7 @@ export function TorrentDetailPanel({ hash, colSpan, onClose }: Props) {
                     <span className="font-medium text-gray-900 dark:text-gray-100 break-all">{value}</span>
                   </div>
                 ))}
+              </div>
               </div>
             )}
 

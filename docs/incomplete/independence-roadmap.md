@@ -1,5 +1,9 @@
 # Independence Roadmap
 
+> **ARCHIVED (2026-06-28).** Point-in-time planning record. The independence build shipped and
+> unified-media is now fully native (zero Jellyfin dependency). Kept for historical context; not a
+> description of current state. See `docs/complete/FEATURES.md` for what shipped.
+
 **Goal:** Replace Jellyfin, Sonarr, Radarr, Prowlarr, Bazarr, and (optionally) qBittorrent with services built inside or alongside the unified-frontend monorepo using TypeScript/Node.js. This document is the full API reference and build plan.
 
 ---

@@ -44,7 +44,7 @@ export const EQ_PRESETS: Record<string, number[]> = {
 
 export type AspectRatioMode = 'auto' | '16:9' | '4:3' | '21:9' | '1:1' | '9:16' | '2.35:1'
 
-// Jellyfin chapter shape. startPositionTicks is in 100-nanosecond ticks;
+// Chapter shape. startPositionTicks is in 100-nanosecond ticks;
 // divide by 10,000,000 to get seconds.
 export interface MediaChapter {
   name: string
@@ -69,7 +69,7 @@ export interface AudioChainNodes {
   karaokeGainR?: GainNode
 }
 
-// Built server-side by getPlaybackData() in lib/jellyfin/playback.ts.
+// Built server-side from the media item's available streams.
 // isDirect=true means the original stream URL (no transcoding), which is offered first.
 // Lower-quality entries use HLS transcode URLs with MaxHeight/MaxWidth/VideoBitrate params.
 export interface QualityOption {

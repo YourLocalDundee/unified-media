@@ -89,14 +89,79 @@ function sanitizeColor(value: string, fallback = '#000000'): string {
   return HEX_RE.test(value) ? value : fallback
 }
 
-function sanitizeColors(c: CustomThemeColors): CustomThemeColors {
+export function sanitizeColors(c: Partial<CustomThemeColors> | undefined): CustomThemeColors {
+  const v = c ?? {}
   return {
-    bg:            sanitizeColor(c.bg,            '#0f1117'),
-    surface:       sanitizeColor(c.surface,       '#1c2128'),
-    accent:        sanitizeColor(c.accent,        '#2f81f7'),
-    textPrimary:   sanitizeColor(c.textPrimary,   '#e6edf3'),
-    textSecondary: sanitizeColor(c.textSecondary, '#8b949e'),
-    border:        sanitizeColor(c.border,        '#30363d'),
+    bg:            sanitizeColor(v.bg            ?? '', '#0f1117'),
+    surface:       sanitizeColor(v.surface       ?? '', '#1c2128'),
+    accent:        sanitizeColor(v.accent        ?? '', '#2f81f7'),
+    textPrimary:   sanitizeColor(v.textPrimary   ?? '', '#e6edf3'),
+    textSecondary: sanitizeColor(v.textSecondary ?? '', '#8b949e'),
+    border:        sanitizeColor(v.border        ?? '', '#30363d'),
+  }
+}
+
+// ── Theme share strings (export / import) ───────────────────────────────────────
+//
+// A share string is `umt-theme-v1:<base64url>` where the payload is {n:name, c:colors}.
+// Encoding is unicode-safe (TextEncoder → base64url) so theme names with non-ASCII
+// characters survive a round trip, and URL-safe so a string can be dropped into a link.
+// Decoding always runs colors through sanitizeColors and assigns a FRESH local id, so a
+// hand-crafted string can neither inject CSS (A21-02) nor collide with an existing theme.
+
+const SHARE_PREFIX = 'umt-theme-v1:'
+
+function toBase64Url(s: string): string {
+  const bytes = new TextEncoder().encode(s)
+  let bin = ''
+  for (const b of bytes) bin += String.fromCharCode(b)
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+}
+
+function fromBase64Url(s: string): string {
+  const b64 = s.replace(/-/g, '+').replace(/_/g, '/')
+  const bin = atob(b64)
+  const bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0))
+  return new TextDecoder().decode(bytes)
+}
+
+export function encodeThemeShare(theme: CustomTheme): string {
+  const payload = { n: theme.name, c: sanitizeColors(theme.colors) }
+  return SHARE_PREFIX + toBase64Url(JSON.stringify(payload))
+}
+
+/**
+ * Parse a share string into a ready-to-save CustomTheme (fresh id, sanitized colors), or
+ * return null if it is malformed. Accepts both the prefixed v1 form and a bare base64(JSON)
+ * blob (the original `btoa(JSON.stringify(theme))` format) for backward compatibility.
+ */
+export function decodeThemeShare(raw: string): CustomTheme | null {
+  const trimmed = raw.trim()
+  if (!trimmed) return null
+  let json: string
+  try {
+    json = trimmed.startsWith(SHARE_PREFIX)
+      ? fromBase64Url(trimmed.slice(SHARE_PREFIX.length))
+      : atob(trimmed) // legacy bare-base64 form
+  } catch {
+    return null
+  }
+
+  let parsed: unknown
+  try { parsed = JSON.parse(json) } catch { return null }
+  if (typeof parsed !== 'object' || parsed === null) return null
+
+  const obj = parsed as Record<string, unknown>
+  // v1 payload uses {n, c}; legacy used {name, colors}.
+  const name = typeof obj.n === 'string' ? obj.n : typeof obj.name === 'string' ? obj.name : ''
+  const rawColors = (obj.c ?? obj.colors) as Partial<CustomThemeColors> | undefined
+  const cleanName = name.trim().slice(0, 48) || 'Imported theme'
+  if (!rawColors || typeof rawColors !== 'object') return null
+
+  return {
+    id: `custom-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    name: cleanName,
+    colors: sanitizeColors(rawColors),
   }
 }
 

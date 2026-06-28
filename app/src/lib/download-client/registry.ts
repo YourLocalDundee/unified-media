@@ -7,11 +7,13 @@
 import { getDownloadClientConfig } from './config'
 import type { DownloadClient } from './types'
 import { QBittorrentClient } from './qbittorrent'
+import { TransmissionClient } from './transmission'
+import { DelugeClient } from './deluge'
 
-// A7-02: only 'umt' (qBittorrent) is actually implemented; transmission/deluge are
-// throwing stubs. Callers that want to gate UI/behaviour can check this instead of
-// catching a deep operation-level error.
-const IMPLEMENTED_CLIENTS = new Set(['umt'])
+// All three backends now implement the DownloadClient interface. Kept as the single
+// gate so UI/behaviour can still cheaply ask "is the configured client real?" before
+// showing a torrent-management surface that assumes a working backend.
+const IMPLEMENTED_CLIENTS = new Set(['umt', 'transmission', 'deluge'])
 
 export function isDownloadClientImplemented(): boolean {
   return IMPLEMENTED_CLIENTS.has(getDownloadClientConfig().type)
@@ -24,13 +26,10 @@ function createClient(): DownloadClient {
     case 'umt':
       return new QBittorrentClient(config.url, config.username, config.password)
     case 'transmission':
+      return new TransmissionClient(config.url, config.username, config.password)
     case 'deluge':
-      // A7-02: fail clearly at SELECTION naming the unsupported client, instead of
-      // returning a stub whose every method throws a generic mid-operation error.
-      throw new Error(
-        `DOWNLOAD_CLIENT='${config.type}' is not implemented — only 'umt' (qBittorrent) is supported. ` +
-        `Set DOWNLOAD_CLIENT=umt or implement the ${config.type} client.`
-      )
+      // Deluge auth is password-only (no username).
+      return new DelugeClient(config.url, config.password)
     default: {
       // Exhaustiveness check — config.type should never fall through here
       const _exhaustive: never = config.type

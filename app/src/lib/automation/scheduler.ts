@@ -94,6 +94,29 @@ export function initScheduler(): void {
   // 2-minute interval keeps import lag short without hammering qBit.
   cron.schedule('*/2 * * * *', async () => {
     await runImportCheck()
+    // Finish any upgrade whose replacement has now imported: delete the old torrent + old file.
+    // Dynamic import keeps the fs/download-client modules out of the initial graph.
+    const { completeUpgrades } = await import('./upgrade')
+    const done = await completeUpgrades()
+    if (done > 0) console.log(`[upgrade] Completed ${done} upgrade replacement(s)`)
+  })
+
+  // Upgrade-until-cutoff scan: every 6 hours, look for a strictly-better release for imported movies
+  // whose profile allows upgrades and whose current release is still below cutoff. Grabs the upgrade;
+  // the importer + completeUpgrades() above do the file replacement once it lands.
+  cron.schedule('0 */6 * * *', async () => {
+    const { scanForUpgrades } = await import('./upgrade')
+    const { scanned, upgraded } = await scanForUpgrades()
+    if (upgraded > 0) console.log(`[upgrade] Scan: ${upgraded} upgrade(s) grabbed across ${scanned} item(s)`)
+  })
+
+  // Import lists: every 6 hours, pull each enabled Trakt/RSS list and auto-add new items as long-term
+  // monitored items (never quick → never auto-deleted). Offset 20 min past the hour so it doesn't
+  // contend with the upgrade scan on the same tick.
+  cron.schedule('20 */6 * * *', async () => {
+    const { syncAllImportLists } = await import('./import-lists')
+    const added = await syncAllImportLists()
+    if (added > 0) console.log(`[import-lists] Sync added ${added} new item(s)`)
   })
 
   // Stalled-torrent reaper: every 10 min, two failure classes — (1) metaDL/forcedMetaDL stuck with

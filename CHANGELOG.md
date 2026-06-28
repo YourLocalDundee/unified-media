@@ -7,7 +7,25 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Removed
+- **unified-media is now fully Jellyfin-free.** Removed the last leftover Jellyfin references from
+  the app. The native media-server stack already handled all in-app browse/playback; nothing called
+  Jellyfin at runtime. Specifically: dropped the dead `JELLYFIN_*` startup-warning check
+  (`instrumentation.ts`), the unused `192.168.0.50:8096/Items/**` image `remotePattern`
+  (`next.config.ts`), and the disabled "Jellyfin URL Override" section (`settings/advanced`); removed
+  the `JELLYFIN_*` vars from `.env.local` / `.env.local.example`. `@jellyfin/sdk` was already absent
+  from `package.json` (no-op). A standalone Jellyfin still runs separately for direct TV use and is
+  out of scope.
+
 ### Changed
+- **Renamed `subtitle_wants.jellyfin_item_id` / `jellyfin_item_type` → `media_item_id` /
+  `media_item_type`** (legacy naming artifact; data was always sourced from the native `media_items`
+  table). Idempotent `ALTER TABLE … RENAME COLUMN` migration preserves existing rows and
+  auto-rewrites the table's indexes; verified against an old-schema DB.
+- Scrubbed Jellyfin from CLAUDE.md (§1 overview, §2 architecture note, §3 service table, §4 tech
+  stack, §7 gotchas, §8 env), SETUP.md, and in-code comments/UI strings. Marked
+  `docs/incomplete/independence-roadmap.md` as archived. Moved the optional "Jellyfin user linking"
+  backlog idea out to the minime-stack (`future-ideas.md`) as a separate-project integration.
 - **Docs reorg.** `CLAUDE.md` trimmed from ~1,824 lines to a lean entry point. Deep-dives moved
   under `docs/`: audit block -> `docs/analysis/audit-2026-06-13-summary.md`; player internals ->
   `docs/player/`; torrent system -> `docs/features/torrent-system.md`; Party Play ->

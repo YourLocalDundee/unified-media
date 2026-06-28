@@ -21,6 +21,8 @@ import {
   buildCustomThemeCSS,
   injectCustomThemeStyle,
   removeCustomThemeStyle,
+  encodeThemeShare,
+  decodeThemeShare,
 } from '@/components/ui/ThemeToggle'
 
 function getActiveTheme(): string {
@@ -93,40 +95,28 @@ export default function ThemeSection() {
 
   function handleExport(ct: CustomTheme, e: React.MouseEvent) {
     e.stopPropagation()
-    const shareString = btoa(JSON.stringify(ct))
-    navigator.clipboard.writeText(shareString).then(() => {
-      setCopiedId(ct.id)
-      setTimeout(() => setCopiedId(prev => (prev === ct.id ? null : prev)), 1800)
-    })
+    const shareString = encodeThemeShare(ct)
+    navigator.clipboard.writeText(shareString).then(
+      () => {
+        setCopiedId(ct.id)
+        setTimeout(() => setCopiedId(prev => (prev === ct.id ? null : prev)), 1800)
+      },
+      () => {
+        // Clipboard blocked (insecure context / permission) — surface so the share isn't silently lost.
+        setImportError('Could not copy to clipboard')
+        setTimeout(() => setImportError(null), 2500)
+      },
+    )
   }
 
   function handleImport() {
     setImportError(null)
-    const raw = importValue.trim()
-    if (!raw) return
-    let parsed: unknown
-    try {
-      parsed = JSON.parse(atob(raw))
-    } catch {
+    // decodeThemeShare validates, sanitizes colors (A21-02), and assigns a fresh id.
+    const newTheme = decodeThemeShare(importValue)
+    if (!newTheme) {
       setImportError('Invalid theme string')
       setTimeout(() => setImportError(null), 2500)
       return
-    }
-    if (
-      typeof parsed !== 'object' ||
-      parsed === null ||
-      typeof (parsed as Record<string, unknown>).name !== 'string' ||
-      typeof (parsed as Record<string, unknown>).colors !== 'object' ||
-      (parsed as Record<string, unknown>).colors === null
-    ) {
-      setImportError('Invalid theme string')
-      setTimeout(() => setImportError(null), 2500)
-      return
-    }
-    const incoming = parsed as CustomTheme
-    const newTheme: CustomTheme = {
-      ...incoming,
-      id: `custom-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
     }
     setCustomThemes(prev => {
       const next = [...prev, newTheme]
@@ -136,6 +126,8 @@ export default function ThemeSection() {
     })
     setImportValue('')
     setImportOpen(false)
+    setActive(newTheme.id)
+    applyTheme(newTheme.id)
   }
 
   function handleDelete(id: string, e: React.MouseEvent) {
@@ -211,10 +203,18 @@ export default function ThemeSection() {
               </div>
               <p className="text-xs font-medium text-foreground truncate">{ct.name}</p>
               {isActive && (
-                <span className="absolute top-1.5 right-1.5 text-primary">
+                <span className="absolute top-1.5 right-6 text-primary">
                   <Check className="h-3 w-3" />
                 </span>
               )}
+              <button
+                onClick={e => handleExport(ct, e)}
+                className="absolute top-1 left-1 rounded p-0.5 text-muted-foreground hover:text-primary opacity-0 group-hover:opacity-100 transition-opacity"
+                aria-label={`Copy ${ct.name} share string`}
+                title="Copy share string"
+              >
+                {copiedId === ct.id ? <Check className="h-3 w-3 text-primary" /> : <Download className="h-3 w-3" />}
+              </button>
               <button
                 onClick={e => handleDelete(ct.id, e)}
                 className="absolute top-1 right-1 rounded p-0.5 text-muted-foreground hover:text-destructive opacity-0 group-hover:opacity-100 transition-opacity"
@@ -235,7 +235,46 @@ export default function ThemeSection() {
           </span>
           <p className="text-xs text-muted-foreground">Add custom</p>
         </div>
+
+        <div
+          onClick={() => { setImportOpen(o => !o); setImportError(null) }}
+          className="group relative cursor-pointer rounded-lg border-2 border-dashed border-border hover:border-primary/50 p-3 transition-all w-28 flex flex-col items-center justify-center gap-1.5 min-h-[4.5rem]"
+        >
+          <span className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-dashed border-border group-hover:border-primary/50 transition-colors">
+            <Upload className="h-3.5 w-3.5 text-muted-foreground" />
+          </span>
+          <p className="text-xs text-muted-foreground">Import</p>
+        </div>
       </div>
+
+      {/* Import panel — paste a share string copied from another install */}
+      {importOpen && (
+        <div className="mt-3 rounded-lg border border-border bg-card p-3 max-w-md">
+          <label className="block text-xs text-muted-foreground mb-1">Paste a theme share string</label>
+          <div className="flex gap-2">
+            <input
+              ref={importInputRef}
+              type="text"
+              value={importValue}
+              onChange={e => setImportValue(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') handleImport() }}
+              placeholder="umt-theme-v1:…"
+              className="flex-1 rounded-md border border-border bg-background px-3 py-1.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+            />
+            <button
+              onClick={handleImport}
+              disabled={!importValue.trim()}
+              className="px-3 py-1.5 rounded-md text-sm bg-primary text-primary-foreground hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              Import
+            </button>
+          </div>
+          {importError && <p className="mt-1.5 text-xs text-destructive">{importError}</p>}
+          <p className="mt-1.5 text-xs text-muted-foreground">
+            Hover a custom theme and click the <Download className="inline h-3 w-3 align-text-bottom" /> icon to copy its share string.
+          </p>
+        </div>
+      )}
 
       {modalOpen && (
         <CreateThemeModal

@@ -11,7 +11,7 @@ interface AppState {
   // Player
   currentItemId: string | null
   isPlayerOpen: boolean
-  // Jellyfin resume position uses "ticks" (100-nanosecond units), not seconds
+  // Resume position is stored in "ticks" (100-nanosecond units), not seconds
   playerStartTicks: number
   // UI
   sidebarOpen: boolean

@@ -16,7 +16,8 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useFocusTrap } from '@/hooks/useFocusTrap'
-import { Loader2, Trash2, Play, ChevronDown, ChevronUp, Plus, X, Ban, SlidersHorizontal } from 'lucide-react'
+import ImportListsCard from './ImportListsCard'
+import { Loader2, Trash2, Play, ChevronDown, ChevronUp, Plus, X, Ban, SlidersHorizontal, Bell, ArrowUpCircle } from 'lucide-react'
 
 interface MonitoredItem {
   id: number
@@ -92,6 +93,30 @@ const GATE_DEFAULTS: GateSettings = {
   gate_max_size_tv_gb: '200',
 }
 
+// app_settings keys for outbound notifications (see lib/notify). Stored as strings.
+interface NotifySettings {
+  notify_on_available: string // '1' | '0'
+  notify_discord_webhook: string
+  notify_ntfy_url: string
+}
+
+const NOTIFY_DEFAULTS: NotifySettings = {
+  notify_on_available: '1',
+  notify_discord_webhook: '',
+  notify_ntfy_url: '',
+}
+
+// Upgrade-until-cutoff rows (lib/automation/upgrade).
+interface UpgradeListRow {
+  id: number
+  item_id: number
+  title: string | null
+  new_release: string
+  status: string
+  created_at: number
+  completed_at: number | null
+}
+
 // Static Tailwind class maps avoid dynamic class construction which can be purged by the compiler
 const STATUS_BADGE: Record<MonitoredItem['status'], string> = {
   wanted:   'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30',
@@ -151,6 +176,19 @@ export default function AdminAutomationPage() {
   const [gateSaved, setGateSaved] = useState(false)
   const [gateError, setGateError] = useState('')
 
+  // Notifications.
+  const [notify, setNotify] = useState<NotifySettings>(NOTIFY_DEFAULTS)
+  const [notifySaving, setNotifySaving] = useState(false)
+  const [notifySaved, setNotifySaved] = useState(false)
+  const [notifyError, setNotifyError] = useState('')
+  const [notifyTesting, setNotifyTesting] = useState(false)
+  const [notifyTestMsg, setNotifyTestMsg] = useState('')
+
+  // Upgrades.
+  const [upgrades, setUpgrades] = useState<UpgradeListRow[]>([])
+  const [upgradeScanning, setUpgradeScanning] = useState(false)
+  const [upgradeMsg, setUpgradeMsg] = useState('')
+
   // Blocklist (Part 2).
   const [blocklist, setBlocklist] = useState<BlocklistRow[]>([])
   const [loadingBlocklist, setLoadingBlocklist] = useState(true)
@@ -206,6 +244,11 @@ export default function AdminAutomationPage() {
         gate_max_size_movie_gb: data.gate_max_size_movie_gb ?? GATE_DEFAULTS.gate_max_size_movie_gb,
         gate_max_size_tv_gb: data.gate_max_size_tv_gb ?? GATE_DEFAULTS.gate_max_size_tv_gb,
       })
+      setNotify({
+        notify_on_available: data.notify_on_available ?? NOTIFY_DEFAULTS.notify_on_available,
+        notify_discord_webhook: data.notify_discord_webhook ?? NOTIFY_DEFAULTS.notify_discord_webhook,
+        notify_ntfy_url: data.notify_ntfy_url ?? NOTIFY_DEFAULTS.notify_ntfy_url,
+      })
     } catch {
       // non-fatal — leave defaults in place
     }
@@ -225,6 +268,17 @@ export default function AdminAutomationPage() {
     }
   }, [])
 
+  const fetchUpgrades = useCallback(async () => {
+    try {
+      const res = await fetch('/api/automation/upgrades')
+      if (!res.ok) return
+      const data = await res.json() as { upgrades: UpgradeListRow[] }
+      setUpgrades(data.upgrades)
+    } catch {
+      // non-fatal — leave the list empty
+    }
+  }, [])
+
   // Deferred a tick so the loading setStates in the fetchers run outside the effect's
   // synchronous commit path (react-hooks/set-state-in-effect).
   useEffect(() => {
@@ -234,9 +288,10 @@ export default function AdminAutomationPage() {
       void fetchHistory()
       void fetchGate()
       void fetchBlocklist()
+      void fetchUpgrades()
     }, 0)
     return () => clearTimeout(id)
-  }, [fetchItems, fetchProfiles, fetchHistory, fetchGate, fetchBlocklist])
+  }, [fetchItems, fetchProfiles, fetchHistory, fetchGate, fetchBlocklist, fetchUpgrades])
 
   async function handleGrab(item: MonitoredItem) {
     setGrabState(s => ({ ...s, [item.id]: 'loading' }))
@@ -331,6 +386,76 @@ export default function AdminAutomationPage() {
       setGateError(e instanceof Error ? e.message : 'Save failed')
     } finally {
       setGateSaving(false)
+    }
+  }
+
+  async function saveNotify() {
+    setNotifySaving(true)
+    setNotifySaved(false)
+    setNotifyError('')
+    setNotifyTestMsg('')
+    const payload: NotifySettings = {
+      notify_on_available: notify.notify_on_available === '1' ? '1' : '0',
+      notify_discord_webhook: notify.notify_discord_webhook.trim(),
+      notify_ntfy_url: notify.notify_ntfy_url.trim(),
+    }
+    try {
+      const res = await fetch('/api/admin/settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+      if (!res.ok) throw new Error(`Save failed (HTTP ${res.status})`)
+      setNotify(payload)
+      setNotifySaved(true)
+      setTimeout(() => setNotifySaved(false), 2500)
+    } catch (e) {
+      setNotifyError(e instanceof Error ? e.message : 'Save failed')
+    } finally {
+      setNotifySaving(false)
+    }
+  }
+
+  async function testNotify() {
+    setNotifyTesting(true)
+    setNotifyTestMsg('')
+    setNotifyError('')
+    try {
+      const res = await fetch('/api/admin/notify/test', { method: 'POST' })
+      const data = await res.json() as
+        | { ok: true; results: { channel: string; ok: boolean; error?: string }[] }
+        | { ok: false; error?: string; results?: { channel: string; ok: boolean; error?: string }[] }
+      if (!res.ok && !data.results) {
+        setNotifyTestMsg(('error' in data && data.error) ? data.error : `Test failed (HTTP ${res.status})`)
+        return
+      }
+      const parts = (data.results ?? []).map(
+        (r) => `${r.channel}: ${r.ok ? 'sent ✓' : `failed (${r.error ?? 'error'})`}`,
+      )
+      setNotifyTestMsg(parts.length ? parts.join(' · ') : 'No channels configured.')
+    } catch (e) {
+      setNotifyTestMsg(e instanceof Error ? e.message : 'Test failed')
+    } finally {
+      setNotifyTesting(false)
+    }
+  }
+
+  async function scanUpgradesNow() {
+    setUpgradeScanning(true)
+    setUpgradeMsg('')
+    try {
+      const res = await fetch('/api/automation/upgrades', { method: 'POST' })
+      const data = await res.json() as { ok?: boolean; scanned?: number; upgraded?: number; error?: string }
+      if (!res.ok) {
+        setUpgradeMsg(data.error ?? `Scan failed (HTTP ${res.status})`)
+        return
+      }
+      setUpgradeMsg(`Scanned ${data.scanned ?? 0} movie(s), grabbed ${data.upgraded ?? 0} upgrade(s).`)
+      await fetchUpgrades()
+    } catch (e) {
+      setUpgradeMsg(e instanceof Error ? e.message : 'Scan failed')
+    } finally {
+      setUpgradeScanning(false)
     }
   }
 
@@ -482,6 +607,126 @@ export default function AdminAutomationPage() {
               {gateError && <span className="text-red-400">{gateError}</span>}
             </p>
           </div>
+        </div>
+      </section>
+
+      {/* Notifications — fired when a requested item becomes available (lib/notify). */}
+      <section>
+        <div className="flex items-center gap-2 mb-3">
+          <Bell className="h-4 w-4 text-muted-foreground" />
+          <h2 className="text-lg font-semibold text-foreground">Notifications</h2>
+        </div>
+        <div className="rounded-xl border border-border bg-card p-5 space-y-4">
+          <p className="text-xs text-muted-foreground">
+            Sent when a requested item becomes <span className="font-medium text-foreground">available</span> in
+            the library. Configure a Discord webhook and/or an ntfy topic; leave a field blank to disable that channel.
+          </p>
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={notify.notify_on_available === '1'}
+              onChange={e => setNotify(n => ({ ...n, notify_on_available: e.target.checked ? '1' : '0' }))}
+              className="h-4 w-4 rounded border-border"
+            />
+            <span className="text-sm text-foreground">Notify when requested media becomes available</span>
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-xs text-muted-foreground">Discord webhook URL</span>
+            <input
+              type="url"
+              placeholder="https://discord.com/api/webhooks/…"
+              value={notify.notify_discord_webhook}
+              onChange={e => setNotify(n => ({ ...n, notify_discord_webhook: e.target.value }))}
+              className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+            />
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-xs text-muted-foreground">ntfy topic URL</span>
+            <input
+              type="url"
+              placeholder="https://ntfy.sh/your-topic"
+              value={notify.notify_ntfy_url}
+              onChange={e => setNotify(n => ({ ...n, notify_ntfy_url: e.target.value }))}
+              className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+            />
+            <span className="text-[11px] text-muted-foreground">Full URL including the topic, e.g. https://ntfy.sh/minime-media.</span>
+          </label>
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              onClick={() => void saveNotify()}
+              disabled={notifySaving}
+              className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+            >
+              {notifySaving ? 'Saving…' : 'Save notifications'}
+            </button>
+            <button
+              onClick={() => void testNotify()}
+              disabled={notifyTesting}
+              className="rounded-lg border border-border bg-background px-4 py-2 text-sm font-medium text-foreground hover:bg-accent disabled:opacity-50"
+            >
+              {notifyTesting ? 'Sending…' : 'Send test'}
+            </button>
+            <p aria-live="polite" className="text-sm">
+              {notifySaved && <span className="text-green-400">Saved.</span>}
+              {notifyError && <span className="text-red-400">{notifyError}</span>}
+              {notifyTestMsg && <span className="text-muted-foreground">{notifyTestMsg}</span>}
+            </p>
+          </div>
+        </div>
+      </section>
+
+      {/* Upgrades — upgrade-until-cutoff (lib/automation/upgrade). Movies only in v1. */}
+      <section>
+        <div className="flex items-center gap-2 mb-3">
+          <ArrowUpCircle className="h-4 w-4 text-muted-foreground" />
+          <h2 className="text-lg font-semibold text-foreground">Upgrades</h2>
+        </div>
+        <div className="rounded-xl border border-border bg-card p-5 space-y-4">
+          <p className="text-xs text-muted-foreground">
+            Imported <span className="font-medium text-foreground">movies</span> whose quality profile allows
+            upgrades and whose release is still below the profile cutoff are re-searched every 6 hours; a
+            strictly-better release is grabbed and swapped in. (TV upgrades are not yet supported.)
+          </p>
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              onClick={() => void scanUpgradesNow()}
+              disabled={upgradeScanning}
+              className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+            >
+              {upgradeScanning ? 'Scanning…' : 'Scan for upgrades now'}
+            </button>
+            <p aria-live="polite" className="text-sm text-muted-foreground">{upgradeMsg}</p>
+          </div>
+          {upgrades.length > 0 && (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-left text-xs text-muted-foreground border-b border-border">
+                    <th className="py-2 pr-3">Title</th>
+                    <th className="py-2 pr-3">Upgrade release</th>
+                    <th className="py-2 pr-3">Status</th>
+                    <th className="py-2 pr-3">When</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {upgrades.map(u => (
+                    <tr key={u.id} className="border-b border-border/50">
+                      <td className="py-2 pr-3 text-foreground">{u.title ?? `item ${u.item_id}`}</td>
+                      <td className="py-2 pr-3 text-muted-foreground truncate max-w-xs" title={u.new_release}>{u.new_release}</td>
+                      <td className="py-2 pr-3">
+                        <span className={
+                          u.status === 'completed' ? 'text-green-400'
+                          : u.status === 'failed' ? 'text-red-400'
+                          : 'text-yellow-400'
+                        }>{u.status}</span>
+                      </td>
+                      <td className="py-2 pr-3 text-muted-foreground">{relativeTime(u.created_at)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       </section>
 
@@ -746,6 +991,9 @@ export default function AdminAutomationPage() {
           </div>
         )}
       </section>
+
+      {/* Import Lists — auto-add titles from Trakt/RSS as long-term monitored items. */}
+      <ImportListsCard profiles={profiles} />
 
       {/* Add Item Modal */}
       {showModal && (
