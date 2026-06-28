@@ -5,6 +5,21 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [Unreleased]
+
+### Changed
+- **Docs reorg.** `CLAUDE.md` trimmed from ~1,824 lines to a lean entry point. Deep-dives moved
+  under `docs/`: audit block -> `docs/analysis/audit-2026-06-13-summary.md`; player internals ->
+  `docs/player/`; torrent system -> `docs/features/torrent-system.md`; Party Play ->
+  `docs/features/party-play.md`; decision engine -> `docs/features/decision-engine.md`; build
+  phases + independence build -> `docs/complete/FEATURES.md`; future-ideas backlog -> split into
+  `docs/complete/FEATURES.md` (done) and `docs/incomplete/BACKLOG.md` (open).
+- Added `docs/README.md` (index + conventions), `docs/CLAUDE-MD-GUIDE.md` (token-efficiency
+  guide), `docs/WHATS-NEXT-PROMPT.md` (planning prompt + voice-chat spec),
+  `docs/incomplete/FEATURE-IDEAS.md`.
+
+> Documentation-only reorganization. No source code changed; the build is unaffected.
+
 ## [0.10.2] — 2026-06-23
 
 Bucket-1 loose-end cleanup — surfacing pieces of the v0.10.0 decision engine and Party queue that
