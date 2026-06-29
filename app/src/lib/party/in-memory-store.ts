@@ -52,6 +52,7 @@ export class InMemoryPartyStateStore implements PartyStateStore {
       chatBacklog: [],
       emptySince: now,
       lastCheckpointAt: 0,
+      controlLocked: false,
     })
   }
 

@@ -1713,6 +1713,9 @@ export default function VideoPlayer(props: PlaybackData) {
             onRemoveFromQueue={party.removeFromQueue}
             onReorderQueue={party.reorderQueue}
             onPlayNext={party.playNext}
+            controlLocked={party.controlLocked}
+            onKick={party.kickMember}
+            onControlLockToggle={party.toggleControlLock}
           />
           <ChatPanelMemo
             messages={party.chatMessages}

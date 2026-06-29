@@ -23,6 +23,11 @@ interface Indexer {
   pending_credentials: string | null  // JSON: { fieldName: label }
   base_url: string | null
   rate_limit_per_min: number  // 0 = unlimited
+  rate_limit_queries_per_day: number
+  rate_limit_grabs_per_day: number
+  daily_query_count: number
+  daily_grab_count: number
+  daily_stats_date: string
 }
 
 interface TestResult {
@@ -36,9 +41,11 @@ interface FormState {
   torznab_url: string
   api_key: string
   rate_limit_per_min: string  // string for the input; parsed to int on submit (0 = unlimited)
+  rate_limit_queries_per_day: string
+  rate_limit_grabs_per_day: string
 }
 
-const EMPTY_FORM: FormState = { name: '', torznab_url: '', api_key: '', rate_limit_per_min: '0' }
+const EMPTY_FORM: FormState = { name: '', torznab_url: '', api_key: '', rate_limit_per_min: '0', rate_limit_queries_per_day: '0', rate_limit_grabs_per_day: '0' }
 
 function relativeTime(ms: number): string {
   const diff = Date.now() - ms
@@ -226,7 +233,7 @@ export default function AdminIndexersPage() {
     setEditingId(indexer.id)
     // S4: the secret is never sent to the browser, so the field starts empty. Submitting it empty
     // leaves the stored key unchanged (server-side); typing a value rotates it.
-    setForm({ name: indexer.name, torznab_url: indexer.torznab_url, api_key: '', rate_limit_per_min: String(indexer.rate_limit_per_min ?? 0) })
+    setForm({ name: indexer.name, torznab_url: indexer.torznab_url, api_key: '', rate_limit_per_min: String(indexer.rate_limit_per_min ?? 0), rate_limit_queries_per_day: String(indexer.rate_limit_queries_per_day ?? 0), rate_limit_grabs_per_day: String(indexer.rate_limit_grabs_per_day ?? 0) })
     setFormErrors({})
     setModalOpen(true)
   }
@@ -261,6 +268,8 @@ export default function AdminIndexersPage() {
         api_key: form.api_key.trim(),
         // 0 = unlimited; clamp negatives to 0. Only meaningful on edit (create ignores it).
         rate_limit_per_min: Math.max(0, parseInt(form.rate_limit_per_min, 10) || 0),
+        rate_limit_queries_per_day: Math.max(0, parseInt(form.rate_limit_queries_per_day, 10) || 0),
+        rate_limit_grabs_per_day: Math.max(0, parseInt(form.rate_limit_grabs_per_day, 10) || 0),
       }
       const res = editingId !== null
         ? await fetch(`/api/indexer/${editingId}`, {
@@ -376,7 +385,22 @@ export default function AdminIndexersPage() {
 
                   return (
                     <tr key={row.id}>
-                      <td className="px-4 py-3 font-medium text-foreground">{row.name}</td>
+                      <td className="px-4 py-3">
+                        <span className="font-medium text-foreground">{row.name}</span>
+                        {(row.rate_limit_queries_per_day > 0 || row.rate_limit_grabs_per_day > 0) && (
+                          <span className="block text-xs text-muted-foreground mt-0.5">
+                            {row.rate_limit_queries_per_day > 0 && (
+                              <span>Queries: {row.daily_query_count}/{row.rate_limit_queries_per_day} today</span>
+                            )}
+                            {row.rate_limit_queries_per_day > 0 && row.rate_limit_grabs_per_day > 0 && (
+                              <span> · </span>
+                            )}
+                            {row.rate_limit_grabs_per_day > 0 && (
+                              <span>Grabs: {row.daily_grab_count}/{row.rate_limit_grabs_per_day} today</span>
+                            )}
+                          </span>
+                        )}
+                      </td>
                       <td className="px-4 py-3 text-muted-foreground max-w-xs">
                         <span className="truncate block font-mono text-xs" title={row.torznab_url}>
                           {row.torznab_url}
@@ -557,6 +581,30 @@ export default function AdminIndexersPage() {
                   className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
                 />
                 <p className="mt-1 text-xs text-muted-foreground">0 = unlimited. Caps searches/min to this indexer to avoid tripping a tracker&apos;s query limit.</p>
+              </div>
+
+              <div>
+                <label className="block text-xs text-muted-foreground mb-1">Queries/day limit (0 = unlimited)</label>
+                <input
+                  type="number"
+                  min={0}
+                  value={form.rate_limit_queries_per_day}
+                  onChange={e => setForm(f => ({ ...f, rate_limit_queries_per_day: e.target.value }))}
+                  placeholder="0 = unlimited"
+                  className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs text-muted-foreground mb-1">Grabs/day limit (0 = unlimited)</label>
+                <input
+                  type="number"
+                  min={0}
+                  value={form.rate_limit_grabs_per_day}
+                  onChange={e => setForm(f => ({ ...f, rate_limit_grabs_per_day: e.target.value }))}
+                  placeholder="0 = unlimited"
+                  className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                />
               </div>
 
               <div className="flex justify-end gap-2 pt-2">

@@ -31,6 +31,7 @@ export interface WatchPartyRow {
   ended_at: number | null
   last_position_ticks: number
   last_paused: number // 0 | 1
+  control_locked: number // 0 | 1
 }
 
 export interface WatchPartyMemberRow {
@@ -40,6 +41,7 @@ export interface WatchPartyMemberRow {
   joined_at: number
   left_at: number | null
   is_host: number // 0 | 1
+  kicked_at: number | null
 }
 
 // ---------------------------------------------------------------------------
@@ -116,6 +118,8 @@ export interface PartyLiveState {
   emptySince: number | null
   /** Last checkpoint write time, for CHECKPOINT_THROTTLE_MS throttling. */
   lastCheckpointAt: number
+  /** When true, only the host may send play/pause/seek commands. Persisted to SQLite for restart recovery. */
+  controlLocked: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -215,6 +219,20 @@ export interface QueueAdvanceRequest {
   partyId: string
   fromMediaId: string
 }
+// --- creator-kick (feature: kick) ---
+/** Host-only: boot a member from the party. The kicked member's socket is closed with code 4003. */
+export interface KickMessage {
+  type: 'kick'
+  partyId: string
+  targetUserId: string
+}
+// --- control-lock (feature: control-lock) ---
+/** Host-only: toggle the control lock. When locked, non-hosts cannot send play/pause/seek. */
+export interface ControlLockMessage {
+  type: 'control_lock'
+  partyId: string
+  locked: boolean
+}
 
 export type ClientMessage =
   | JoinMessage
@@ -229,6 +247,8 @@ export type ClientMessage =
   | QueueRemoveMessage
   | QueueReorderMessage
   | QueueAdvanceRequest
+  | KickMessage
+  | ControlLockMessage
 
 // ---------------------------------------------------------------------------
 // Server -> Client messages
@@ -308,6 +328,22 @@ export interface ErrorMessage {
   code: string
   message: string
 }
+// --- creator-kick (feature: kick) ---
+/** Broadcast to all remaining members when the host kicks someone. The kicked member also
+ *  receives this message before their socket is closed with code 4003. */
+export interface MemberKickedMessage {
+  type: 'member_kicked'
+  partyId: string
+  userId: string
+  displayName: string
+}
+// --- control-lock (feature: control-lock) ---
+/** Broadcast to all members when the host toggles the control lock. */
+export interface ControlLockedMessage {
+  type: 'control_locked'
+  partyId: string
+  locked: boolean
+}
 
 export type ServerMessage =
   | StateMessage
@@ -321,6 +357,8 @@ export type ServerMessage =
   | QueueBroadcastMessage
   | QueueAdvanceBroadcast
   | ErrorMessage
+  | MemberKickedMessage
+  | ControlLockedMessage
 
 // ---------------------------------------------------------------------------
 // Session identity resolved from the unified-session cookie at WS upgrade.

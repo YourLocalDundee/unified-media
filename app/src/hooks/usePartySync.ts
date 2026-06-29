@@ -83,6 +83,10 @@ export interface UsePartySyncResult {
   reorderQueue: (itemId: string, toIndex: number) => void
   /** Advance to the next queued item now (manual "Play next"). */
   playNext: () => void
+  // --- creator-kick + control-lock ---
+  controlLocked: boolean
+  kickMember: (targetUserId: string) => void
+  toggleControlLock: (locked: boolean) => void
 }
 
 interface UsePartySyncOpts {
@@ -99,7 +103,7 @@ export function usePartySync(
   partyId: string | null,
   opts: UsePartySyncOpts,
 ): UsePartySyncResult {
-  const { videoRef, enabled, mediaId, onQueueAdvance } = opts
+  const { videoRef, selfUserId, enabled, mediaId, onQueueAdvance } = opts
 
   // Live refs for values read inside stable callbacks / element listeners. Written
   // in an effect (not during render) so the rule against ref mutation in render is
@@ -107,9 +111,11 @@ export function usePartySync(
   // well after commit, so the one-frame update lag is irrelevant here.
   const mediaIdRef = useRef(mediaId)
   const onQueueAdvanceRef = useRef(onQueueAdvance)
+  const selfUserIdRef = useRef(selfUserId)
   useEffect(() => {
     mediaIdRef.current = mediaId
     onQueueAdvanceRef.current = onQueueAdvance
+    selfUserIdRef.current = selfUserId
   })
 
   // --- React-visible state (drives UI) ---
@@ -138,6 +144,7 @@ export function usePartySync(
     if (ended) setEnded(false)
   }
   const [queue, setQueue] = useState<QueueItemDTO[]>([])
+  const [controlLocked, setControlLocked] = useState(false)
   // Transient, user-facing server error surfaced to the panel (A5-06).
   const [lastError, setLastError] = useState<string | null>(null)
   const errorClearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -466,6 +473,21 @@ export function usePartySync(
           setConnectionState('ended')
           closedByUsRef.current = true
           wsRef.current?.close()
+          break
+        case 'member_kicked':
+          if (msg.userId === selfUserIdRef.current) {
+            // We were kicked — treat as party ended so VideoPlayer tears down.
+            setEnded(true)
+            setConnectionState('ended')
+            closedByUsRef.current = true
+            wsRef.current?.close()
+          } else {
+            // Someone else was kicked — remove them from the member list.
+            setMembers((prev) => prev.filter((m) => m.userId !== msg.userId))
+          }
+          break
+        case 'control_locked':
+          setControlLocked(msg.locked)
           break
         case 'error': {
           // Non-fatal protocol errors (rate-limited, bad emoji, not a member). Surface
@@ -797,6 +819,22 @@ export function usePartySync(
     send({ type: 'queue_advance', partyId, fromMediaId: mediaIdRef.current })
   }, [partyId, send])
 
+  const kickMember = useCallback(
+    (targetUserId: string) => {
+      if (!partyId) return
+      send({ type: 'kick', partyId, targetUserId })
+    },
+    [partyId, send],
+  )
+
+  const toggleControlLock = useCallback(
+    (locked: boolean) => {
+      if (!partyId) return
+      send({ type: 'control_lock', partyId, locked })
+    },
+    [partyId, send],
+  )
+
   // A disabled (non-party) instance has no socket — surface a settled state instead
   // of whatever stale values the state holds, derived here rather than via a
   // setState in the lifecycle effect.
@@ -823,5 +861,8 @@ export function usePartySync(
     removeFromQueue,
     reorderQueue,
     playNext,
+    controlLocked,
+    kickMember,
+    toggleControlLock,
   }
 }

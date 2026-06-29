@@ -7,6 +7,26 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+- **Per-indexer rate limiting: queries/day + grabs/day.** Adds two configurable daily caps per
+  indexer (`rate_limit_queries_per_day`, `rate_limit_grabs_per_day`; 0 = unlimited) stored in the
+  `indexers` table. Counters (`daily_query_count`, `daily_grab_count`, `daily_stats_date`) reset
+  each UTC day via `checkAndResetDailyStats()`. The search fan-out gates on the query cap before
+  querying; the grab cron filters candidates at their grab cap before picking the best release.
+  Admin UI (`/admin/indexers`) gets two new number inputs in the edit modal plus a per-indexer
+  today-usage line (e.g. "Queries: 47/100 today · Grabs: 2/5 today") visible only when a limit
+  is set. Builds on the existing in-memory per-minute token bucket — adds the persistent daily
+  layer on top.
+- **Party Play: creator-kick + control-lock.** Two host-only moderation actions. Kick: the host
+  can boot any member via a `UserX` button in the roster; the server broadcasts `member_kicked`
+  to all members (the kicked client sees the message before their socket closes with code 4003),
+  stamps `kicked_at` in `watch_party_members`, and prevents rejoin via `isActiveMember()`.
+  Control-lock: the host toggles a "Lock controls to me" button; the server sets `control_locked`
+  on the live state + persists to `watch_parties`, broadcasts `control_locked` to all members,
+  and rejects `control` messages from non-hosts while the flag is active. Lock state survives
+  server restarts (hydrated from DB on join and rehydrate). Non-host members see an amber
+  "Host has locked playback controls" banner.
+
 ### Removed
 - **Purged upstream `sources/` reference material (147 MB, 7 directories).** The native stack is
   complete and the source copies were reference-only (gitignored, never imported). All value was

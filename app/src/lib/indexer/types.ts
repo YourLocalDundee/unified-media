@@ -23,6 +23,13 @@ export interface Indexer {
   disabled_until: number | null      // Unix ms; in active backoff while > now (NULL = searchable)
   // per-indexer request-rate cap (searches/min) — account safety. 0 = unlimited.
   rate_limit_per_min: number
+  // persistent daily limits (queries and grabs). 0 = unlimited.
+  rate_limit_queries_per_day: number
+  rate_limit_grabs_per_day: number
+  // rolling counters reset each UTC day by checkAndResetDailyStats in config.ts.
+  daily_query_count: number
+  daily_grab_count: number
+  daily_stats_date: string
 }
 
 export interface IndexerDefinition {

@@ -19,6 +19,7 @@ import { scoreWithProfile } from './quality'
 import { getProfileById, recordGrab, updateItem } from './monitor'
 import { recordGrabResults, type ScoredCandidate, type SkipReason } from './grab-results'
 import { partitionByGates, gateKey, loadBlocklist, getGateConfig, evaluateGates } from './gates'
+import { checkGrabLimit, incrementDailyGrabCount } from '@/lib/indexer/config'
 import type { MonitoredItem, QualityProfile, QualityCondition, MediaType } from './types'
 import type { TorznabResult } from '@/lib/indexer/types'
 import { getDb } from '@/lib/db/index'
@@ -559,10 +560,20 @@ export async function grabItem(
       gates: gatesByKey.get(gateKey(r)) ?? [],
     }))
 
-    // 5. Pick the best release for AUTO-grab from the gate-passing pool only. result is null when
-    //    nothing survived the gates — distinguish "all dead" (every gate failure was a seed floor)
-    //    from "all gated" (sample/oversize/blocklist also involved) so the admin gets a clear reason.
-    const result = findBestRelease(passing, profile, language)
+    // 5. Pick the best release for AUTO-grab from the gate-passing pool only. First filter out
+    //    releases from indexers that have hit their daily grab cap; the filtered pool is for
+    //    auto-pick only — gated/grab-limited releases remain in `scored` for the admin UI.
+    const indexerIdByName = new Map(
+      getDb().prepare('SELECT id, name FROM indexers').all().map((r) => {
+        const row = r as { id: number; name: string }
+        return [row.name, row.id] as const
+      })
+    )
+    const grabbable = passing.filter((r) => {
+      const iid = indexerIdByName.get(r.indexerName)
+      return iid === undefined || checkGrabLimit(iid)
+    })
+    const result = findBestRelease(grabbable, profile, language)
     let skipReason: SkipReason | undefined
     if (!result) {
       if (passing.length === 0 && gatesByKey.size > 0) {
@@ -589,6 +600,8 @@ export async function grabItem(
       urls: result.magnetUrl || result.downloadUrl,
       category: item.type,
     })
+    const grabbedIndexerId = indexerIdByName.get(result.indexerName)
+    if (grabbedIndexerId !== undefined) incrementDailyGrabCount(grabbedIndexerId)
 
     // 7. Record and transition status; order matters — recordGrab first so the history row
     //    exists if a crash happens between the two writes

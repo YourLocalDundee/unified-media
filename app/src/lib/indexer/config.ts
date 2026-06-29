@@ -107,6 +107,41 @@ export function getIndexerById(id: number): Indexer | undefined {
     .get(id) as Indexer | undefined
 }
 
+// ── Daily query/grab counters ─────────────────────────────────────────────────
+
+function getTodayUtc(): string {
+  return new Date().toISOString().slice(0, 10)
+}
+
+export function checkAndResetDailyStats(id: number): void {
+  const db = getDb()
+  const row = db.prepare('SELECT daily_stats_date FROM indexers WHERE id = ?').get(id) as { daily_stats_date: string } | undefined
+  if (!row || row.daily_stats_date === getTodayUtc()) return
+  db.prepare('UPDATE indexers SET daily_query_count = 0, daily_grab_count = 0, daily_stats_date = ? WHERE id = ?').run(getTodayUtc(), id)
+}
+
+export function checkQueryLimit(id: number): boolean {
+  checkAndResetDailyStats(id)
+  const row = getDb().prepare('SELECT rate_limit_queries_per_day, daily_query_count FROM indexers WHERE id = ?').get(id) as { rate_limit_queries_per_day: number; daily_query_count: number } | undefined
+  if (!row) return true
+  return row.rate_limit_queries_per_day === 0 || row.daily_query_count < row.rate_limit_queries_per_day
+}
+
+export function incrementDailyQueryCount(id: number): void {
+  getDb().prepare('UPDATE indexers SET daily_query_count = daily_query_count + 1 WHERE id = ?').run(id)
+}
+
+export function incrementDailyGrabCount(id: number): void {
+  getDb().prepare('UPDATE indexers SET daily_grab_count = daily_grab_count + 1 WHERE id = ?').run(id)
+}
+
+export function checkGrabLimit(id: number): boolean {
+  checkAndResetDailyStats(id)
+  const row = getDb().prepare('SELECT rate_limit_grabs_per_day, daily_grab_count FROM indexers WHERE id = ?').get(id) as { rate_limit_grabs_per_day: number; daily_grab_count: number } | undefined
+  if (!row) return true
+  return row.rate_limit_grabs_per_day === 0 || row.daily_grab_count < row.rate_limit_grabs_per_day
+}
+
 export function createIndexer(data: {
   name: string
   torznab_url: string
@@ -137,10 +172,12 @@ export function updateIndexer(
     search_type: string
     pending_credentials: string
     rate_limit_per_min: number
+    rate_limit_queries_per_day: number
+    rate_limit_grabs_per_day: number
   }>
 ): Indexer | undefined {
   // Allowlist prevents arbitrary column injection through the dynamic SET clause.
-  const allowed = ['name', 'torznab_url', 'api_key', 'enabled', 'description', 'base_url', 'requires_auth', 'requires_flaresolverr', 'search_type', 'pending_credentials', 'rate_limit_per_min'] as const
+  const allowed = ['name', 'torznab_url', 'api_key', 'enabled', 'description', 'base_url', 'requires_auth', 'requires_flaresolverr', 'search_type', 'pending_credentials', 'rate_limit_per_min', 'rate_limit_queries_per_day', 'rate_limit_grabs_per_day'] as const
   const keys = (Object.keys(data) as (keyof typeof data)[]).filter(k =>
     allowed.includes(k as (typeof allowed)[number])
   )

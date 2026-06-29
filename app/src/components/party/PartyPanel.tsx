@@ -7,7 +7,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react'
-import { Copy, Check, LogOut, X, Crown, Loader2, AlertCircle, Trash2, SkipForward, Plus, Search, ChevronUp, ChevronDown } from 'lucide-react'
+import { Copy, Check, LogOut, X, Crown, Loader2, AlertCircle, Trash2, SkipForward, Plus, Search, ChevronUp, ChevronDown, Lock, Unlock, UserX } from 'lucide-react'
 import type { MemberSummary, LastActor, QueueItemDTO } from '@/lib/party/types'
 
 interface Props {
@@ -28,6 +28,10 @@ interface Props {
   onRemoveFromQueue: (itemId: string) => void
   onReorderQueue: (itemId: string, toIndex: number) => void
   onPlayNext: () => void
+  // --- creator-kick + control-lock ---
+  controlLocked: boolean
+  onKick: (userId: string) => void
+  onControlLockToggle: (locked: boolean) => void
 }
 
 // A playable library item returned by /api/media/items?q= — only non-series rows are queueable.
@@ -136,6 +140,9 @@ export function PartyPanel({
   onRemoveFromQueue,
   onReorderQueue,
   onPlayNext,
+  controlLocked,
+  onKick,
+  onControlLockToggle,
 }: Props) {
   const [copied, setCopied] = useState(false)
   const [copyFailed, setCopyFailed] = useState(false)
@@ -265,6 +272,14 @@ export function PartyPanel({
         </p>
       )}
 
+      {/* Control-lock indicator for non-hosts */}
+      {controlLocked && !isHost && (
+        <div className="flex items-center gap-1.5 rounded-md bg-amber-950/60 px-2 py-1.5 text-[11px] text-amber-300">
+          <Lock className="h-3 w-3 shrink-0" />
+          Host has locked playback controls
+        </div>
+      )}
+
       {/* Member list */}
       <div className="flex flex-col gap-1">
         <p className="text-[10px] uppercase tracking-wide text-zinc-500">
@@ -286,6 +301,17 @@ export function PartyPanel({
               </span>
               {m.userId === hostUserId && (
                 <Crown className="h-3 w-3 text-amber-400" aria-label="Host" />
+              )}
+              {isHost && m.userId !== selfUserId && m.userId !== hostUserId && (
+                <button
+                  type="button"
+                  onClick={() => onKick(m.userId)}
+                  className="ml-auto shrink-0 text-zinc-600 hover:text-red-400"
+                  aria-label={`Kick ${m.displayName}`}
+                  title={`Kick ${m.displayName}`}
+                >
+                  <UserX className="h-3.5 w-3.5" />
+                </button>
               )}
             </div>
           )
@@ -354,6 +380,29 @@ export function PartyPanel({
 
       {/* Controls */}
       <div className="mt-1 flex flex-col gap-2">
+        {isHost && (
+          <button
+            type="button"
+            onClick={() => onControlLockToggle(!controlLocked)}
+            className={`flex items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-xs transition-colors ${
+              controlLocked
+                ? 'bg-amber-900/60 text-amber-200 hover:bg-amber-900'
+                : 'bg-zinc-800 text-zinc-200 hover:bg-zinc-700'
+            }`}
+          >
+            {controlLocked ? (
+              <>
+                <Lock className="h-3.5 w-3.5" />
+                Controls locked to you
+              </>
+            ) : (
+              <>
+                <Unlock className="h-3.5 w-3.5" />
+                Lock controls to me
+              </>
+            )}
+          </button>
+        )}
         <button
           type="button"
           onClick={onLeave}

@@ -706,6 +706,17 @@ export function runMigrations(db: Database.Database): void {
     'ALTER TABLE quality_profiles ADD COLUMN user_id TEXT',
     // users — preferred quality profile for auto-grab requests. NULL = no preference (uses "Any").
     'ALTER TABLE users ADD COLUMN default_quality_profile_id INTEGER',
+    // indexers — persistent daily query/grab counters + limit caps for account safety.
+    // 0 = unlimited. Counters reset each UTC day via checkAndResetDailyStats in config.ts.
+    'ALTER TABLE indexers ADD COLUMN rate_limit_queries_per_day INTEGER NOT NULL DEFAULT 0',
+    'ALTER TABLE indexers ADD COLUMN rate_limit_grabs_per_day INTEGER NOT NULL DEFAULT 0',
+    'ALTER TABLE indexers ADD COLUMN daily_query_count INTEGER NOT NULL DEFAULT 0',
+    'ALTER TABLE indexers ADD COLUMN daily_grab_count INTEGER NOT NULL DEFAULT 0',
+    "ALTER TABLE indexers ADD COLUMN daily_stats_date TEXT NOT NULL DEFAULT ''",
+    // watch_parties — host control lock: prevents non-hosts from sending play/pause/seek.
+    'ALTER TABLE watch_parties ADD COLUMN control_locked INTEGER NOT NULL DEFAULT 0',
+    // watch_party_members — kick timestamp: non-null means the member was kicked.
+    'ALTER TABLE watch_party_members ADD COLUMN kicked_at INTEGER',
   ]
   for (const sql of addCols) {
     try { db.exec(sql) } catch { /* column already exists — safe to ignore */ }

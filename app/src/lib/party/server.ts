@@ -75,6 +75,8 @@ import {
   loadQueue,
   setPartyMedia,
   getActivePartyById,
+  kickMember,
+  setControlLocked,
 } from './db'
 import { partyEvents } from './events'
 import type {
@@ -94,6 +96,8 @@ import type {
   QueueRemoveMessage,
   QueueReorderMessage,
   QueueAdvanceRequest,
+  KickMessage,
+  ControlLockMessage,
 } from './types'
 
 const PERIODIC_TICK_MS = 2500
@@ -305,10 +309,21 @@ function applyPlay(state: PartyLiveState, positionTicks: number, actor: { userId
 // The command pipeline (control)
 // ---------------------------------------------------------------------------
 
-async function handleControl(rt: ServerRuntime, identity: PartySessionIdentity, msg: ControlMessage): Promise<void> {
+async function handleControl(rt: ServerRuntime, entry: SocketEntry, identity: PartySessionIdentity, msg: ControlMessage): Promise<void> {
   const store = getPartyStore()
   const partyId = msg.partyId
   const now = Date.now()
+
+  // Control-lock gate: if the lock is active and the sender is not the host, reject.
+  // getParty is a direct in-memory Map lookup; getActivePartyById is a sync indexed query.
+  const liveSt = await store.getParty(partyId)
+  if (liveSt?.controlLocked) {
+    const partyRow = getActivePartyById(partyId)
+    if (partyRow && identity.userId !== partyRow.host_user_id) {
+      sendError(entry.ws, 'control_locked', 'Playback controls are locked to the host')
+      return
+    }
+  }
 
   let effectiveAt = now
   let waitingFor: { userId: string; displayName: string }[] | null = null
@@ -582,6 +597,112 @@ async function reconcileDrift(rt: ServerRuntime, partyId: string): Promise<void>
 }
 
 // ---------------------------------------------------------------------------
+// Creator-kick (feature: kick)
+// ---------------------------------------------------------------------------
+
+/** Host boots a member: close their socket (4003), stamp kicked_at in DB, broadcast. */
+async function handleKick(
+  rt: ServerRuntime,
+  entry: SocketEntry,
+  identity: PartySessionIdentity,
+  msg: KickMessage,
+): Promise<void> {
+  const store = getPartyStore()
+  const partyId = msg.partyId
+
+  // Verify the sender is the host.
+  const partyRow = getActivePartyById(partyId)
+  if (!partyRow || identity.userId !== partyRow.host_user_id) {
+    sendError(entry.ws, 'not_host', 'Only the host can kick members')
+    return
+  }
+
+  // The host cannot kick themselves.
+  if (msg.targetUserId === identity.userId) {
+    sendError(entry.ws, 'bad_field', 'Cannot kick yourself')
+    return
+  }
+
+  const state = await store.getParty(partyId)
+  if (!state) {
+    sendError(entry.ws, 'party_not_found', 'Party not found')
+    return
+  }
+
+  const targetMember = state.members.get(msg.targetUserId)
+  const displayName = targetMember?.displayName ?? msg.targetUserId
+
+  // Broadcast member_kicked to ALL members first (including the target) so the
+  // kicked client can show a "you were kicked" message before the socket closes.
+  broadcastToParty(rt, partyId, {
+    type: 'member_kicked',
+    partyId,
+    userId: msg.targetUserId,
+    displayName,
+  })
+
+  // Close the kicked member's socket with code 4003.
+  if (targetMember) {
+    const targetEntry = rt.sockets.get(targetMember.socketId)
+    if (targetEntry) {
+      try {
+        targetEntry.ws.close(4003, 'kicked')
+      } catch {
+        /* ignore — may already be closing */
+      }
+    }
+  }
+
+  // Stamp kicked_at in DB (prevents rejoining via isActiveMember).
+  try {
+    kickMember(partyId, msg.targetUserId)
+  } catch {
+    /* non-fatal — the live removal still happens */
+  }
+
+  // Remove from live state and broadcast the updated member list.
+  await store.removeMember(partyId, msg.targetUserId)
+  const fresh = await store.getParty(partyId)
+  if (fresh) broadcastState(rt, fresh, Date.now())
+}
+
+// ---------------------------------------------------------------------------
+// Control-lock (feature: control-lock)
+// ---------------------------------------------------------------------------
+
+/** Host toggles the control lock: persists to DB and broadcasts to all members. */
+async function handleControlLock(
+  rt: ServerRuntime,
+  entry: SocketEntry,
+  identity: PartySessionIdentity,
+  msg: ControlLockMessage,
+): Promise<void> {
+  const partyRow = getActivePartyById(msg.partyId)
+  if (!partyRow || identity.userId !== partyRow.host_user_id) {
+    sendError(entry.ws, 'not_host', 'Only the host can toggle control lock')
+    return
+  }
+
+  const store = getPartyStore()
+  await store.updateParty(msg.partyId, (s) => {
+    s.controlLocked = msg.locked
+  })
+
+  // Persist to SQLite so the lock survives a server restart.
+  try {
+    setControlLocked(msg.partyId, msg.locked)
+  } catch {
+    /* non-fatal — live state is already updated */
+  }
+
+  broadcastToParty(rt, msg.partyId, {
+    type: 'control_locked',
+    partyId: msg.partyId,
+    locked: msg.locked,
+  })
+}
+
+// ---------------------------------------------------------------------------
 // Inbound validation (C1) + rate limiting (H3)
 // ---------------------------------------------------------------------------
 
@@ -774,6 +895,32 @@ function validateMessage(entry: SocketEntry, msg: ClientMessage): boolean {
       return true
     }
 
+    case 'kick': {
+      const m = msg as { partyId?: unknown; targetUserId?: unknown }
+      if (typeof m.partyId !== 'string' || m.partyId.length === 0) {
+        sendError(entry.ws, 'bad_field', 'Invalid partyId')
+        return false
+      }
+      if (typeof m.targetUserId !== 'string' || m.targetUserId.length === 0) {
+        sendError(entry.ws, 'bad_field', 'Invalid targetUserId')
+        return false
+      }
+      return true
+    }
+
+    case 'control_lock': {
+      const m = msg as { partyId?: unknown; locked?: unknown }
+      if (typeof m.partyId !== 'string' || m.partyId.length === 0) {
+        sendError(entry.ws, 'bad_field', 'Invalid partyId')
+        return false
+      }
+      if (typeof m.locked !== 'boolean') {
+        sendError(entry.ws, 'bad_field', 'Invalid locked')
+        return false
+      }
+      return true
+    }
+
     default:
       return true
   }
@@ -871,7 +1018,7 @@ async function handleMessage(rt: ServerRuntime, entry: SocketEntry, raw: string)
 
   switch (msg.type) {
     case 'control':
-      await handleControl(rt, identity, msg)
+      await handleControl(rt, entry, identity, msg)
       break
 
     case 'heartbeat': {
@@ -948,6 +1095,14 @@ async function handleMessage(rt: ServerRuntime, entry: SocketEntry, raw: string)
       await handleQueueAdvance(rt, identity, msg)
       break
 
+    case 'kick':
+      await handleKick(rt, entry, identity, msg)
+      break
+
+    case 'control_lock':
+      await handleControlLock(rt, entry, identity, msg)
+      break
+
     default:
       sendError(entry.ws, 'unknown_type', 'Unknown message type')
   }
@@ -998,6 +1153,12 @@ async function handleJoin(rt: ServerRuntime, entry: SocketEntry, partyId: string
       positionTicks: row.last_position_ticks,
       paused: row.last_paused === 1,
     })
+    // Restore the control-lock state from the DB row (feature: control-lock).
+    if (row.control_locked === 1) {
+      await store.updateParty(row.id, (s) => {
+        s.controlLocked = true
+      })
+    }
     state = await store.getParty(partyId)
     if (!state) {
       sendError(entry.ws, 'party_not_found', 'Party not found')
@@ -1325,7 +1486,7 @@ function onPartyEnded(rt: ServerRuntime, partyId: string): void {
 
 async function rehydrate(): Promise<void> {
   const store = getPartyStore()
-  let rows: { id: string; media_id: string; last_position_ticks: number; last_paused: number }[]
+  let rows: { id: string; media_id: string; last_position_ticks: number; last_paused: number; control_locked: number }[]
   try {
     rows = loadActiveParties()
   } catch (err) {
@@ -1342,9 +1503,10 @@ async function rehydrate(): Promise<void> {
       })
       // Restore the shared queue from its durable mirror.
       const queued = loadQueue(row.id)
-      if (queued.length > 0) {
+      if (queued.length > 0 || row.control_locked === 1) {
         await store.updateParty(row.id, (s) => {
-          s.queue = queued
+          if (queued.length > 0) s.queue = queued
+          if (row.control_locked === 1) s.controlLocked = true
         })
       }
     } catch (err) {

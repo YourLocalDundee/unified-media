@@ -4,7 +4,7 @@
 // All network I/O here is direct from the Next.js server to the indexer URLs —
 // not proxied through Prowlarr.
 import { parseStringPromise } from 'xml2js'
-import { getSearchableIndexers, recordIndexerResult, tryConsumeIndexerToken } from './config'
+import { getSearchableIndexers, recordIndexerResult, tryConsumeIndexerToken, checkQueryLimit, incrementDailyQueryCount } from './config'
 import type { Indexer, TorznabResult, TorznabSearchParams, IndexerHealth } from './types'
 import { searchYts } from './adapters/yts'
 import { searchEztv } from './adapters/eztv'
@@ -232,6 +232,9 @@ export async function searchAllIndexers(
       // D1: per-indexer request-rate gate (rate_limit_per_min, 0 = unlimited). A throttled indexer is
       // skipped for this tick — that is NOT a failure, so it does not record a backoff hit.
       if (!tryConsumeIndexerToken(indexer.id, indexer.rate_limit_per_min)) return []
+      // Daily query cap (rate_limit_queries_per_day, 0 = unlimited). Skipping is not a failure.
+      if (!checkQueryLimit(indexer.id)) return []
+      incrementDailyQueryCount(indexer.id)
       // The adapters now throw on a hard failure (D2), so they feed backoff just like the torznab path:
       // a thrown error here records a failure; a completed call (even with 0 results) records success.
       // searchIndexer records its own health and never throws, so it bypasses this try/catch's recording.

@@ -58,9 +58,6 @@ why it fits and the rough surface it'd touch. Not committed — triage into `BAC
 
 These came out of the source purge; ranked detail is in `feature-mining-summary.md`.
 
-- **Per-indexer rate limiting.** A token-bucket of queries/day + grabs/day per indexer so a private
-  tracker's API cap never gets tripped by unattended grabs. The fan-out hooks and `indexers` table are
-  already there; this is a thin enforcement layer on top.
 - **Movie Collections ("follow a franchise").** Monitor a TMDB collection as a unit and auto-add every
   film in it (including future entries). Reuses the TMDB client, `monitored_items`, and the two-mode
   request system. Long-term items only — same as Import Lists (§20). See `radarr-analysis.md`.
@@ -95,9 +92,6 @@ Small additions that reuse existing party state. All are cosmetic or thin protoc
 - **Tri-state synced/syncing/waiting badge.** The `position_ticks` median and readiness state are
   already computed server-side; surfacing them as a chip (synced / syncing / waiting) in the party panel
   is pure UI. See `openwatchparty-analysis.md` for the vocabulary.
-- **Creator-kick + control-lock.** `host_user_id` is already tracked. A creator-only kick command plus
-  an optional "lock control to me" flag is a cheap safety valve against griefers without abandoning
-  shared control for normal sessions.
 - **Per-member playhead offset map.** Show "X is 3s behind" in the roster by diffing each member's last
   reported position against the session median — data the server already has.
 - **Roster avatars.** Thread the existing initials-based avatars (hue-hashed per username) into the

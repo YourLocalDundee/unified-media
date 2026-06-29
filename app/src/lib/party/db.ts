@@ -90,7 +90,7 @@ export function upsertMember(partyId: string, userId: string): void {
     .run(partyId, userId, now)
 }
 
-/** Active members (left_at IS NULL), display name resolved from users. */
+/** Active members (left_at IS NULL and not kicked), display name resolved from users. */
 export function getMembers(partyId: string): MemberView[] {
   const rows = getDb()
     .prepare(
@@ -99,19 +99,35 @@ export function getMembers(partyId: string): MemberView[] {
               m.is_host AS isHost
        FROM watch_party_members m
        JOIN users u ON u.id = m.user_id
-       WHERE m.party_id = ? AND m.left_at IS NULL
+       WHERE m.party_id = ? AND m.left_at IS NULL AND m.kicked_at IS NULL
        ORDER BY m.joined_at ASC`
     )
     .all(partyId) as { userId: string; displayName: string; isHost: number }[]
   return rows.map((r) => ({ userId: r.userId, displayName: r.displayName, isHost: r.isHost === 1 }))
 }
 
-/** Check whether a user is a current (active) member of a party. */
+/** Check whether a user is a current (active, non-kicked) member of a party. */
 export function isActiveMember(partyId: string, userId: string): boolean {
   const row = getDb()
-    .prepare('SELECT 1 FROM watch_party_members WHERE party_id = ? AND user_id = ? AND left_at IS NULL')
+    .prepare('SELECT 1 FROM watch_party_members WHERE party_id = ? AND user_id = ? AND left_at IS NULL AND kicked_at IS NULL')
     .get(partyId, userId)
   return row != null
+}
+
+/** Mark a member as kicked (stamps kicked_at). The member cannot rejoin this party. */
+export function kickMember(partyId: string, userId: string): void {
+  const now = Date.now()
+  getDb()
+    .prepare('UPDATE watch_party_members SET kicked_at = ? WHERE party_id = ? AND user_id = ?')
+    .run(now, partyId, userId)
+}
+
+/** Persist the control-lock state for a party (for restart recovery). */
+export function setControlLocked(partyId: string, locked: boolean): void {
+  const now = Date.now()
+  getDb()
+    .prepare('UPDATE watch_parties SET control_locked = ?, updated_at = ? WHERE id = ?')
+    .run(locked ? 1 : 0, now, partyId)
 }
 
 // markMemberLeft / countActiveMembers were removed (A5-07): the atomic
@@ -244,10 +260,11 @@ export function loadActiveParties(): {
   media_id: string
   last_position_ticks: number
   last_paused: number
+  control_locked: number
 }[] {
   return getDb()
     .prepare(
-      `SELECT id, media_id, last_position_ticks, last_paused FROM watch_parties WHERE status = 'active'`
+      `SELECT id, media_id, last_position_ticks, last_paused, control_locked FROM watch_parties WHERE status = 'active'`
     )
-    .all() as { id: string; media_id: string; last_position_ticks: number; last_paused: number }[]
+    .all() as { id: string; media_id: string; last_position_ticks: number; last_paused: number; control_locked: number }[]
 }

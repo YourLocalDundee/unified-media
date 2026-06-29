@@ -51,6 +51,8 @@ export async function PATCH(
     search_type: string
     pending_credentials: string
     rate_limit_per_min: number
+    rate_limit_queries_per_day: number
+    rate_limit_grabs_per_day: number
   }>
   try { body = await req.json() }
   catch { return NextResponse.json({ error: 'Invalid request' }, { status: 400 }) } // A19: parse guard
