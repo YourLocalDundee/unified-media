@@ -54,6 +54,62 @@ why it fits and the rough surface it'd touch. Not committed — triage into `BAC
   proper cross-device continue-watching that merges `media_watch_state` is a correctness win the audit
   already points at.
 
+## From the automation gap analysis (Sonarr / Radarr / Prowlarr mining)
+
+These came out of the source purge; ranked detail is in `feature-mining-summary.md`.
+
+- **Per-indexer rate limiting.** A token-bucket of queries/day + grabs/day per indexer so a private
+  tracker's API cap never gets tripped by unattended grabs. The fan-out hooks and `indexers` table are
+  already there; this is a thin enforcement layer on top.
+- **Movie Collections ("follow a franchise").** Monitor a TMDB collection as a unit and auto-add every
+  film in it (including future entries). Reuses the TMDB client, `monitored_items`, and the two-mode
+  request system. Long-term items only — same as Import Lists (§20). See `radarr-analysis.md`.
+- **Delay profiles.** A `delay_minutes` column per profile: don't grab until N minutes after a release
+  first appears so a better WEB-DL can surface before we take the 480p cam. A first-seen timestamp
+  check in the grab cron is the only new logic.
+- **TV season-pack upgrade-until-cutoff.** Upgrade/cutoff shipped for movies (§19); TV was deferred for
+  multi-file / partial-overlap complexity. Closing the gap makes "get the right copy" work for shows too.
+- **Standard category mapping + capabilities.** Probe each indexer's capabilities on activation and map
+  tracker categories to the Newznab standard tree. Closes the MVP gap that makes "TV only" searches
+  incorrect across heterogeneous indexers; enables a category picker in manual search.
+- **Indexer flags + per-indexer stats.** Thread freeleech/internal/scene flags from Torznab `attr`
+  elements — they feed a Custom Format matcher ("prefer freeleech") that already exists. Add a stats
+  surface to `/admin/indexers` (query/grab counts, success rate, avg response time) built on
+  `grab_history`. Pairs with the existing indexer health dashboard idea above.
+- **Edition / AKA / hardcoded-sub parsing (movie-specific).** Parse Director's Cut / IMAX / Extended
+  editions and AKA alternate titles from release names, and flag burned-in subs (HC/KORSUB). These fold
+  into the Custom Format `title_regex` matcher so a user can prefer an Extended cut or reject HC. Small
+  additions to the release-name parser.
+- **Cutoff-Unmet "Wanted" admin surface.** A list of `monitored_items` below their profile cutoff, now
+  that upgrade/cutoff is live (§19). Pairs with TV upgrade above; also useful as a manual retry surface.
+- **FlareSolverr proxy.** A per-indexer opt-in that routes Torznab requests through a FlareSolverr
+  sidecar for Cloudflare-gated trackers. Self-contained, but needs the container. Add when a wanted
+  tracker is actually gated — not before.
+- **Auto Tagging.** Rule-based tags derived from genre/year/network that drive delay profiles and release
+  restrictions. Only worth it once multiple profiles are in use.
+
+## Party Play polish (from watchparty / OpenWatchParty mining)
+
+Small additions that reuse existing party state. All are cosmetic or thin protocol additions.
+
+- **Tri-state synced/syncing/waiting badge.** The `position_ticks` median and readiness state are
+  already computed server-side; surfacing them as a chip (synced / syncing / waiting) in the party panel
+  is pure UI. See `openwatchparty-analysis.md` for the vocabulary.
+- **Creator-kick + control-lock.** `host_user_id` is already tracked. A creator-only kick command plus
+  an optional "lock control to me" flag is a cheap safety valve against griefers without abandoning
+  shared control for normal sessions.
+- **Per-member playhead offset map.** Show "X is 3s behind" in the roster by diffing each member's last
+  reported position against the session median — data the server already has.
+- **Roster avatars.** Thread the existing initials-based avatars (hue-hashed per username) into the
+  party member list. Zero new server state.
+- **Message-level reactions.** Slack-style emoji reactions on individual chat messages (distinct from the
+  floating-emoji broadcast). A thin extension of the chat message model.
+- **Subtitle-choice sharing.** When a party member picks a subtitle track, broadcast the choice (track
+  index or external URL) so all members load the same one. One extra WS message type.
+- **"Queue a whole season" shortcut.** Fan out a series' episodes into the up-next queue in S/E order
+  with one action. Builds on the existing `watch_party_queue` model.
+- **Loop toggle.** Loop the current queue item instead of advancing. A single state flag on the session.
+
 ## Bigger swings (need a decision)
 
 - **Mobile PWA + offline metadata** (already in `BACKLOG`) — the layout is standalone-capable; the

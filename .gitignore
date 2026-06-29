@@ -14,8 +14,7 @@ app/*.db
 app/*.db-shm
 app/*.db-wal
 
-# Reference source copies and backups (read-only, not our code)
-sources/
+# Backups
 app-backup-*/
 
 # OS / editor

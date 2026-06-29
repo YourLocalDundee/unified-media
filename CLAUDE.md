@@ -71,8 +71,6 @@ request → watch, with download status visible inline.
 ```
 /home/minijoe/dev/unified-frontend/
   app/                  # The Next.js application (run npm run dev from here)
-  sources/              # Read-only reference copies of upstream source (seerr, qbittorrent-webui)
-  analysis/             # Audit reports + per-service analysis notes
   docs/                 # Deep-dives, feature history, backlog (see docs/README.md)
   CLAUDE.md             # This file
 ```
@@ -342,9 +340,11 @@ Update via `python3 scripts/update-caddyfile.py`, then
 `docker exec caddy caddy reload --config /etc/caddy/Caddyfile`.
 
 ### Reference material
-- `sources/` (read-only): `seerr/seerr-api.yml`, `seerr/server/routes/`,
-  `qbittorrent-webui/src/services/qbit/QbitProvider.ts`.
-- `analysis/` — audit + per-service notes. `docs/` — feature deep-dives + history.
+- `docs/analysis/` — per-service mining notes (jellyfin, seerr, sonarr, radarr, prowlarr,
+  qbittorrent/vuetorrent, flood, watchparty sources, stack audit, 21-domain audit reports).
+  Upstream `sources/` was purged at v0.11.2; `docs/analysis/source-mining-log.md` is the record.
+- `docs/incomplete/feature-mining-summary.md` — ranked feature candidates from the mining.
+- `docs/` — feature deep-dives + history.
 
 ---
 

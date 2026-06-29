@@ -8,6 +8,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Removed
+- **Purged upstream `sources/` reference material (147 MB, 7 directories).** The native stack is
+  complete and the source copies were reference-only (gitignored, never imported). All value was
+  mined before deletion: `docs/analysis/source-mining-log.md` is the permanent record covering all
+  13 upstream sources (including the 6 already purged in prior sessions). New gap items from the
+  mining added to `docs/incomplete/FEATURE-IDEAS.md` (automation: per-indexer rate limiting, Movie
+  Collections, delay profiles, TV upgrade/cutoff, category mapping, indexer flags/stats, edition
+  parsing, cutoff-unmet surface, FlareSolverr, auto tagging; party: tri-state badge, creator-kick,
+  per-member playhead, roster avatars, message reactions, subtitle sharing, season-queue, loop
+  toggle). Build confirmed green before and after removal. `CLAUDE.md` and `.gitignore` updated.
+
 - **unified-media is now fully Authentik-free in docs too.** Authentik left the request path at
   v0.4.0 (the app uses its own SQLite sessions); this scrubs the last textual leftovers so the string
   appears nowhere in the repo. Deleted the stale `AUTHENTIK_SETUP.md` setup guide; reworded the auth
