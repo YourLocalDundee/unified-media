@@ -119,6 +119,15 @@ export function initScheduler(): void {
     if (added > 0) console.log(`[import-lists] Sync added ${added} new item(s)`)
   })
 
+  // Movie collections: every 24h at 03:40, re-sync all enabled monitored TMDB collections to pick
+  // up any newly-added films (sequels, etc.) and add them as long-term monitored items.
+  // Dynamic import keeps TMDB/server modules out of the initial graph.
+  cron.schedule('40 3 * * *', async () => {
+    const { syncAllCollections } = await import('./collections')
+    const added = await syncAllCollections()
+    if (added > 0) console.log(`[collections] Sync added ${added} new film(s)`)
+  })
+
   // Stalled-torrent reaper: every 10 min, two failure classes — (1) metaDL/forcedMetaDL stuck with
   // 0 peers past 'reaper_metadata_minutes' (default 60), and (2) a grabbed download stalled in
   // stalledDL/error/missingFiles past 'reaper_stall_minutes' (default 120). Each reaped torrent is
