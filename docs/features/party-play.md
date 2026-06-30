@@ -256,3 +256,39 @@ playable `media_items` only (series containers rejected, same rule as party crea
   (`queue`, `addToQueue`, `removeFromQueue`, `reorderQueue`, `playNext`, `onQueueAdvance`) in
   `usePartySync.ts`; UI in `party/PartyPanel.tsx` (the "Up next" list with per-item move-up/down
   reorder (v0.10.2) + remove + Play next, plus a library-search `QueueAdder`).
+
+## Creator-kick + control-lock (v0.11.3)
+
+Two host-only moderation actions:
+
+- **Kick (`handleKick`)** — host sends `{type:'kick', partyId, targetUserId}`. Server validates host,
+  broadcasts `member_kicked` to all (kicked client sees it then its socket closes with code 4003),
+  stamps `watch_party_members.kicked_at`, removes from live state. `isActiveMember` filters `kicked_at
+  IS NULL` so the kicked user cannot rejoin. Client `usePartySync` detects self-kick → sets ended state.
+- **Control-lock (`handleControlLock`)** — host sends `{type:'control_lock', partyId, locked:bool}`.
+  Server sets `PartyLiveState.controlLocked`, persists to `watch_parties.control_locked`, broadcasts
+  `control_locked` to all. `handleControl` checks the flag at the top and rejects non-host control
+  messages with error `'control_locked'`. Survives server restart (hydrated from DB row on join/rehydrate).
+- **Schema.** `watch_parties.control_locked INTEGER DEFAULT 0`; `watch_party_members.kicked_at INTEGER`.
+- **UI.** `PartyPanel.tsx`: `UserX` kick button per non-host member (host only); amber lock-toggle
+  button for host; amber "Host has locked playback controls" banner for non-hosts when locked.
+
+## Guest join via invite link (v0.11.4)
+
+Guests can join a party without an account. Key variables and design decisions for future sessions:
+
+| Variable / concept | What it is |
+| --- | --- |
+| `joinCode` | The 6-char uppercase party code already on `watch_parties.join_code` — the same code used for member join; doubles as the invite code. |
+| `partyJoinUrl` | Constructed in `VideoPlayer.tsx` as `${origin}/join?code=${joinCode}`. Shown to the host in PartyPanel "Copy link". Used to be `/play/{id}?party={code}` — changed so guests land on the invite page. |
+| `is_guest = 1` | Column on `users`. Marks throwaway accounts auto-created by the guest-session route. No password, no email. `username = guest_<makeId(12)>` — unique, opaque. `is_active = 1` so the session query works normally. |
+| `GUEST_SESSION_TTL_MS` | 8 hours (`8 * 60 * 60 * 1000`). Shorter than the normal 30-day TTL. Set as `expires_at` in the `sessions` row and as `maxAge` on the cookie. After expiry, `getSession()` returns null naturally — no cleanup job needed. |
+| `displayName` | The nickname the guest typed on `/join`. Stored on `users.display_name` (max 32 chars). Used in the party roster just like any member's display name. |
+| `/join?code=XXXXXX` | The public invite route. Server component: validates party exists, checks `getSession()` — if logged in, redirect to `/play`; if not, render `JoinForm`. Public in `proxy.ts` PUBLIC_PATHS. |
+| `/api/party/guest-session` | POST endpoint. Also in PUBLIC_PATHS (no auth). Creates the guest user row + 8h session, calls `upsertMember`, sets the cookie, returns `{mediaId, partyId, joinCode}`. |
+| Proxy redirect | When unauthenticated visitor hits `/play/*?party=CODE`, the proxy now redirects to `/join?code=CODE` instead of `/login`. Handles old-format party URLs shared directly from the browser bar. |
+| Guest cleanup | Guest user rows persist indefinitely after session expiry. They are inert (session expires, cookie deleted). No deletion job is planned — low volume, low impact. |
+
+**Files.** `app/src/app/join/page.tsx` (server component); `app/src/app/join/JoinForm.tsx` (client
+component); `app/src/app/api/party/guest-session/route.ts` (POST, public); `src/proxy.ts` (PUBLIC_PATHS
++ party-URL redirect); `VideoPlayer.tsx` (joinUrl format); `migrations.ts` (`is_guest` addCols).

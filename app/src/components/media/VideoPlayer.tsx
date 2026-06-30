@@ -300,7 +300,7 @@ export default function VideoPlayer(props: PlaybackData) {
 
   const partyJoinUrl =
     typeof window !== 'undefined' && partyJoinCode
-      ? `${window.location.origin}/play/${partyMediaId}?party=${partyJoinCode}`
+      ? `${window.location.origin}/join?code=${partyJoinCode}`
       : ''
 
   const handlePartyStarted = useCallback(

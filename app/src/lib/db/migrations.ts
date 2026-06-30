@@ -717,6 +717,9 @@ export function runMigrations(db: Database.Database): void {
     'ALTER TABLE watch_parties ADD COLUMN control_locked INTEGER NOT NULL DEFAULT 0',
     // watch_party_members — kick timestamp: non-null means the member was kicked.
     'ALTER TABLE watch_party_members ADD COLUMN kicked_at INTEGER',
+    // users — guest flag: 1 means a throwaway account auto-created on party invite join (8h session).
+    // Guests have no password and no email; username is guest_<random>. is_active=1 so sessions work.
+    'ALTER TABLE users ADD COLUMN is_guest INTEGER NOT NULL DEFAULT 0',
   ]
   for (const sql of addCols) {
     try { db.exec(sql) } catch { /* column already exists — safe to ignore */ }

@@ -23,6 +23,7 @@ const PUBLIC_PATHS = [
   '/reset-password',
   '/change-password',
   '/invite',
+  '/join',
   '/api/auth/login',
   '/api/auth/logout',
   '/api/auth/register',
@@ -34,6 +35,7 @@ const PUBLIC_PATHS = [
   '/api/auth/check-username',
   '/api/auth/change-password',
   '/api/health',
+  '/api/party/guest-session',
 ]
 
 export function proxy(request: NextRequest) {
@@ -56,6 +58,17 @@ export function proxy(request: NextRequest) {
     // startsWith(p + '/') handles sub-paths like /reset-password/confirm
     p => pathname === p || pathname.startsWith(p + '/')
   )
+
+  // Unauthenticated visitor arriving via a party play URL → send to the invite page
+  // so they can set a nickname and join as a guest instead of hitting the login wall.
+  if (!hasSession && pathname.startsWith('/play/')) {
+    const partyCode = request.nextUrl.searchParams.get('party')
+    if (partyCode) {
+      const joinUrl = new URL('/join', request.url)
+      joinUrl.searchParams.set('code', partyCode)
+      return NextResponse.redirect(joinUrl)
+    }
+  }
 
   // UX redirect to login if no session cookie
   // (Real security is in requireAuth() in each Server Component)

@@ -26,6 +26,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   and rejects `control` messages from non-hosts while the flag is active. Lock state survives
   server restarts (hydrated from DB on join and rehydrate). Non-host members see an amber
   "Host has locked playback controls" banner.
+- **Party Play: guest join via invite link.** Guests can now join a watch party without an account.
+  The host's "Copy link" button produces `https://<host>/join?code=<joinCode>`. Clicking the link
+  lands on `/join` (public route), where the visitor enters a nickname (max 32 chars, default
+  "Guest") and clicks "Join party". `POST /api/party/guest-session` creates a throwaway user row
+  (`is_guest=1`, `username=guest_<random>`, no email, no password) and an 8h session, adds the
+  guest to `watch_party_members`, sets the session cookie, and returns `mediaId` so the client
+  redirects to `/play/{mediaId}?party={joinCode}`. Logged-in visitors following the link skip the
+  form and are redirected straight to `/play`. Unauthenticated visitors following an old-style
+  `/play/{id}?party={code}` URL are intercepted in the proxy and sent to `/join?code={code}`.
 
 ### Removed
 - **Purged upstream `sources/` reference material (147 MB, 7 directories).** The native stack is
