@@ -245,6 +245,7 @@ function ProfileEditor({
   const [minScore, setMinScore] = useState(profile.min_format_score)
   const [cutoffScore, setCutoffScore] = useState(profile.cutoff_format_score)
   const [language, setLanguage] = useState(profile.language ?? 'any')
+  const [delayMinutes, setDelayMinutes] = useState(profile.delay_minutes ?? 0)
   const [formats, setFormats] = useState<FormatEntry[]>(profile.formats)
   const [conditions, setConditions] = useState<QualityCondition[]>(profile.conditions ?? [])
   const [busy, setBusy] = useState(false)
@@ -267,6 +268,7 @@ function ProfileEditor({
           min_format_score: minScore,
           cutoff_format_score: cutoffScore,
           language,
+          delay_minutes: delayMinutes,
           conditions,
           formats: formats.map(f => ({ format_id: f.format_id, score: f.score })),
         }),
@@ -382,6 +384,20 @@ function ProfileEditor({
           </select>
           <p className="mt-1 text-[10px] text-zinc-600">
             Hard constraint on auto-pick. &ldquo;Any&rdquo; is the safest choice — most English releases carry no language tag.
+          </p>
+        </div>
+
+        <div>
+          <label className="block text-xs text-zinc-400 mb-1">Release delay (minutes)</label>
+          <input
+            type="number"
+            min={0}
+            value={delayMinutes}
+            onChange={e => setDelayMinutes(Math.max(0, parseInt(e.target.value, 10) || 0))}
+            className="w-full rounded-lg bg-zinc-800 px-3 py-2 text-sm text-white outline-none focus:ring-1 focus:ring-white/20"
+          />
+          <p className="mt-1 text-[10px] text-zinc-600">
+            0 = grab immediately. A release must be visible for this many minutes before auto-grab picks it up.
           </p>
         </div>
       </div>

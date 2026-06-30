@@ -57,6 +57,9 @@ export interface QualityProfile {
   name: string
   // Stored as JSON in SQLite; must be parsed before use — see parser.scoreRelease
   conditions: string  // JSON-encoded QualityCondition[]
+  // How long (in minutes) to wait after a release is first seen before it is eligible for auto-grab.
+  // 0 = no delay (grab immediately). Enforced in grabber.ts via release_seen_timestamps.
+  delay_minutes: number
 }
 
 export interface QualityCondition {

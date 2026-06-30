@@ -244,6 +244,8 @@ export interface QualityProfileFull {
   cutoff_format_score: number
   // ISO 639-1 language code or 'any'. 'any' disables the language constraint on auto-pick grabs.
   language: string
+  // Minutes to wait after a release is first seen before it becomes eligible for auto-grab. 0 = no delay.
+  delay_minutes: number
   formats: Array<{ format_id: number; name: string; specs: string; score: number }>
   // Parsed quality conditions (resolution/source/codec filters)
   conditions: import('./types').QualityCondition[]
@@ -279,6 +281,7 @@ export function getProfileFull(profileId: number): QualityProfileFull | null {
     min_format_score: (profile.min_format_score as number) ?? 0,
     cutoff_format_score: (profile.cutoff_format_score as number) ?? 0,
     language: (profile.language as string) ?? 'any',
+    delay_minutes: (profile.delay_minutes as number) ?? 0,
     formats,
     conditions,
     user_id: (profile.user_id as string | null) ?? null,

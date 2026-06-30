@@ -32,7 +32,7 @@ import type { QualityProfile } from '@/lib/automation/types'
 
 export const dynamic = 'force-dynamic'
 
-const ANY_PROFILE: QualityProfile = { id: 0, name: 'Any', conditions: '[]' }
+const ANY_PROFILE: QualityProfile = { id: 0, name: 'Any', conditions: '[]', delay_minutes: 0 }
 
 type Episode = { s: number; e: number }
 type ArcInput = { name: string; episodes: Episode[] }

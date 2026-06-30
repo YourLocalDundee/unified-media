@@ -198,7 +198,7 @@ export async function scanForUpgrades(
       })
       if (upgrades.length === 0) { skipped++; continue }
 
-      const profile = getProfileById(item.quality_profile_id) ?? { id: profileFull.id, name: profileFull.name, conditions: '[]' }
+      const profile = getProfileById(item.quality_profile_id) ?? { id: profileFull.id, name: profileFull.name, conditions: '[]', delay_minutes: 0 }
       const best = findBestRelease(upgrades, profile, language)
       if (!best) { skipped++; continue } // all upgrade candidates dead (0 seeders)
 

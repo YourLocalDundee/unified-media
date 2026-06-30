@@ -627,6 +627,20 @@ export function runMigrations(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_watch_party_queue_party ON watch_party_queue(party_id, position);
   `)
 
+  // Release delay: track when each (item, release) was first seen so the delay gate
+  // can compare now vs first_seen_at. One row per (monitored_item_id, release_guid);
+  // INSERT OR IGNORE means the first-seen timestamp is immutable once written.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS release_seen_timestamps (
+      id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+      monitored_item_id  INTEGER NOT NULL,
+      release_guid       TEXT NOT NULL,
+      first_seen_at      INTEGER NOT NULL,
+      UNIQUE(monitored_item_id, release_guid)
+    );
+    CREATE INDEX IF NOT EXISTS idx_release_seen_item ON release_seen_timestamps(monitored_item_id);
+  `)
+
   // --------------------------------------------------------------------------
   // Additive column migrations — ALL placed here so every table exists before
   // any ALTER TABLE runs. Each statement is wrapped in try/catch so re-runs on
@@ -720,6 +734,9 @@ export function runMigrations(db: Database.Database): void {
     // users — guest flag: 1 means a throwaway account auto-created on party invite join (8h session).
     // Guests have no password and no email; username is guest_<random>. is_active=1 so sessions work.
     'ALTER TABLE users ADD COLUMN is_guest INTEGER NOT NULL DEFAULT 0',
+    // quality_profiles — delay before a release is eligible for auto-grab.
+    // 0 = no delay (grab immediately). A release first seen less than delay_minutes minutes ago is skipped.
+    'ALTER TABLE quality_profiles ADD COLUMN delay_minutes INTEGER NOT NULL DEFAULT 0',
   ]
   for (const sql of addCols) {
     try { db.exec(sql) } catch { /* column already exists — safe to ignore */ }

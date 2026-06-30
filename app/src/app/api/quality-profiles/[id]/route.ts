@@ -54,6 +54,7 @@ export async function PATCH(
     min_format_score?: number
     cutoff_format_score?: number
     language?: string
+    delay_minutes?: number
     formats?: Array<{ format_id: number; score: number }>
     new_format?: { name: string; specs: CustomFormatSpec[] }
     conditions?: Array<{ type: string; value: string; required: boolean; negate?: boolean }>
@@ -66,7 +67,7 @@ export async function PATCH(
   if (body.name !== undefined || body.upgrade_allowed !== undefined ||
       body.cutoff_quality_id !== undefined || body.min_format_score !== undefined ||
       body.cutoff_format_score !== undefined || body.language !== undefined ||
-      body.conditions !== undefined) {
+      body.delay_minutes !== undefined || body.conditions !== undefined) {
     const fields: string[] = []
     const vals: unknown[] = []
     if (body.name !== undefined)              { fields.push('name = ?');               vals.push(body.name.trim()) }
@@ -75,6 +76,7 @@ export async function PATCH(
     if (body.min_format_score !== undefined)  { fields.push('min_format_score = ?');  vals.push(body.min_format_score) }
     if (body.cutoff_format_score !== undefined) { fields.push('cutoff_format_score = ?'); vals.push(body.cutoff_format_score) }
     if (body.language !== undefined)          { fields.push('language = ?');          vals.push(body.language.trim() || 'any') }
+    if (body.delay_minutes !== undefined)     { fields.push('delay_minutes = ?');     vals.push(Math.max(0, Math.floor(body.delay_minutes))) }
     if (body.conditions !== undefined)        { fields.push('conditions = ?');        vals.push(JSON.stringify(body.conditions)) }
     if (fields.length > 0) {
       db.prepare(`UPDATE quality_profiles SET ${fields.join(', ')} WHERE id = ?`).run(...vals, profileId)

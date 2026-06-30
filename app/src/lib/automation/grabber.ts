@@ -483,6 +483,7 @@ export async function grabItem(
         id: 0,
         name: 'Any',
         conditions: '[]',
+        delay_minutes: 0,
       }
 
     // 2. Build search params — guard against degenerate scopes before hitting indexers.
@@ -560,16 +561,38 @@ export async function grabItem(
       gates: gatesByKey.get(gateKey(r)) ?? [],
     }))
 
-    // 5. Pick the best release for AUTO-grab from the gate-passing pool only. First filter out
-    //    releases from indexers that have hit their daily grab cap; the filtered pool is for
-    //    auto-pick only — gated/grab-limited releases remain in `scored` for the admin UI.
+    // 5. Pick the best release for AUTO-grab from the gate-passing pool only.
+    //    5a. Delay gate: record first-seen timestamp for each release and skip any that have not
+    //        yet been visible for at least profile.delay_minutes minutes. A delay of 0 skips
+    //        this check entirely so the common case has zero overhead.
+    const delayMs = (profile.delay_minutes ?? 0) * 60 * 1000
+    const now = Date.now()
+    const db = getDb()
+    const upsertSeen = db.prepare(
+      `INSERT OR IGNORE INTO release_seen_timestamps (monitored_item_id, release_guid, first_seen_at)
+       VALUES (?, ?, ?)`,
+    )
+    const getSeen = db.prepare(
+      'SELECT first_seen_at FROM release_seen_timestamps WHERE monitored_item_id = ? AND release_guid = ?',
+    )
+    const delayPassing = passing.filter((r) => {
+      const guid = r.infoHash || r.title
+      upsertSeen.run(item.id, guid, now)
+      if (delayMs === 0) return true
+      const row = getSeen.get(item.id, guid) as { first_seen_at: number } | undefined
+      return row == null || now - row.first_seen_at >= delayMs
+    })
+
+    //    5b. Filter out releases from indexers that have hit their daily grab cap. The filtered
+    //        pool is for auto-pick only — gated/delayed/grab-limited releases remain in `scored`
+    //        for the admin UI.
     const indexerIdByName = new Map(
-      getDb().prepare('SELECT id, name FROM indexers').all().map((r) => {
+      db.prepare('SELECT id, name FROM indexers').all().map((r) => {
         const row = r as { id: number; name: string }
         return [row.name, row.id] as const
       })
     )
-    const grabbable = passing.filter((r) => {
+    const grabbable = delayPassing.filter((r) => {
       const iid = indexerIdByName.get(r.indexerName)
       return iid === undefined || checkGrabLimit(iid)
     })
