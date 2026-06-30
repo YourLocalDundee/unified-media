@@ -8,6 +8,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- **Movie Collections — follow a TMDB franchise.** Monitor a TMDB collection (e.g. "The Lord of
+  the Rings Collection") as a unit: every film in it gets auto-added to `monitored_items` as a
+  long-term item. New tables `monitored_collections` (id, tmdb_collection_id, name,
+  quality_profile_id, enabled, last_sync_at, added_count) + `collection_items` dedup ledger. Daily
+  cron (`40 3 * * *`) calls `syncAllCollections`; manual sync available per-collection. TMDB client
+  gets `getCollection(id)` + `searchCollections(query)`. Admin UI at `/admin/collections`: search
+  box (debounced, calls `/api/tmdb/collections/search`), table of monitored collections with
+  enabled toggle, last-sync timestamp, added count, manual sync button, delete.
+- **Delay profiles — hold releases for N minutes before grabbing.** `quality_profiles` gets a
+  `delay_minutes` column (0 = grab immediately). New `release_seen_timestamps` table records first
+  sight of each release per monitored item (keyed by infoHash / title fallback). The grabber inserts
+  on first sight and filters out any release seen less than `delay_minutes` minutes ago; subsequent
+  cron runs pass once the window has elapsed. Quality profile admin UI gets a "Release delay
+  (minutes)" input. PATCH `/api/quality-profiles/[id]` accepts `delay_minutes`.
 - **Per-indexer rate limiting: queries/day + grabs/day.** Adds two configurable daily caps per
   indexer (`rate_limit_queries_per_day`, `rate_limit_grabs_per_day`; 0 = unlimited) stored in the
   `indexers` table. Counters (`daily_query_count`, `daily_grab_count`, `daily_stats_date`) reset

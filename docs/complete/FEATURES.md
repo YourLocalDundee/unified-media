@@ -67,6 +67,8 @@ secret in both Seerr and `SEERR_WEBHOOK_SECRET`. `/api/seerr/webhook` receives `
 | Party shared queue + auto-advance | v0.10.0 | `docs/features/party-play.md` |
 | Party creator-kick + control-lock | v0.11.3 | `docs/features/party-play.md` |
 | Party guest join (invite link, no account needed) | v0.11.4 | `docs/features/party-play.md` |
+| Movie Collections (follow a TMDB franchise) | v0.11.5 | — |
+| Delay profiles (hold releases N minutes before grab) | v0.11.5 | — |
 | Per-indexer queries/day + grabs/day rate limiting | v0.11.3 | CLAUDE.md §17, `docs/features/decision-engine.md` |
 | **On-demand subtitle search** + live `<track>` injection | v0.9.11 | `docs/player/audio-subtitles.md` |
 | Decision engine — hard gates + custom formats | v0.10.0 | `docs/features/decision-engine.md` |
