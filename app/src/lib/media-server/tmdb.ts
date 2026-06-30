@@ -686,3 +686,72 @@ export async function getArcs(tmdbId: number): Promise<SeriesArc[]> {
     return []
   }
 }
+
+// ── Collection endpoints ─────────────────────────────────────────────────────
+
+interface TMDBCollectionPart {
+  id: number
+  title: string
+  release_date: string | null
+  poster_path: string | null
+}
+
+interface TMDBCollectionResponse {
+  id: number
+  name: string
+  parts: TMDBCollectionPart[]
+}
+
+/**
+ * GET /3/collection/{id}
+ * Returns the collection's name + all its parts (films), or null on any failure (404 / bad token).
+ */
+export async function getCollection(id: number): Promise<{
+  id: number
+  name: string
+  parts: Array<{ id: number; title: string; release_date: string | null; poster_path: string | null }>
+} | null> {
+  try {
+    const r = await tmdbFetch<TMDBCollectionResponse>(`/collection/${id}?language=en-US`)
+    return {
+      id: r.id,
+      name: r.name,
+      parts: (r.parts ?? []).map((p) => ({
+        id: p.id,
+        title: p.title,
+        release_date: p.release_date ?? null,
+        poster_path: p.poster_path ?? null,
+      })),
+    }
+  } catch {
+    return null
+  }
+}
+
+interface TMDBCollectionSearchResult {
+  id: number
+  name: string
+  poster_path: string | null
+}
+
+interface TMDBCollectionSearchResponse {
+  results: TMDBCollectionSearchResult[]
+}
+
+/**
+ * GET /3/search/collection?query=...
+ * Returns a list of matching TMDB collections (id + name + poster). Empty array on failure.
+ */
+export async function searchCollections(query: string): Promise<Array<{ id: number; name: string; poster_path: string | null }>> {
+  try {
+    const encoded = encodeURIComponent(query)
+    const r = await tmdbFetch<TMDBCollectionSearchResponse>(`/search/collection?query=${encoded}&language=en-US`)
+    return (r.results ?? []).map((c) => ({
+      id: c.id,
+      name: c.name,
+      poster_path: c.poster_path ?? null,
+    }))
+  } catch {
+    return []
+  }
+}

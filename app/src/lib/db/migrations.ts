@@ -625,6 +625,27 @@ export function runMigrations(db: Database.Database): void {
       FOREIGN KEY (party_id) REFERENCES watch_parties(id) ON DELETE CASCADE
     );
     CREATE INDEX IF NOT EXISTS idx_watch_party_queue_party ON watch_party_queue(party_id, position);
+
+    CREATE TABLE IF NOT EXISTS monitored_collections (
+      id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+      tmdb_collection_id  INTEGER NOT NULL UNIQUE,
+      name                TEXT NOT NULL,
+      quality_profile_id  INTEGER NOT NULL DEFAULT 1,
+      enabled             INTEGER NOT NULL DEFAULT 1,
+      last_sync_at        INTEGER,
+      last_error          TEXT,
+      added_count         INTEGER NOT NULL DEFAULT 0,
+      created_at          INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS collection_items (
+      id             INTEGER PRIMARY KEY AUTOINCREMENT,
+      collection_id  INTEGER NOT NULL,
+      tmdb_id        INTEGER NOT NULL,
+      added_at       INTEGER NOT NULL,
+      UNIQUE(collection_id, tmdb_id),
+      FOREIGN KEY (collection_id) REFERENCES monitored_collections(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_collection_items_col ON collection_items(collection_id);
   `)
 
   // --------------------------------------------------------------------------
