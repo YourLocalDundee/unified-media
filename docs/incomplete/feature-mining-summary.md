@@ -39,6 +39,11 @@ the "top candidates" ranking is rebuilt around what is still grabbable.
 | On-demand subtitle search | (Bazarr-adjacent) | v0.9.11 (§10b) |
 | Keyboard-shortcut registry | (not from sources) | v0.12.0 |
 | Theme marketplace | (not from sources) | v0.12.0 |
+| Per-indexer rate limiting (queries/day + grabs/day) | prowlarr #4 | v0.11.3 |
+| Party Play: creator-kick + control-lock | watchparty #3 | v0.11.3 |
+| Party Play: guest join via invite link | (not from sources) | v0.11.4 |
+| Movie Collections — follow a TMDB franchise | radarr #1 | v0.11.5 |
+| Delay profiles — hold releases N min before grab | sonarr #5 | v0.11.5 |
 
 ---
 
@@ -46,57 +51,43 @@ the "top candidates" ranking is rebuilt around what is still grabbable.
 
 ### Tier 1 — highest value-to-effort
 
-1. **Per-indexer rate limiting** (prowlarr #4). A token-bucket of queries/day + grabs/day per indexer, so
-   we never trip a private tracker's API cap and get the account banned. Explicitly deferred when health/
-   backoff shipped (§21 closing note), so the table and fan-out hooks are already there. Low effort, real
-   account-safety payoff.
-2. **Movie Collections "follow a franchise"** (radarr #1). Monitor a TMDB collection (LOTR, MCU) as a unit
-   and auto-add every film in it including future entries. Reuses our TMDB client + `monitored_items` + the
-   two-mode request system. Unique to movies (no TV equivalent), high user appeal. Mind auto-delete safety,
-   add as long-term items the same way Import Lists do (§20).
-3. **Delay profiles** (sonarr #5). Wait N minutes after a release first appears before grabbing, so a better
-   WEB-DL can show up before we grab the first 480p cam. A `delay_minutes` column + a first-seen check in the
-   grab cron. Low effort, direct quality win for a torrent-only setup.
-4. **Creator-kick + control-lock for Party Play** (watchparty #3). We ship shared control with no host, which
-   is great for trusted friends but has no recourse against a griefer. A creator-only kick plus an optional
-   "lock control to me" flag is a cheap safety valve. We already track `host_user_id` and stamp chat IDs.
-   No infra cost.
+_(All original Tier-1 items shipped. See "Already shipped" table above.)_
 
 ### Tier 2 — strong, a bit more work
 
-5. **TV season-pack upgrade-until-cutoff** (sonarr #2 TV half). Upgrade/cutoff shipped for MOVIES only (§19);
+1. **TV season-pack upgrade-until-cutoff** (sonarr #2 TV half). Upgrade/cutoff shipped for MOVIES only (§19);
    TV season packs were deferred for the multi-file / partial-overlap complexity. Closing that gap makes
    "get the right copy" work for shows too. Medium-high effort.
-6. **Standard category mapping + capabilities** (prowlarr #5). Probe each indexer's capabilities and map
+2. **Standard category mapping + capabilities** (prowlarr #5). Probe each indexer's capabilities and map
    tracker categories to the Newznab standard tree, so "TV only" search works correctly across heterogeneous
    indexers. Closes a logged MVP gap and enables a category picker.
-7. **Indexer flags + indexer stats** (prowlarr #6/#7). Thread freeleech/internal/scene flags from Torznab
+3. **Indexer flags + indexer stats** (prowlarr #6/#7). Thread freeleech/internal/scene flags from Torznab
    attrs (they feed a Custom Format like "prefer freeleech", the flag matcher already exists) and add a
    per-indexer stats surface (query/grab counts, success rate) on `/admin/indexers`, built on `grab_history`.
-8. **Edition / AKA / hardcoded-sub parsing** (radarr #3). Parse Director's Cut / Extended / IMAX editions and
+4. **Edition / AKA / hardcoded-sub parsing** (radarr #3). Parse Director's Cut / Extended / IMAX editions and
    AKA alternate titles, and flag burned-in subs (HC/KORSUB). Folds straight into the Custom Format matcher
    so a user can prefer the Extended cut and de-prioritize HC. Small parser additions.
-9. **Voice chat in Party Play** (watchparty #2). Highest *raw* value for watch-together, the natural step
+5. **Voice chat in Party Play** (watchparty #2). Highest *raw* value for watch-together, the natural step
    after text chat + reactions. Signaling is trivial on our existing WS server. Carries WebRTC + STUN/TURN
    infra cost (STUN free, a coturn TURN container needed as a fallback for symmetric-NAT pairs), which is why
    it sits here and not Tier 1. Voice-only first, webcam tiles later.
-10. **Calendar of upcoming episodes** (sonarr #13). A calendar of upcoming/aired episodes for monitored series
-    off TMDB data, with an optional iCal export. Nice user-facing surface.
+6. **Calendar of upcoming episodes** (sonarr #13). A calendar of upcoming/aired episodes for monitored series
+   off TMDB data, with an optional iCal export. Nice user-facing surface.
 
 ### Tier 3 — opportunistic / pairs with the above
 
-11. **Cutoff-Unmet "Wanted" admin surface** (sonarr #10). Now buildable since upgrade/cutoff exists (§19): a
-    list of items below their profile cutoff. Pairs with #5 (TV upgrade).
-12. **FlareSolverr proxy** (prowlarr #2). A per-indexer "route through FlareSolverr" option for
-    Cloudflare-gated trackers. Self-contained, but needs the FlareSolverr container running. Add when a
-    wanted tracker is actually Cloudflare-gated.
-13. **Party polish on data we already emit:** tri-state synced/syncing/waiting badge (openwatchparty #2),
-    per-member playhead offsets (watchparty #6, from our median data), roster avatars (watchparty #7, reuse
-    initials-avatars), message-level reactions (watchparty #4), subtitle-choice sharing (watchparty #5),
-    loop toggle (watchparty #8).
-14. **"Queue a whole season" in one action** (vynchronize #1 "enqueue playlist"). A small enhancement on the
+7. **Cutoff-Unmet "Wanted" admin surface** (sonarr #10). Now buildable since upgrade/cutoff exists (§19): a
+   list of items below their profile cutoff. Pairs with Tier-2 #1 (TV upgrade).
+8. **FlareSolverr proxy** (prowlarr #2). A per-indexer "route through FlareSolverr" option for
+   Cloudflare-gated trackers. Self-contained, but needs the FlareSolverr container running. Add when a
+   wanted tracker is actually Cloudflare-gated.
+9. **Party polish on data we already emit:** tri-state synced/syncing/waiting badge (openwatchparty #2),
+   per-member playhead offsets (watchparty #6, from our median data), roster avatars (watchparty #7, reuse
+   initials-avatars), message-level reactions (watchparty #4), subtitle-choice sharing (watchparty #5),
+   loop toggle (watchparty #8).
+10. **"Queue a whole season" in one action** (vynchronize #1 "enqueue playlist"). A small enhancement on the
     existing party queue: fan out a series' episodes into the up-next list in S/E order.
-15. **Auto Tagging** (sonarr #11). Rule-based tags (genre/year/network) that drive delay profiles and release
+11. **Auto Tagging** (sonarr #11). Rule-based tags (genre/year/network) that drive delay profiles and release
     restrictions. Only worth it once we run several profiles.
 
 ---
@@ -116,8 +107,9 @@ the "top candidates" ranking is rebuilt around what is still grabbable.
 
 ---
 
-## Suggested first move
+## Next up
 
-If we pick one thing, **Tier-1 #1 (per-indexer rate limiting)** is the cheapest insurance against a tracker
-ban now that grabs run unattended, and the hooks are already in place. If we'd rather ship something visible,
-**Tier-1 #2 (Movie Collections)** is the best standalone user-facing feature and reuses everything we have.
+Tier 1 is fully shipped. The top remaining picks are:
+- **Tier-2 #1 (TV season-pack upgrade-until-cutoff)** — closes the biggest automation gap left
+- **Tier-2 #2 (Category mapping)** — makes "TV only" searches correct across heterogeneous indexers
+- **Tier-2 #3 (Indexer flags + stats)** — freeleech awareness + operational visibility

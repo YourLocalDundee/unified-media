@@ -58,12 +58,8 @@ why it fits and the rough surface it'd touch. Not committed — triage into `BAC
 
 These came out of the source purge; ranked detail is in `feature-mining-summary.md`.
 
-- **Movie Collections ("follow a franchise").** Monitor a TMDB collection as a unit and auto-add every
-  film in it (including future entries). Reuses the TMDB client, `monitored_items`, and the two-mode
-  request system. Long-term items only — same as Import Lists (§20). See `radarr-analysis.md`.
-- **Delay profiles.** A `delay_minutes` column per profile: don't grab until N minutes after a release
-  first appears so a better WEB-DL can surface before we take the 480p cam. A first-seen timestamp
-  check in the grab cron is the only new logic.
+- ~~**Movie Collections ("follow a franchise").**~~ **SHIPPED v0.11.5** — `/admin/collections`.
+- ~~**Delay profiles.**~~ **SHIPPED v0.11.5** — `delay_minutes` on quality profiles.
 - **TV season-pack upgrade-until-cutoff.** Upgrade/cutoff shipped for movies (§19); TV was deferred for
   multi-file / partial-overlap complexity. Closing the gap makes "get the right copy" work for shows too.
 - **Standard category mapping + capabilities.** Probe each indexer's capabilities on activation and map
