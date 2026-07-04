@@ -1,0 +1,9 @@
+{
+  "name": "run-unified-frontend-driver",
+  "private": true,
+  "type": "module",
+  "description": "Playwright driver for the run-unified-frontend agent skill — not part of the app's own dependency tree.",
+  "dependencies": {
+    "playwright": "^1.61.1"
+  }
+}
