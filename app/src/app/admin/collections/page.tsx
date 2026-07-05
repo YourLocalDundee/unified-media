@@ -91,7 +91,7 @@ export default function AdminCollectionsPage() {
   const fetchProfiles = useCallback(async () => {
     try {
       const res = await fetch('/api/automation/profiles')
-      if (res.ok) setProfiles((await res.json()) as QualityProfile[])
+      if (res.ok) setProfiles(((await res.json()) as { profiles: QualityProfile[] }).profiles ?? [])
     } catch {
       // non-fatal — profile dropdown will just be empty
     }

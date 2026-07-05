@@ -211,7 +211,7 @@ export default function AdminAutomationPage() {
   const fetchProfiles = useCallback(async () => {
     try {
       const res = await fetch('/api/automation/profiles')
-      if (res.ok) setProfiles(await res.json() as QualityProfile[])
+      if (res.ok) setProfiles((await res.json() as { profiles: QualityProfile[] }).profiles ?? [])
       // Profiles are only needed for the "Add Item" dropdown — failure is non-fatal;
       // the dropdown will just be empty and the API will use the default profile
     } catch {
