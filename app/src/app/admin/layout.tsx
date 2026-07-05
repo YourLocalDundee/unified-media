@@ -21,6 +21,7 @@ const NAV = [
   { href: '/admin/subtitles', label: 'Subtitles' },
   { href: '/admin/media-server', label: 'Media Server' },
   { href: '/admin/quality-profiles', label: 'Quality Profiles' },
+  { href: '/admin/collections', label: 'Collections' },
   { href: '/admin/settings', label: 'Settings' },
 ]
 
