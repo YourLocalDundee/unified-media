@@ -28,7 +28,8 @@ export async function POST(req: NextRequest) {
   try { body = await req.json() }
   catch { return NextResponse.json({ error: 'Invalid request' }, { status: 400 }) } // A19: parse guard
 
-  const { name, upgrade_allowed = true, cutoff_quality_id = null, min_format_score = 0, cutoff_format_score = 0 } = body
+  // Default off (2026-07): upgrade-until-cutoff re-grabbing is opt-in, not opt-out, for new profiles.
+  const { name, upgrade_allowed = false, cutoff_quality_id = null, min_format_score = 0, cutoff_format_score = 0 } = body
   if (!name?.trim()) return NextResponse.json({ error: 'name is required' }, { status: 400 })
 
   const db = getDb()

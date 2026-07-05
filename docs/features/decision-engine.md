@@ -44,15 +44,48 @@ the seed floor).
 - **release_group** — exact scene-group match (`meta.group`).
 - **size** — GB range `min-max` / `min-` / `-max` (needs the release size, threaded through
   `scoreWithProfile(title, profileId, sizeBytes)` from `autoPickScore`).
-- **flag** — a named release flag (`proper`/`repack`/`internal`/`remux`/`hdr`/`hdr10plus`/`dv`/`atmos`/
-  `imax`/…); unknown keys fall back to a word-boundary match. `CUSTOM_FORMAT_FLAGS` exports the known
-  keys.
+- **flag** — a named release flag tested against the raw release title via `FLAG_PATTERNS`.
+  Known keys (exported as `CUSTOM_FORMAT_FLAGS`):
+
+  | Key | What it matches |
+  |-----|-----------------|
+  | `proper` / `repack` / `internal` / `real` | Revision/re-release markers |
+  | `extended` / `uncut` / `imax` | Edition variants (original set) |
+  | `directors_cut` | `Director's Cut`, `Directors.Cut`, etc. (dot-separator-aware) |
+  | `theatrical` | `Theatrical`, `Theatrical.Cut`, `Theatrical.Edition` |
+  | `remastered` | `Remastered`, `Remaster`, `Re-mastered` |
+  | `unrated` | `Unrated`, `Unrated.Cut` |
+  | `hc` | `HC`, `HCSUB`, `KORSUB`, `RUSUB`, `HardSub`, `HardCoded` — burned-in subs |
+  | `remux` / `hybrid` | Encode type |
+  | `hdr` / `hdr10plus` / `dv` | HDR flavour |
+  | `atmos` | Dolby Atmos audio |
+
+  Unknown keys fall back to a word-boundary match of the value itself so ad-hoc tags still work.
 
 Custom formats are scored within `autoPickScore` (`scoreWithProfile(...).totalScore`) and are
 created/assigned with per-profile scores on the existing `/admin/quality-profiles` page (the
 `CustomFormatBuilder` offers the new spec types with per-type value hints). The
 `quality_profile_formats` score table and the matcher were already scaffolded; this activates the
 fuller matcher.
+
+## AKA / alternate-title fallback search
+
+When the primary title search (`searchAllIndexers({ q: item.title, ... })`) returns zero results,
+the grabber tries each stored **alternative title** as a sequential fallback query, stopping at the
+first non-empty result. This covers foreign-primary-title items (e.g. primary TMDB title "Bølgen")
+where scene releases use a different name (e.g. "The Wave").
+
+**How titles are stored:** after `createItem()`, the admin-approve route (`fireImmediateGrab`) and
+the auto-approve path both call `getAlternativeTitles(tmdbId, type)` (TMDB
+`/movie/{id}/alternative_titles` or `/tv/{id}/alternative_titles`), cap the result at 20 unique
+titles, and persist them via `storeAltTitles(itemId, titles)` on `monitored_items.alternative_titles`
+(JSON `string[]`). The store happens before the grab fires so the immediate-grab path already has the
+titles available.
+
+**Grabber fallback** (`grabber.ts` `grabItem`): at most 5 alternative titles are tried in order; the
+first that produces any indexer results becomes the candidate pool. Scope filtering (year-pin +
+episode/season matching) is applied to the alternative-title results exactly as it is to primary
+results, so the AKA fallback cannot pull in unrelated content.
 
 ## Related: grab scoring (the soft score, v0.9.10 Bug 2)
 

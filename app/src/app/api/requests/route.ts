@@ -59,6 +59,8 @@ export async function POST(req: NextRequest) {
     requestMethod?: 'auto-pick' | 'interactive'
     // PIECE 4 — Language: ISO 639-1 code or 'any'. Default 'any'.
     language?: string
+    // Dub/sub audio preference: 'any' | 'dub' | 'sub'. Default 'any'.
+    audioMode?: string
     // Quality profile to use when creating the monitored_items row.
     // null / omitted → falls back to the default (ID 1).
     quality_profile_id?: number
@@ -104,6 +106,7 @@ export async function POST(req: NextRequest) {
 
   // Language defaults to 'any' (no constraint).
   const language = body.language?.trim() || 'any'
+  const audioMode = body.audioMode?.trim() || 'any'
   // Quality profile — positive integer or null (default profile).
   const qualityProfileId =
     typeof body.quality_profile_id === 'number' && body.quality_profile_id > 0
@@ -157,10 +160,10 @@ export async function POST(req: NextRequest) {
     monitorFuture,
   })
 
-  // Persist request method, language, and quality profile on the freshly created row.
+  // Persist request method, language, audio mode, and quality profile on the freshly created row.
   getDb()
-    .prepare('UPDATE media_requests SET request_method = ?, language = ?, quality_profile_id = ?, updated_at = ? WHERE id = ?')
-    .run(methodType, language, qualityProfileId, Date.now(), created.id)
+    .prepare('UPDATE media_requests SET request_method = ?, language = ?, audio_mode = ?, quality_profile_id = ?, updated_at = ? WHERE id = ?')
+    .run(methodType, language, audioMode, qualityProfileId, Date.now(), created.id)
 
   // ── INTERACTIVE PATH (user hand-picked a specific release) ──────────────────
   // A7-03: interactive picks ALWAYS go to the admin queue (pending), for both quick and long-term
@@ -183,10 +186,12 @@ export async function POST(req: NextRequest) {
     // 48hr + auto-pick: attempt immediate approval and grab without admin intervention.
     // Dynamically imported to keep 'server-only' out of edge-runtime bundles.
     const { tryAutoApprove } = await import('@/lib/requests/auto-approve')
-    const wasApproved = tryAutoApprove(created.id)
-    if (wasApproved) {
+    const itemId = tryAutoApprove(created.id)
+    if (itemId !== null) {
+      // itemId lets the client open the grab-confirmation modal directly against the item
+      // tryAutoApprove just created — it does NOT grab; the user confirms via that modal.
       const approved = getRequestById(created.id)
-      return NextResponse.json(approved, { status: 201 })
+      return NextResponse.json({ ...approved, itemId }, { status: 201 })
     }
     // Slot limit hit: all-or-nothing — clean up and return 429.
     getDb().prepare('DELETE FROM media_requests WHERE id = ?').run(created.id)

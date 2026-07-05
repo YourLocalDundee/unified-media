@@ -8,12 +8,18 @@
  * Modes:
  *   override (interactive, admin pick): body.override = a specific release the admin chose from the
  *     candidate list. Sent straight to the download client via the SAME enqueue path as auto.
- *   'auto'    : one-shot pack search (findSeasonPack / findArcPack). Found → grab; none → no_pack.
+ *   'auto'    : creates the 'wanted' item (scope set) and returns { result: 'pending_confirm', itemId }
+ *     — it does NOT search or grab. The client opens GrabConfirmModal(itemId), which does the pack
+ *     search (via searchCandidatesForItem's pack-aware dispatch in grabber.ts) and lets the admin
+ *     confirm/next-best/override/cancel. Cancelling just leaves the item 'wanted' for the cron.
  *   'episodes': fan out one 'wanted' monitored item per episode; the 5-min cron grabs each. Returns
  *     {queued, failed, total} — per-episode createItem failures are logged + counted, never swallowed.
+ *     (Covering packs found for this scope ARE grabbed immediately here — this is a bulk fan-out
+ *     action with no single release to confirm, unlike 'auto'; out of scope for grab-confirmation.)
  *
- * Every successful grab also records a media_requests row (status 'approved') so it shows on the
- * Requests page with the exact scope (season number, or arc episodes + label).
+ * Every item creation (auto/episodes/override) also records a media_requests row (status
+ * 'approved') so it shows on the Requests page with the exact scope (season number, or arc
+ * episodes + label) regardless of whether the grab is confirmed or later cancelled.
  *
  * Admin-only (requireAdmin) and Origin-checked: this bypasses the request/approval flow and directly
  * commands the download client.
@@ -24,7 +30,7 @@ import { requireAdmin } from '@/lib/dal'
 import { verifyOrigin } from '@/lib/csrf'
 import { getProfileById, createItem, recordGrab, updateItem } from '@/lib/automation/monitor'
 import { createRequest, updateRequestStatus, getRequestByTmdb } from '@/lib/requests/monitor'
-import { findSeasonPack, findArcPack, findCoveringPacks } from '@/lib/automation/grabber'
+import { findCoveringPacks } from '@/lib/automation/grabber'
 import { getSeasonEpisodeNumbers } from '@/lib/media-server/tmdb'
 import { getClient } from '@/lib/download-client/registry'
 import { getDb } from '@/lib/db/index'
@@ -119,6 +125,7 @@ export async function POST(req: NextRequest) {
     seasonNumber?: number
     arc?: unknown
     language?: string
+    audioMode?: string
     qualityProfileId?: number
     mode?: 'auto' | 'episodes'
     override?: { magnetUrl?: string; downloadUrl?: string; title?: string; indexerName?: string; infoHash?: string }
@@ -127,6 +134,7 @@ export async function POST(req: NextRequest) {
 
   const { tmdbId, title, year } = body
   const language = body.language || 'any'
+  const audioMode = body.audioMode || 'any'
   const mode = body.mode === 'episodes' ? 'episodes' : 'auto'
   const arc = parseArc(body.arc)
   const seasonNumber = typeof body.seasonNumber === 'number' ? body.seasonNumber : undefined
@@ -160,7 +168,7 @@ export async function POST(req: NextRequest) {
       await getClient().addTorrent({ urls: url, category: 'tv' })
       const item = createItem({
         type: 'tv', title, tmdb_id: tmdbId, year: year ?? undefined,
-        quality_profile_id: profileId, monitor_future: false, language, ...itemScope,
+        quality_profile_id: profileId, monitor_future: false, language, audio_mode: audioMode, ...itemScope,
       })
       recordGrab({ item_id: item.id, indexer: body.override.indexerName ?? 'manual', release_title: body.override.title ?? 'manual override', info_hash: body.override.infoHash ?? '', urls: [body.override.magnetUrl, body.override.downloadUrl] })
       updateItem(item.id, { status: 'grabbed' })
@@ -180,7 +188,7 @@ export async function POST(req: NextRequest) {
       // 1. Prefer packs: grab covering pack(s) first so we never fan out per-episode torrents for
       //    episodes a pack already contains. Each chosen pack becomes its own 'grabbed' monitored
       //    item (distinct scope_key) so the importer can locate every pack by its own info_hash.
-      const { chosen, covered } = await findCoveringPacks(title, episodes, profile, language)
+      const { chosen, covered } = await findCoveringPacks(title, episodes, profile, language, audioMode)
       let packsGrabbed = 0
       for (const { release: pack, covers } of chosen) {
         try {
@@ -188,7 +196,7 @@ export async function POST(req: NextRequest) {
           const coveredEps = episodes.filter((ep) => covers.includes(ep.e))
           const item = createItem({
             type: 'tv', title, tmdb_id: tmdbId, year: year ?? undefined,
-            quality_profile_id: profileId, monitor_future: false, language,
+            quality_profile_id: profileId, monitor_future: false, language, audio_mode: audioMode,
             scope_type: 'episodes', scope_episodes: coveredEps, scope_label: arc?.name ?? null,
           })
           recordGrab({ item_id: item.id, indexer: pack.indexerName, release_title: pack.title, info_hash: pack.infoHash, urls: [pack.magnetUrl, pack.downloadUrl] })
@@ -208,7 +216,7 @@ export async function POST(req: NextRequest) {
         try {
           createItem({
             type: 'tv', title, tmdb_id: tmdbId, year: year ?? undefined,
-            quality_profile_id: profileId, monitor_future: false, language,
+            quality_profile_id: profileId, monitor_future: false, language, audio_mode: audioMode,
             scope_type: 'episodes', scope_episodes: [ep], scope_label: arc?.name ?? null,
           })
           queued++
@@ -233,26 +241,18 @@ export async function POST(req: NextRequest) {
       })
     }
 
-    // --- Auto: one-shot pack search (season pack, or arc range pack). -----------------------------
-    const pack = arc
-      ? await findArcPack(title, arc.episodes, profile, language)
-      : await findSeasonPack(title, seasonNumber!, profile, language)
-    if (!pack) {
-      const episodeCount = arc ? arc.episodes.length : (await getSeasonEpisodeNumbers(tmdbId, seasonNumber!).catch(() => [])).length
-      return NextResponse.json({ result: 'no_pack', seasonNumber: seasonNumber ?? null, episodeCount })
-    }
-    await getClient().addTorrent({ urls: pack.magnetUrl || pack.downloadUrl, category: 'tv' })
+    // --- Auto: create the 'wanted' item and hand off to the grab-confirmation flow instead of
+    //     grabbing immediately. GrabConfirmModal(itemId) does the actual pack search (via
+    //     searchCandidatesForItem's pack-aware dispatch in grabber.ts, keyed off this item's
+    //     scope_label/scope_seasons) and lets the admin confirm, walk to the next best, or drop
+    //     to the interactive picker. Cancelling there just leaves the item 'wanted' for the 5-min
+    //     cron, same as a "no pack found" result did before this split. ------------------------
     const item = createItem({
       type: 'tv', title, tmdb_id: tmdbId, year: year ?? undefined,
-      quality_profile_id: profileId, monitor_future: false, language, ...itemScope,
+      quality_profile_id: profileId, monitor_future: false, language, audio_mode: audioMode, ...itemScope,
     })
-    recordGrab({ item_id: item.id, indexer: pack.indexerName, release_title: pack.title, info_hash: pack.infoHash, urls: [pack.magnetUrl, pack.downloadUrl] })
-    updateItem(item.id, { status: 'grabbed' })
     recordGrabRequest(session.userId, tmdbId, title, year, reqScope)
-    return NextResponse.json({
-      result: 'pack_grabbed',
-      release: { title: pack.title, indexer: pack.indexerName, size: pack.size, seeders: pack.seeders },
-    })
+    return NextResponse.json({ result: 'pending_confirm', itemId: item.id })
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     const scopeLabel = arc ? `arc ${arc.name}` : `S${seasonNumber}`

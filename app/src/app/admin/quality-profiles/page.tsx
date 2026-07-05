@@ -129,7 +129,7 @@ const SPEC_VALUE_HINT: Record<CustomFormatSpec['type'], string> = {
   language: 'ISO code: en, fr, ja…',
   release_group: 'scene group, e.g. NTb',
   size: 'GB range: 2-8, -25, 4-',
-  flag: 'proper, repack, hdr, dv, atmos…',
+  flag: 'hc, proper, repack, hdr, dv, atmos, imax, extended, directors_cut, theatrical, remastered, unrated…',
 }
 
 function AddFormatModal({
@@ -245,6 +245,7 @@ function ProfileEditor({
   const [minScore, setMinScore] = useState(profile.min_format_score)
   const [cutoffScore, setCutoffScore] = useState(profile.cutoff_format_score)
   const [language, setLanguage] = useState(profile.language ?? 'any')
+  const [audioMode, setAudioMode] = useState(profile.audio_mode ?? 'any')
   const [delayMinutes, setDelayMinutes] = useState(profile.delay_minutes ?? 0)
   const [formats, setFormats] = useState<FormatEntry[]>(profile.formats)
   const [conditions, setConditions] = useState<QualityCondition[]>(profile.conditions ?? [])
@@ -268,6 +269,7 @@ function ProfileEditor({
           min_format_score: minScore,
           cutoff_format_score: cutoffScore,
           language,
+          audio_mode: audioMode,
           delay_minutes: delayMinutes,
           conditions,
           formats: formats.map(f => ({ format_id: f.format_id, score: f.score })),
@@ -384,6 +386,22 @@ function ProfileEditor({
           </select>
           <p className="mt-1 text-[10px] text-zinc-600">
             Hard constraint on auto-pick. &ldquo;Any&rdquo; is the safest choice — most English releases carry no language tag.
+          </p>
+        </div>
+
+        <div>
+          <label className="block text-xs text-zinc-400 mb-1">Audio Constraint</label>
+          <select
+            value={audioMode}
+            onChange={e => setAudioMode(e.target.value)}
+            className="w-full rounded-lg bg-zinc-800 px-3 py-2 text-sm text-white outline-none"
+          >
+            <option value="any">Any audio (no constraint)</option>
+            <option value="dub">Dub (dubbed audio)</option>
+            <option value="sub">Sub (subtitled, original audio)</option>
+          </select>
+          <p className="mt-1 text-[10px] text-zinc-600">
+            &ldquo;Any&rdquo; is the safest choice — untagged releases are common for both dub and sub.
           </p>
         </div>
 

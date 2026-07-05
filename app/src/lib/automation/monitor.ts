@@ -111,6 +111,8 @@ export function createItem(data: {
   monitor_future?: boolean
   // ISO 639-1 code or 'any' (default). Honored by the grab cron via grabItem.
   language?: string
+  // 'any' | 'dub' | 'sub' (default 'any'). Honored by the grab cron via grabItem.
+  audio_mode?: string
 }): MonitoredItem {
   const db = getDb()
   const now = Date.now()
@@ -136,6 +138,7 @@ export function createItem(data: {
     scope_key: scopeKey,
     monitor_future: data.monitor_future ? 1 : 0,
     language: data.language ?? 'any',
+    audio_mode: data.audio_mode ?? 'any',
     created_at: now,
     updated_at: now,
   }
@@ -151,11 +154,11 @@ export function createItem(data: {
       `INSERT INTO monitored_items
         (type, title, tmdb_id, tvdb_id, year, quality_profile_id, root_path,
          monitored, status, scope_type, scope_seasons, scope_episodes, scope_label, scope_key, monitor_future,
-         language, created_at, updated_at)
+         language, audio_mode, created_at, updated_at)
        VALUES
         (@type, @title, @tmdb_id, @tvdb_id, @year, @quality_profile_id, @root_path,
          1, 'wanted', @scope_type, @scope_seasons, @scope_episodes, @scope_label, @scope_key, @monitor_future,
-         @language, @created_at, @updated_at)
+         @language, @audio_mode, @created_at, @updated_at)
        ON CONFLICT(tmdb_id, type, scope_key) DO NOTHING`
     )
     .run(params)
@@ -188,6 +191,7 @@ const ITEM_ALLOWED_FIELDS = new Set<string>([
   'scope_episodes',
   'monitor_future',
   'language',
+  'audio_mode',
 ])
 
 export function updateItem(
@@ -228,6 +232,14 @@ export function updateItem(
   ).run(params)
 
   return getItemById(id)
+}
+
+// Store TMDB alternative titles on a monitored item. Called by approval paths after createItem
+// so the grabber can try AKA-named releases when the primary title search returns no results.
+export function storeAltTitles(itemId: number, titles: string[]): void {
+  getDb()
+    .prepare('UPDATE monitored_items SET alternative_titles = ?, updated_at = ? WHERE id = ?')
+    .run(JSON.stringify(titles), Date.now(), itemId)
 }
 
 export function deleteItem(id: number): boolean {

@@ -8,6 +8,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- **Edition flags, hardcoded-sub detection, and AKA alternate-title fallback search.**
+  Five new named flags in `FLAG_PATTERNS` (`quality.ts`) are now usable in custom formats:
+  `hc` (matches `HC`/`HCSUB`/`KORSUB`/`RUSUB`/`HardSub`/`HardCoded`), `directors_cut`,
+  `theatrical`, `remastered`, `unrated` — each with dot-separator-aware regexes that work on
+  dotted scene filenames. `extended`/`imax`/`uncut` were already present. AKA matching:
+  `monitored_items` gains an `alternative_titles TEXT` column (JSON `string[]`); the approval
+  paths (`POST /api/requests/[id]/approve` and `tryAutoApprove`) fetch TMDB
+  `/alternative_titles` and store up to 20 entries before firing the immediate grab. The grabber
+  now tries up to 5 stored alternative titles as sequential fallback queries when the primary
+  title search returns 0 indexer results, stopping at the first non-empty result. Admin custom-
+  format flag hint updated to surface the new keys.
 - **Movie Collections — follow a TMDB franchise.** Monitor a TMDB collection (e.g. "The Lord of
   the Rings Collection") as a unit: every film in it gets auto-added to `monitored_items` as a
   long-term item. New tables `monitored_collections` (id, tmdb_collection_id, name,

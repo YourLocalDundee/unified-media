@@ -5,6 +5,7 @@ import { useState, useCallback } from 'react'
 import type { NativeRequestWithUser, RequestStatus, PreferredRelease } from '@/lib/requests/types'
 import type { ScoredCandidate, GrabResultRow } from '@/lib/automation/grab-results'
 import type { TorrentSearchResult } from '@/app/api/torrent-search/route'
+import { useGrabConfirm } from '@/components/media/GrabConfirmModal'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -88,12 +89,17 @@ function formatBytes(bytes: number) {
 interface GrabResultsPanelProps {
   requestId: number
   status: RequestStatus
+  tmdbId: number
+  mediaType: 'movie' | 'tv'
+  title: string
+  year: number | null
+  posterPath: string | null
+  overview: string | null
 }
 
-function GrabResultsPanel({ requestId, status }: GrabResultsPanelProps) {
+function GrabResultsPanel({ requestId, status, tmdbId, mediaType, title, year, posterPath, overview }: GrabResultsPanelProps) {
   const [data, setData] = useState<GrabResultRow | null | undefined>(undefined) // undefined = not loaded
   const [loading, setLoading] = useState(false)
-  const [researchBusy, setResearchBusy] = useState(false)
   const [overrideBusy, setOverrideBusy] = useState<string | null>(null) // infoHash of candidate being overridden
   const [message, setMessage] = useState<string | null>(null)
 
@@ -109,28 +115,18 @@ function GrabResultsPanel({ requestId, status }: GrabResultsPanelProps) {
     }
   }, [requestId])
 
+  const { openGrabConfirm, grabConfirmModal } = useGrabConfirm(() => void load())
+
   // Load on first render of the panel
   if (data === undefined && !loading) {
     load()
   }
 
-  async function handleResearch() {
-    setResearchBusy(true)
-    setMessage(null)
-    try {
-      const res = await fetch(`/api/requests/${requestId}/grab`, { method: 'POST' })
-      const json = await res.json() as { status?: string; error?: string }
-      if (json.status === 'grabbed') {
-        setMessage('Torrent added to download client.')
-      } else if (json.status === 'not_found') {
-        setMessage('No matching releases found.')
-      } else {
-        setMessage(json.error ?? 'Search failed.')
-      }
-      await load()
-    } finally {
-      setResearchBusy(false)
-    }
+  // Re-Search used to POST straight to the grab route and commit immediately with no chance to
+  // see or veto the pick — now it opens the grab-confirmation modal instead. onGrabbed (passed to
+  // useGrabConfirm above) reloads this panel's candidate table once a grab is actually confirmed.
+  function handleResearch() {
+    openGrabConfirm({ tmdbId, type: mediaType, title, year, posterPath, overview })
   }
 
   async function handleOverride(candidate: ScoredCandidate) {
@@ -171,6 +167,7 @@ function GrabResultsPanel({ requestId, status }: GrabResultsPanelProps) {
   return (
     <tr>
       <td colSpan={8} className="bg-card border-b border-border px-4 pb-4 pt-3">
+        {grabConfirmModal}
         <div className="flex items-center justify-between mb-3">
           <span className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
             Grab Results
@@ -183,10 +180,10 @@ function GrabResultsPanel({ requestId, status }: GrabResultsPanelProps) {
           {canSearch && (
             <button
               onClick={handleResearch}
-              disabled={researchBusy || loading}
+              disabled={loading}
               className="bg-zinc-700 hover:bg-zinc-600 text-white rounded-lg px-3 py-1 text-xs font-medium transition-colors disabled:opacity-50"
             >
-              {researchBusy ? 'Searching…' : 'Re-Search'}
+              Re-Search
             </button>
           )}
         </div>
@@ -248,7 +245,7 @@ function GrabResultsPanel({ requestId, status }: GrabResultsPanelProps) {
                           {!c.selected && canSearch && (
                             <button
                               onClick={() => handleOverride(c)}
-                              disabled={isOverriding || researchBusy}
+                              disabled={isOverriding}
                               className="bg-zinc-700 hover:bg-zinc-600 text-white rounded px-2 py-0.5 text-xs transition-colors disabled:opacity-50"
                             >
                               {isOverriding ? '…' : 'Override'}
@@ -279,7 +276,12 @@ function PreferredReleasePanel({
   retention,
   language,
   requestId,
+  tmdbId,
   mediaType,
+  title,
+  year,
+  posterPath,
+  overview,
   scopeLabel,
   onApproved,
 }: {
@@ -287,7 +289,12 @@ function PreferredReleasePanel({
   retention: string
   language: string
   requestId: number
-  mediaType: string
+  tmdbId: number
+  mediaType: 'movie' | 'tv'
+  title: string
+  year: number | null
+  posterPath: string | null
+  overview: string | null
   scopeLabel: string | null
   onApproved: (status: RequestStatus) => void
 }) {
@@ -301,6 +308,7 @@ function PreferredReleasePanel({
   const [pickedOverride, setPickedOverride] = useState<TorrentSearchResult | null>(null)
   const [submittingOverride, setSubmittingOverride] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
+  const { openGrabConfirm, grabConfirmModal } = useGrabConfirm(() => onApproved('approved'))
 
   const busy = approvingPick || approvingAuto || submittingOverride
 
@@ -314,6 +322,8 @@ function PreferredReleasePanel({
     } finally { setApprovingPick(false) }
   }
 
+  // No confirmed pick here — approve the request, then open the grab-confirmation modal against
+  // the itemId the server just created, instead of auto-searching and grabbing immediately.
   async function approveAutoSearch() {
     setApprovingAuto(true)
     setMessage(null)
@@ -323,8 +333,15 @@ function PreferredReleasePanel({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ignorePreferred: true }),
       })
-      if (res.ok) onApproved('approved')
-      else setMessage('Approval failed.')
+      const json = await res.json().catch(() => ({})) as { itemId?: number }
+      if (res.ok) {
+        onApproved('approved')
+        if (json.itemId != null) {
+          openGrabConfirm({ itemId: json.itemId, tmdbId, type: mediaType, title, year, posterPath, overview })
+        }
+      } else {
+        setMessage('Approval failed.')
+      }
     } finally { setApprovingAuto(false) }
   }
 
@@ -374,6 +391,7 @@ function PreferredReleasePanel({
   return (
     <tr>
       <td colSpan={8} className="bg-card border-b border-border px-4 pb-4 pt-3">
+        {grabConfirmModal}
         <div className="mb-2 flex items-center gap-3 flex-wrap">
           <span className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
             User&apos;s Selected Release
@@ -741,13 +759,27 @@ function RequestRow({ req, localStatus, expanded, onToggleExpand, onApprove, onD
           retention={req.request_type}
           language={req.language ?? 'any'}
           requestId={req.id}
+          tmdbId={req.tmdb_id}
           mediaType={req.media_type}
+          title={req.title}
+          year={req.year}
+          posterPath={req.poster_path}
+          overview={req.overview}
           scopeLabel={formatScope(req)}
           onApproved={(status) => onApproved(req.id, status)}
         />
       )}
       {expanded && (effectiveStatus === 'approved' || effectiveStatus === 'available') && (
-        <GrabResultsPanel requestId={req.id} status={effectiveStatus} />
+        <GrabResultsPanel
+          requestId={req.id}
+          status={effectiveStatus}
+          tmdbId={req.tmdb_id}
+          mediaType={req.media_type}
+          title={req.title}
+          year={req.year}
+          posterPath={req.poster_path}
+          overview={req.overview}
+        />
       )}
     </>
   )
@@ -767,6 +799,7 @@ export default function AdminRequestsClient({ initialRequests }: AdminRequestsCl
   const [localStatuses, setLocalStatuses] = useState<Record<number, RequestStatus>>({})
   const [busyIds, setBusyIds] = useState<Set<number>>(new Set())
   const [expandedId, setExpandedId] = useState<number | null>(null)
+  const { openGrabConfirm, grabConfirmModal } = useGrabConfirm()
 
   function setBusy(id: number, on: boolean) {
     setBusyIds((prev) => {
@@ -788,8 +821,20 @@ export default function AdminRequestsClient({ initialRequests }: AdminRequestsCl
     setBusy(id, true)
     try {
       const res = await fetch(`/api/requests/${id}/approve`, { method: 'POST' })
+      const json = await res.json().catch(() => ({})) as { itemId?: number }
       if (res.ok) {
         setLocalStatus(id, 'approved')
+        // No preferred release for this request — nothing was auto-grabbed server-side; open the
+        // confirmation modal against the itemId the approve route just created.
+        if (json.itemId != null) {
+          const req = requests.find(r => r.id === id)
+          if (req) {
+            openGrabConfirm({
+              itemId: json.itemId, tmdbId: req.tmdb_id, type: req.media_type,
+              title: req.title, year: req.year, posterPath: req.poster_path, overview: req.overview,
+            })
+          }
+        }
       }
     } finally {
       setBusy(id, false)
@@ -839,6 +884,7 @@ export default function AdminRequestsClient({ initialRequests }: AdminRequestsCl
 
   return (
     <>
+      {grabConfirmModal}
       {/* Filter tabs */}
       <div className="mb-6 flex gap-1 flex-wrap">
         {FILTER_TABS.map((tab) => (

@@ -43,7 +43,8 @@ indexer flags+stats, edition/AKA parsing, voice chat (needs coturn/STUN-TURN), c
 | 4d | Delay profiles | TODO | mining Tier-1; wait N min before grabbing |
 | 4e | Mobile PWA (manifest + SW) | TODO | CLAUDE §13 |
 | 4f | Jellyfin user linking | TODO | CLAUDE §13 |
-| -- | Web Push, torrent-create, piece-map, bandwidth quota, indexer stats/flags, category mapping, edition parsing, TV season upgrades | TODO | remaining backlog |
+| feat4 | Edition/AKA/HC-sub parsing | DONE | 5 new FLAG_PATTERNS (hc, directors_cut, theatrical, remastered, unrated); alternative_titles column + TMDB fetch + grabber AKA fallback |
+| -- | Web Push, torrent-create, piece-map, bandwidth quota, indexer stats/flags, category mapping, TV season upgrades | TODO | remaining backlog |
 | -- | Voice chat (Party) | NEEDS DECISION | WebRTC + coturn STUN/TURN infra; can't build/verify headless |
 | -- | Caddy /api/party/ws idle timeout; 2-browser party test | BLOCKED | need manual off-tailnet cellular test (not headless-doable) |
 
@@ -63,6 +64,15 @@ indexer flags+stats, edition/AKA parsing, voice chat (needs coturn/STUN-TURN), c
   download-to-browse: the hardened `/api/media/match-torrent` route already existed but was unwired;
   added `name` prop + lazy match fetch + "View in library →" link in TorrentDetailPanel overview.
   Full `npm run build` green (53 routes). Version 0.11.1.
+- 2026-07-01: **feat4 DONE (Edition/AKA/HC-sub parsing).** 5 new flags in `FLAG_PATTERNS`
+  (`hc` = HC/HCSUB/KORSUB/RUSUB/HardSub/HardCoded; `directors_cut`/`theatrical`/`remastered`/`unrated`
+  with dot-separator-aware regexes — `extended`/`uncut`/`imax` were already there). `alternative_titles TEXT`
+  additive migration on `monitored_items`; `getAlternativeTitles()` in tmdb.ts; `storeAltTitles()` in
+  monitor.ts. `alternative_titles: string | null` added to `MonitoredItem` type. Approval paths
+  (`approve/route.ts` `fireImmediateGrab`, `auto-approve.ts` void IIFE) now fetch+store TMDB alt titles
+  before firing the grab. Grabber AKA fallback: if primary title search → 0 results AND item has stored
+  alt titles, tries up to 5 alt titles as sequential fallback queries (stops at first non-empty result).
+  Admin custom-format flag hint updated. tsc+eslint clean, `npm run build` green.
 
 ## Progress log
 

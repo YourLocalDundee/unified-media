@@ -557,7 +557,16 @@ export async function getTVDetail(tmdbId: number): Promise<TVDetail> {
         episodeCount: (s.episode_count as number | null) ?? null,
         airDate: (s.air_date as string | null) ?? null,
         posterPath: (s.poster_path as string | null) ?? null,
-      })),
+      }))
+      // Release order, not TMDB's raw array order — some shows number seasons out of broadcast
+      // order (e.g. reordered specials/regional splits). Seasons missing an air date (unaired,
+      // or sparse TMDB data) sort last, tie-broken by season_number.
+      .sort((a, b) => {
+        if (a.airDate && b.airDate) return a.airDate.localeCompare(b.airDate)
+        if (a.airDate) return -1
+        if (b.airDate) return 1
+        return a.seasonNumber - b.seasonNumber
+      }),
   }
 }
 
@@ -638,10 +647,23 @@ export async function getSeasonEpisodeNumbers(tmdbId: number, seasonNumber: numb
 
 export interface SeriesArc {
   id: string                                // episode-group sub-group id (stable per arc)
-  order: number                             // 0-based position within the grouping
+  order: number                             // 0-based position within the grouping — this IS the
+                                             // arc's release/story order (TMDB's official arc set),
+                                             // so arcs are already release-ordered; no extra sort needed.
   name: string                              // e.g. "Impel Down"
   episodeCount: number
-  episodes: { s: number; e: number }[]      // season_number + (absolute) episode_number per episode
+  episodes: ArcEpisode[]
+}
+
+export interface ArcEpisode {
+  s: number   // season_number
+  e: number   // (absolute) episode_number
+  name: string | null
+  airDate: string | null
+  stillPath: string | null
+  overview: string | null
+  runtime: number | null
+  voteAverage: number | null
 }
 
 // In-process cache: arc structure is static, so the 2-step episode-group resolution runs once
@@ -665,14 +687,43 @@ export async function getArcs(tmdbId: number): Promise<SeriesArc[]> {
     if (!arcGroup) { arcCache.set(tmdbId, []); return [] }
 
     const detail = await tmdbFetch<{
-      groups?: { id: string; name: string; order: number; episodes?: { season_number: number; episode_number: number }[] }[]
+      groups?: {
+        id: string
+        name: string
+        order: number
+        episodes?: Array<{
+          season_number: number
+          episode_number: number
+          name?: string | null
+          air_date?: string | null
+          still_path?: string | null
+          overview?: string | null
+          runtime?: number | null
+          vote_average?: number | null
+        }>
+      }[]
     }>(`/tv/episode_group/${arcGroup.id}`)
 
     const arcs: SeriesArc[] = (detail.groups ?? [])
       .map((g) => {
-        const episodes = (g.episodes ?? [])
-          .map((e) => ({ s: e.season_number, e: e.episode_number }))
-          .filter((x) => typeof x.e === 'number' && x.e > 0)
+        // TMDB's episode_group response embeds full episode metadata per grouped episode, so the
+        // arc episode list needs no additional per-season fetch (unlike arcs spanning many seasons,
+        // where fetching each season separately would mean many round trips).
+        // Drop season-0 (specials) episodes — mirrors the `season_number > 0` filter the plain
+        // Seasons list applies below, so a specials-only arc (e.g. Dragon Ball Z "Specials")
+        // disappears the same way a Season 0 card does, instead of surfacing inconsistently here.
+        const episodes: ArcEpisode[] = (g.episodes ?? [])
+          .filter((e) => typeof e.episode_number === 'number' && e.episode_number > 0 && e.season_number > 0)
+          .map((e) => ({
+            s: e.season_number,
+            e: e.episode_number,
+            name: e.name ?? null,
+            airDate: e.air_date ?? null,
+            stillPath: e.still_path ?? null,
+            overview: e.overview ?? null,
+            runtime: e.runtime ?? null,
+            voteAverage: e.vote_average ?? null,
+          }))
         return { id: g.id, order: g.order ?? 0, name: g.name, episodes, episodeCount: episodes.length }
       })
       .filter((g) => g.episodeCount > 0)
@@ -736,6 +787,25 @@ interface TMDBCollectionSearchResult {
 
 interface TMDBCollectionSearchResponse {
   results: TMDBCollectionSearchResult[]
+}
+
+/**
+ * GET /3/{movie|tv}/{id}/alternative_titles
+ * Returns up to 20 unique non-empty alternative/AKA titles, or [] on any failure.
+ * Used to populate monitored_items.alternative_titles so the grabber can search AKA-named releases.
+ */
+export async function getAlternativeTitles(tmdbId: number, type: 'movie' | 'tv'): Promise<string[]> {
+  try {
+    if (type === 'movie') {
+      const data = await tmdbFetch<{ titles?: { title: string }[] }>(`/movie/${tmdbId}/alternative_titles`)
+      return [...new Set((data.titles ?? []).map(t => t.title).filter(Boolean))].slice(0, 20)
+    } else {
+      const data = await tmdbFetch<{ results?: { title: string }[] }>(`/tv/${tmdbId}/alternative_titles`)
+      return [...new Set((data.results ?? []).map(t => t.title).filter(Boolean))].slice(0, 20)
+    }
+  } catch {
+    return []
+  }
 }
 
 /**

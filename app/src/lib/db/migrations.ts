@@ -298,7 +298,9 @@ export function runMigrations(db: Database.Database): void {
 
   // Additive columns for quality_profiles (new system fields)
   const qpCols = [
-    'ALTER TABLE quality_profiles ADD COLUMN upgrade_allowed INTEGER NOT NULL DEFAULT 1',
+    // Default off (2026-07): upgrade-until-cutoff re-grabbing is opt-in for freshly-created DBs;
+    // existing rows are flipped by the one-time monitor_upgrade_defaults_v1 migration below.
+    'ALTER TABLE quality_profiles ADD COLUMN upgrade_allowed INTEGER NOT NULL DEFAULT 0',
     'ALTER TABLE quality_profiles ADD COLUMN cutoff_quality_id INTEGER',
     'ALTER TABLE quality_profiles ADD COLUMN min_format_score INTEGER NOT NULL DEFAULT 0',
     'ALTER TABLE quality_profiles ADD COLUMN cutoff_format_score INTEGER NOT NULL DEFAULT 0',
@@ -430,6 +432,8 @@ export function runMigrations(db: Database.Database): void {
     "ALTER TABLE media_requests ADD COLUMN request_method TEXT NOT NULL DEFAULT 'auto-pick'",
     // PIECE 4: per-request language constraint ('any' = no constraint; ISO 639-1 code = strict filter)
     "ALTER TABLE media_requests ADD COLUMN language TEXT NOT NULL DEFAULT 'any'",
+    // Dub/sub audio preference: 'any' | 'dub' | 'sub'. Soft preference (see grabber.ts audioModePenalty).
+    "ALTER TABLE media_requests ADD COLUMN audio_mode TEXT NOT NULL DEFAULT 'any'",
   ]
   for (const sql of requestCols) {
     try { db.exec(sql) } catch { /* already exists */ }
@@ -456,7 +460,7 @@ export function runMigrations(db: Database.Database): void {
         'id', 'user_id', 'tmdb_id', 'media_type', 'title', 'year',
         'poster_path', 'overview', 'seasons', 'status', 'created_at', 'updated_at',
         'auto_approved', 'auto_delete_at', 'available_at', 'release_date', 'request_type',
-        'preferred_release', 'request_method', 'language',
+        'preferred_release', 'request_method', 'language', 'audio_mode',
         ...scopeCols,
       ].join(', ')
 
@@ -468,6 +472,7 @@ export function runMigrations(db: Database.Database): void {
         'preferred_release',
         "COALESCE(request_method, 'auto-pick')",
         "COALESCE(language, 'any')",
+        "COALESCE(audio_mode, 'any')",
         ...scopeCols,
       ].join(', ')
 
@@ -496,6 +501,7 @@ export function runMigrations(db: Database.Database): void {
             preferred_release TEXT,
             request_method   TEXT NOT NULL DEFAULT 'auto-pick',
             language         TEXT NOT NULL DEFAULT 'any',
+            audio_mode       TEXT NOT NULL DEFAULT 'any',
             scope_type       TEXT DEFAULT 'full',
             scope_seasons    TEXT,
             scope_episodes   TEXT,
@@ -758,10 +764,49 @@ export function runMigrations(db: Database.Database): void {
     // quality_profiles — delay before a release is eligible for auto-grab.
     // 0 = no delay (grab immediately). A release first seen less than delay_minutes minutes ago is skipped.
     'ALTER TABLE quality_profiles ADD COLUMN delay_minutes INTEGER NOT NULL DEFAULT 0',
+    // monitored_items — TMDB alternative/AKA titles for grabber fallback searches. JSON string[].
+    // Populated by approval paths after createItem; used by grabber.ts when primary title returns 0 results.
+    'ALTER TABLE monitored_items ADD COLUMN alternative_titles TEXT',
+    // Dub/sub audio preference ('any' | 'dub' | 'sub'), mirrors the language column on each table.
+    // Soft preference only — see audioModePenalty in grabber.ts; never hard-rejects a release.
+    "ALTER TABLE monitored_items ADD COLUMN audio_mode TEXT NOT NULL DEFAULT 'any'",
+    "ALTER TABLE quality_profiles ADD COLUMN audio_mode TEXT NOT NULL DEFAULT 'any'",
   ]
   for (const sql of addCols) {
     try { db.exec(sql) } catch { /* column already exists — safe to ignore */ }
   }
+
+  // --------------------------------------------------------------------------
+  // One-time flip (2026-07): monitor_future / upgrade_allowed now default OFF for new rows
+  // (see qpCols/SeriesScopeModal/import-lists above). This flips EXISTING rows to match, once —
+  // guarded by an app_settings marker so it never re-runs and stomps a user's later manual
+  // re-enable. Runs after addCols so every touched column is guaranteed to exist.
+  // --------------------------------------------------------------------------
+  {
+    const already = db
+      .prepare("SELECT 1 FROM app_settings WHERE key = 'monitor_upgrade_defaults_v1'")
+      .get()
+    if (!already) {
+      db.exec("UPDATE quality_profiles SET upgrade_allowed = 0")
+      db.exec("UPDATE monitored_items SET monitor_future = 0")
+      db.exec("UPDATE media_requests SET monitor_future = 0")
+      db.prepare("INSERT INTO app_settings (key, value) VALUES ('monitor_upgrade_defaults_v1', '1')").run()
+    }
+  }
+
+  // --------------------------------------------------------------------------
+  // Per-show Arcs-vs-Seasons display override (2026-07). A show with TMDB story-arc grouping
+  // (episode_groups) defaults to the Arcs UI; this lets an admin force a specific show back to the
+  // plain Seasons UI instead when that reads better (e.g. a show whose "arcs" are a poor fit).
+  // No row = default (Arcs when TMDB has grouping data, Seasons otherwise) — see getDisplayMode().
+  // --------------------------------------------------------------------------
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS show_display_prefs (
+      tmdb_id    INTEGER PRIMARY KEY,
+      mode       TEXT NOT NULL CHECK(mode IN ('arcs', 'seasons')),
+      updated_at INTEGER NOT NULL
+    );
+  `)
 
   // --------------------------------------------------------------------------
   // D3 — widen monitored_items.status CHECK to include 'grabbing' (atomic claim
@@ -859,7 +904,8 @@ export function runMigrations(db: Database.Database): void {
             monitor_future     INTEGER DEFAULT 0,
             language           TEXT NOT NULL DEFAULT 'any',
             scope_label        TEXT,
-            scope_key          TEXT NOT NULL DEFAULT ''
+            scope_key          TEXT NOT NULL DEFAULT '',
+            audio_mode         TEXT NOT NULL DEFAULT 'any'
           )
         `)
         // Copy only columns present in BOTH tables so a column added by a later migration (or one

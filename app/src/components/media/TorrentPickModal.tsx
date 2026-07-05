@@ -112,6 +112,12 @@ const LANGUAGE_OPTIONS = [
   { value: 'ru',  label: 'Russian' },
 ]
 
+const AUDIO_MODE_OPTIONS = [
+  { value: 'any', label: 'Any audio' },
+  { value: 'dub', label: 'Dub' },
+  { value: 'sub', label: 'Sub' },
+]
+
 // ---------------------------------------------------------------------------
 // Modal
 // ---------------------------------------------------------------------------
@@ -125,14 +131,28 @@ interface Props {
   overview: string | null
   isOldContent: boolean
   defaultLanguage?: string
+  defaultAudioMode?: string
   defaultRetention?: string
   onClose: () => void
   onPicked: (status: 'approved' | 'pending', type: DurationChoice) => void
+  // When supplied, handleSubmit calls this INSTEAD of its own POST /api/requests. Needed because
+  // by the time "Search manually" is reachable from the grab-confirmation flow, a media_requests
+  // row already exists for this (user, tmdb_id, media_type) — the internal POST would 409 and
+  // onPicked('pending') would fire as a silent no-op with nothing actually grabbed. The override
+  // routes the pick through POST /api/grab/confirm instead. Rejecting leaves the modal open with
+  // submitError shown; resolving closes the modal (mirrors the internal-fetch success path).
+  onSubmitOverride?: (
+    picked: TorrentSearchResult,
+    duration: DurationChoice,
+    language: string,
+    audioMode: string,
+  ) => Promise<void>
 }
 
 export function TorrentPickModal({
   title, year, tmdbId, mediaType, posterPath, overview,
-  isOldContent, defaultLanguage = 'any', defaultRetention, onClose, onPicked,
+  isOldContent, defaultLanguage = 'any', defaultAudioMode = 'any', defaultRetention, onClose, onPicked,
+  onSubmitOverride,
 }: Props) {
   const [query, setQuery] = useState(title)
   const [results, setResults] = useState<TorrentSearchResult[]>([])
@@ -151,6 +171,7 @@ export function TorrentPickModal({
   )
 
   const [language, setLanguage] = useState(defaultLanguage)
+  const [audioMode, setAudioMode] = useState(defaultAudioMode)
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
 
@@ -289,6 +310,12 @@ export function TorrentPickModal({
     setSubmitError(null)
 
     try {
+      if (onSubmitOverride) {
+        await onSubmitOverride(picked, duration, language, audioMode)
+        onClose()
+        return
+      }
+
       const res = await fetch('/api/requests', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -302,6 +329,7 @@ export function TorrentPickModal({
           requestType: duration,
           requestMethod: 'interactive',
           language,
+          audioMode,
           pickedTorrent: {
             magnetUrl: picked.magnetUrl,
             downloadUrl: picked.downloadUrl,
@@ -511,6 +539,7 @@ export function TorrentPickModal({
                   <th className="py-2 px-2 text-right text-xs font-medium text-zinc-500">Seeds</th>
                   <th className="py-2 px-2 text-right text-xs font-medium text-zinc-500 hidden md:table-cell">Size</th>
                   <th className="py-2 px-2 text-right text-xs font-medium text-zinc-500 hidden lg:table-cell">Lang</th>
+                  <th className="py-2 px-2 text-right text-xs font-medium text-zinc-500 hidden lg:table-cell">Audio</th>
                   <th className="py-2 px-2 text-right text-xs font-medium text-zinc-500 hidden lg:table-cell">Age</th>
                   <th className="py-2 pl-2 pr-4 text-right text-xs font-medium text-zinc-500">Pick</th>
                 </tr>
@@ -572,6 +601,19 @@ export function TorrentPickModal({
                       {/* Language badge */}
                       <td className="py-2.5 px-2 text-right hidden lg:table-cell">
                         {(() => { const l = detectLang(r.title); return l ? <span className="text-[10px] font-medium bg-zinc-700 text-zinc-300 rounded px-1">{l}</span> : <span className="text-[10px] text-zinc-700">—</span> })()}
+                      </td>
+
+                      {/* Audio (dub/sub) badge — soft preference is scored server-side for auto-pick,
+                          but interactive picks bypass scoring, so this is the visual cue that lets
+                          the admin verify a release actually matches before picking it. */}
+                      <td className="py-2.5 px-2 text-right hidden lg:table-cell">
+                        {r.audioMode ? (
+                          <span className={`text-[10px] font-medium rounded px-1 ${r.audioMode === 'dub' ? 'bg-sky-900/60 text-sky-300' : 'bg-amber-900/50 text-amber-300'}`}>
+                            {r.audioMode === 'dub' ? 'Dub' : 'Sub'}
+                          </span>
+                        ) : (
+                          <span className="text-[10px] text-zinc-700">—</span>
+                        )}
                       </td>
 
                       {/* Age */}
@@ -653,6 +695,21 @@ export function TorrentPickModal({
                   ))}
                 </select>
               </div>
+
+              {mediaType === 'tv' && (
+                <div className="flex gap-2 items-center">
+                  <span className="text-xs text-zinc-500">Audio:</span>
+                  <select
+                    value={audioMode}
+                    onChange={e => setAudioMode(e.target.value)}
+                    className="rounded px-1.5 py-0.5 text-xs bg-zinc-900 border border-zinc-700 text-zinc-300 focus:outline-none"
+                  >
+                    {AUDIO_MODE_OPTIONS.map(opt => (
+                      <option key={opt.value} value={opt.value}>{opt.label}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
 
               <p className="text-[10px] text-zinc-600">Interactive picks always go to admin queue regardless of retention.</p>
             </div>

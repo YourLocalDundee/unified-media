@@ -45,11 +45,21 @@ export interface MonitoredItem {
   // A6-02 — deterministic dedup discriminator; part of the UNIQUE(tmdb_id,type,scope_key) index.
   // Computed by computeScopeKey() from type + scope_*; never null.
   scope_key: string
+  // Human arc/saga name for a TMDB episode-group ("arc") grab, e.g. "Impel Down". Null for plain
+  // season/full/movie scopes. Set by /api/grab/season for arc grabs; distinguishes an arc-pack
+  // item (bespoke range-pack search) from a plain multi-episode scope_type='episodes' item.
+  scope_label: string | null
   // 1 = continue monitoring and grabbing new episodes as they release
   monitor_future: number | null  // 0 | 1
   // ISO 639-1 language code, or 'any' for no constraint. Passed to grabItem so the
   // background grab cron honors the language chosen at request/grab time.
   language: string
+  // 'any' | 'dub' | 'sub' — soft audio-track preference, passed to grabItem alongside language.
+  audio_mode: string
+  // JSON-encoded string[] — TMDB alternative/AKA titles. Populated after item creation by
+  // the approval paths; used by grabber.ts as fallback search queries when the primary title
+  // returns no indexer results (e.g. foreign-primary-title item vs. English-titled release).
+  alternative_titles: string | null
 }
 
 export interface QualityProfile {
@@ -99,4 +109,7 @@ export interface ReleaseMeta {
   // ISO 639-1 language code detected from explicit tags (e.g. 'fr', 'de'), or null if untagged.
   // Absence of a tag is common for English releases and is treated as unknown, not as English.
   language: string | null
+  // 'dub' | 'sub' detected from explicit audio-track tags (Dubbed/Dual Audio vs Subbed/VOSTFR),
+  // or null if untagged. Independent of `language` — see parseAudioMode in parser.ts.
+  audioMode: 'dub' | 'sub' | null
 }

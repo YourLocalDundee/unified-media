@@ -23,6 +23,9 @@ export interface TorrentSearchResult {
   // Hard-gate failures (feature 1) — informational here. The interactive picker still lets the
   // admin override-grab a gated release; this just shows WHY auto-pick would have skipped it.
   gates: GateReason[]
+  // Detected dub/sub tag (null = untagged) — display-only badge for the interactive picker, since
+  // that path bypasses audioModePenalty scoring entirely (see grabber.ts).
+  audioMode: 'dub' | 'sub' | null
 }
 
 export async function GET(req: NextRequest) {
@@ -45,7 +48,7 @@ export async function GET(req: NextRequest) {
       const meta = parseReleaseName(r.title)
       // Empty conditions = no hard rejects; score reflects resolution/source bonuses only
       const raw = scoreRelease(meta, [])
-      return { ...r, score: raw ?? 0, gates: evaluateGates(r, gateConfig, blocked) }
+      return { ...r, score: raw ?? 0, gates: evaluateGates(r, gateConfig, blocked), audioMode: meta.audioMode }
     })
     .sort((a, b) => b.seeders - a.seeders)  // default: most seeded first
 

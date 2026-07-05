@@ -8,7 +8,7 @@
 import 'server-only'
 import { getDb } from '@/lib/db/index'
 import { getRequestById, updateRequestStatus } from './monitor'
-import { createItem } from '@/lib/automation/monitor'
+import { createItem, getItemsByTmdbId } from '@/lib/automation/monitor'
 
 // Hard limits for concurrent auto-approved quick requests per user, per media type.
 // TV gets 2 because multi-season requests are common and shouldn't block each other.
@@ -25,28 +25,35 @@ export function getActiveAutoApprovedCount(userId: string, mediaType: 'movie' | 
   return row.cnt
 }
 
-// Attempts to auto-approve a newly created quick request. Returns true if approved, false otherwise.
-// The caller (POST /api/requests) is responsible for deleting the row if this returns false.
-export function tryAutoApprove(requestId: number): boolean {
+// Attempts to auto-approve a newly created quick request. Returns the created monitored_item's id
+// if approved (the grab-confirmation flow opens against it), or null otherwise. The caller
+// (POST /api/requests) is responsible for deleting the row if this returns null.
+//
+// Does NOT grab — it only creates the 'wanted' item and marks the request approved. Grabbing used
+// to fire immediately from here (fire-and-forget); that's now the user's job via the grab
+// confirmation modal (GET /api/grab/candidates + POST /api/grab/confirm), which reuses the exact
+// same search/score/gate pipeline. If the user cancels, the item just stays 'wanted' and the
+// 5-minute cron picks it up later — identical to today's behavior when a grab attempt finds nothing.
+export function tryAutoApprove(requestId: number): number | null {
   const request = getRequestById(requestId)
-  if (!request) return false
+  if (!request) return null
 
   const mediaType = request.media_type as 'movie' | 'tv'
 
-  // Only quick+auto-pick requests grab immediately; anything else goes to admin queue.
-  if (request.request_type !== 'quick') return false
-  if (request.request_method !== 'auto-pick') return false
+  // Only quick+auto-pick requests auto-approve; anything else goes to admin queue.
+  if (request.request_type !== 'quick') return null
+  if (request.request_method !== 'auto-pick') return null
 
   const currentYear = new Date().getFullYear()
 
   // Current-year content is excluded — those titles are still in active release windows
   // and auto-approving them could create rights/availability issues.
-  if (!request.year || request.year >= currentYear) return false
+  if (!request.year || request.year >= currentYear) return null
 
   // Check concurrent limit
   const active = getActiveAutoApprovedCount(request.user_id, mediaType)
   const limit = LIMITS[mediaType]
-  if (active >= limit) return false
+  if (active >= limit) return null
 
   // Push the item to the automation layer (Radarr/Sonarr equivalent).
   // Scope fields are forwarded from the request so the grabber targets exactly what the user requested.
@@ -60,8 +67,9 @@ export function tryAutoApprove(requestId: number): boolean {
     ? raw.quality_profile_id as number
     : 1
 
+  let itemId: number
   try {
-    createItem({
+    const item = createItem({
       tmdb_id: request.tmdb_id,
       tvdb_id: undefined,
       type: mediaType === 'movie' ? 'movie' : 'tv',
@@ -74,37 +82,40 @@ export function tryAutoApprove(requestId: number): boolean {
       scope_episodes: scopeEpisodesRaw ? (JSON.parse(scopeEpisodesRaw) as Array<{s:number;e:number}>) : null,
       monitor_future: Boolean(monitorFuture),
       language: request.language ?? 'any',
+      audio_mode: request.audio_mode ?? 'any',
     })
+    itemId = item.id
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
-    // 'already exists' means a previous request already queued it — not an error.
-    // Any other failure is unexpected; bail out so the request isn't falsely marked approved.
-    if (!msg.toLowerCase().includes('already exists')) return false
+    // 'already exists' means a previous request already queued it — not an error, but we still
+    // need the existing item's id for the confirmation modal to open against.
+    if (!msg.toLowerCase().includes('already exists')) return null
+    const existing = getItemsByTmdbId(request.tmdb_id ?? -1).find(i => i.type === mediaType)
+    if (!existing) return null
+    itemId = existing.id
   }
 
   updateRequestStatus(requestId, 'approved')
   // auto_approved flag is stored separately from status so the UI can show "auto" vs "admin" badge.
   getDb().prepare('UPDATE media_requests SET auto_approved = 1 WHERE id = ?').run(requestId)
 
-  // Fire immediate grab — non-blocking, cron retries on failure.
-  // Capture language here so the IIFE doesn't close over a mutable variable.
-  const grabLanguage = request.language ?? 'any'
+  // Prefetch alt/AKA titles in the background (non-fatal, no grab) so the AKA fallback is ready
+  // whenever the grab actually happens — either the user confirming now, or the cron retrying
+  // later if they cancel. Fire-and-forget: enrichment only, never blocks the response.
+  const grabTmdbId = request.tmdb_id
+  const grabMediaType = mediaType
   void (async () => {
     try {
-      const { getAllItems } = await import('@/lib/automation/monitor')
-      const { grabItem } = await import('@/lib/automation/grabber')
-      const items = getAllItems()
-      const item = items.find(
-        i => i.tmdb_id === request.tmdb_id && i.type === (request.media_type === 'movie' ? 'movie' : 'tv')
-      )
-      if (item && item.status === 'wanted') {
-        const result = await grabItem(item, { language: grabLanguage })
-        console.log(`[auto-approve] Immediate grab for "${item.title}": ${result}`)
-      }
+      const { getItemById, storeAltTitles } = await import('@/lib/automation/monitor')
+      const item = getItemById(itemId)
+      if (!item || item.alternative_titles || !grabTmdbId) return
+      const { getAlternativeTitles } = await import('@/lib/media-server/tmdb')
+      const altTitles = await getAlternativeTitles(grabTmdbId, grabMediaType)
+      if (altTitles.length > 0) storeAltTitles(itemId, altTitles)
     } catch (err) {
-      console.warn('[auto-approve] Immediate grab failed (cron will retry):', err)
+      console.warn('[auto-approve] Alt-title prefetch failed (non-fatal):', err)
     }
   })()
 
-  return true
+  return itemId
 }

@@ -5,6 +5,7 @@ import type { RequestStatus, RequestType } from '@/lib/requests/types'
 import { TorrentPickModal } from './TorrentPickModal'
 import { SeriesScopeModal } from './SeriesScopeModal'
 import type { SeriesScope } from './SeriesScopeModal'
+import { useGrabConfirm } from './GrabConfirmModal'
 
 interface Props {
   tmdbId: number
@@ -33,6 +34,14 @@ export const LANGUAGE_OPTIONS = [
   { value: 'zh',  label: 'Chinese' },
   { value: 'ko',  label: 'Korean' },
   { value: 'ru',  label: 'Russian' },
+]
+
+// Soft preference (never hard-rejects): de-prioritizes a release whose title explicitly tags the
+// opposite audio track, without punishing an untagged release. See audioModePenalty in grabber.ts.
+export const AUDIO_MODE_OPTIONS = [
+  { value: 'any', label: 'Any audio' },
+  { value: 'dub', label: 'Dub (dubbed audio)' },
+  { value: 'sub', label: 'Sub (subtitled, original audio)' },
 ]
 
 const BADGE_NORMAL: Record<RequestStatus, { label: string; className: string }> = {
@@ -74,8 +83,10 @@ export function RequestOptions({
   // DIMENSION 1 — Retention: default to 48hr for old content, longterm for new
   const [retention, setRetention] = useState<'quick' | 'longterm'>(isOldContent ? 'quick' : 'longterm')
   const [language, setLanguage] = useState('any')
+  const [audioMode, setAudioMode] = useState('any')
   const [qualityProfileId, setQualityProfileId] = useState<number | null>(null)
   const [profiles, setProfiles] = useState<Array<{ id: number; name: string; user_id: string | null }>>([])
+  const { openGrabConfirm, grabConfirmModal } = useGrabConfirm()
 
   useEffect(() => {
     fetch('/api/automation/profiles')
@@ -106,6 +117,7 @@ export function RequestOptions({
           requestType: retention,
           requestMethod: 'auto-pick',
           language,
+          audioMode,
           quality_profile_id: qualityProfileId,
           // scope fields — only meaningful for tv; movies default to 'movie' server-side
           scopeType: scope?.scopeType,
@@ -129,10 +141,15 @@ export function RequestOptions({
         throw new Error(data.error ?? `HTTP ${res.status}`)
       }
 
-      const data = await res.json() as { status?: string }
+      const data = await res.json() as { status?: string; itemId?: number }
       setCurrentStatus((data.status as RequestStatus) ?? 'pending')
       setCurrentType(retention)
       setUiState('idle')
+      // Quick+auto-pick created a 'wanted' item but did NOT grab it — open the confirmation
+      // modal so the user picks (or vetoes) the release instead of it firing automatically.
+      if (data.itemId != null) {
+        openGrabConfirm({ itemId: data.itemId, tmdbId, type: mediaType, title, year, posterPath, overview })
+      }
     } catch (err) {
       setUiState('error')
       setErrorMsg(err instanceof Error ? err.message : String(err))
@@ -182,6 +199,7 @@ export function RequestOptions({
 
   return (
     <>
+      {grabConfirmModal}
       {uiState === 'scoping' && (
         <SeriesScopeModal
           tmdbId={tmdbId}
@@ -204,6 +222,7 @@ export function RequestOptions({
           isOldContent={isOldContent}
           defaultRetention={retention}
           defaultLanguage={language}
+          defaultAudioMode={audioMode}
           onClose={() => setUiState('idle')}
           onPicked={handlePickedTorrent}
         />
@@ -280,6 +299,23 @@ export function RequestOptions({
               className="rounded px-1.5 py-0.5 text-[10px] bg-zinc-900 border border-zinc-700 text-zinc-300 focus:outline-none"
             >
               {LANGUAGE_OPTIONS.map(opt => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        {/* Audio (dub/sub) — non-compact, TV only; dub/sub is a scene-release release axis that
+            doesn't apply to the movie search path. */}
+        {!compact && mediaType === 'tv' && (
+          <div className="flex items-center gap-1.5">
+            <span className="text-[10px] text-zinc-500">Audio:</span>
+            <select
+              value={audioMode}
+              onChange={e => setAudioMode(e.target.value)}
+              className="rounded px-1.5 py-0.5 text-[10px] bg-zinc-900 border border-zinc-700 text-zinc-300 focus:outline-none"
+            >
+              {AUDIO_MODE_OPTIONS.map(opt => (
                 <option key={opt.value} value={opt.value}>{opt.label}</option>
               ))}
             </select>

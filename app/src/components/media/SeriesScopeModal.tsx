@@ -125,7 +125,8 @@ export function SeriesScopeModal({ tmdbId, title, onConfirm, onClose }: Props) {
   useFocusTrap(dialogRef, true, onClose)
 
   const [scopeType, setScopeType] = useState<SeriesScopeType>('full')
-  const [monitorFuture, setMonitorFuture] = useState(true)
+  // Default off (2026-07): monitoring future episodes is opt-in, not opt-out.
+  const [monitorFuture, setMonitorFuture] = useState(false)
 
   // Season list state
   const [seasons, setSeasons] = useState<SeasonInfo[]>([])

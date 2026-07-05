@@ -31,6 +31,9 @@ export interface NativeRequest {
   request_method: RequestMethod
   // ISO 639-1 language code or 'any'. Hard constraint on the auto-pick path; 'any' disables it.
   language: string
+  // 'any' | 'dub' | 'sub'. Soft preference on the auto-pick path (de-prioritizes a mismatch,
+  // never hard-rejects) — see audioModePenalty in grabber.ts.
+  audio_mode: string
   // SQLite has no boolean — 0/1 integer; truthy check works normally in JS.
   auto_approved: number
   // Unix ms timestamp; null for longterm requests that are never auto-deleted.

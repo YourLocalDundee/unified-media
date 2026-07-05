@@ -5,29 +5,10 @@ import { checkRateLimit } from '@/lib/rate-limit'
 import { getClientIp } from '@/lib/client-ip'
 import { getRequestById, updateRequestStatus } from '@/lib/requests/monitor'
 import { createItem } from '@/lib/automation/monitor'
+import { resolveMonitoredItemForRequest } from '@/lib/automation/grab-results'
 import { getDb } from '@/lib/db/index'
 
 export const dynamic = 'force-dynamic'
-
-// Fire and forget — do not await. The 15-min cron is the safety net.
-function fireImmediateGrab(tmdbId: number, mediaType: string): void {
-  void (async () => {
-    try {
-      const { getAllItems } = await import('@/lib/automation/monitor')
-      const { grabItem } = await import('@/lib/automation/grabber')
-      const items = getAllItems()
-      const item = items.find(
-        i => i.tmdb_id === tmdbId && i.type === (mediaType === 'movie' ? 'movie' : 'tv')
-      )
-      if (item && item.status === 'wanted') {
-        const result = await grabItem(item)
-        console.log(`[approve] Immediate grab for "${item.title}": ${result}`)
-      }
-    } catch (err) {
-      console.warn('[approve] Immediate grab failed (cron will retry):', err)
-    }
-  })()
-}
 
 // Grab a specific release that the user pre-selected in the torrent picker.
 function firePreferredGrab(
@@ -172,24 +153,29 @@ export async function POST(
 
   // Read scope + quality profile fields from the request row
   const scopeRow = getDb()
-    .prepare('SELECT scope_type, scope_seasons, scope_episodes, monitor_future, quality_profile_id FROM media_requests WHERE id = ?')
+    .prepare('SELECT scope_type, scope_seasons, scope_episodes, monitor_future, quality_profile_id, language, audio_mode FROM media_requests WHERE id = ?')
     .get(id) as {
       scope_type: string | null
       scope_seasons: string | null
       scope_episodes: string | null
       monitor_future: number | null
       quality_profile_id: number | null
+      language: string | null
+      audio_mode: string | null
     } | undefined
 
   const qualityProfileId =
     typeof scopeRow?.quality_profile_id === 'number' && scopeRow.quality_profile_id > 0
       ? scopeRow.quality_profile_id
       : 1
+  const language = scopeRow?.language?.trim() || 'any'
+  const audioMode = scopeRow?.audio_mode?.trim() || 'any'
 
   // Create the monitored_item so the cron loop can find it.
   // Scope and quality profile are forwarded from what the user chose at request time.
+  let itemId: number | null = null
   try {
-    createItem({
+    const item = createItem({
       tmdb_id: request.tmdb_id,
       tvdb_id: undefined,
       type: request.media_type === 'movie' ? 'movie' : 'tv',
@@ -201,12 +187,17 @@ export async function POST(
       scope_seasons: scopeRow?.scope_seasons ? (JSON.parse(scopeRow.scope_seasons) as number[]) : null,
       scope_episodes: scopeRow?.scope_episodes ? (JSON.parse(scopeRow.scope_episodes) as Array<{s:number;e:number}>) : null,
       monitor_future: Boolean(scopeRow?.monitor_future),
+      language,
+      audio_mode: audioMode,
     })
+    itemId = item.id
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     if (!message.toLowerCase().includes('already exists')) {
       return NextResponse.json({ error: 'Failed to queue item' }, { status: 500 })
     }
+    // Already exists — resolve it so the response can still carry an itemId for the confirmation modal.
+    itemId = resolveMonitoredItemForRequest(request.tmdb_id, request.media_type as 'movie' | 'tv')?.id ?? null
   }
 
   updateRequestStatus(id, 'approved')
@@ -233,20 +224,24 @@ export async function POST(
       })()
     : null
 
+  // "Approve (use pick)" and the admin's own "Pick different release" override are already a
+  // confirmed choice (made via the interactive picker) — grab immediately, same as before.
+  // "Approve (auto-search)" / plain "Approve" with no preferred release has no confirmed pick, so
+  // it no longer auto-searches-and-grabs here — the client opens the grab-confirmation modal
+  // against `itemId` instead.
+  let needsConfirm = false
   if (body.overrideRelease) {
-    // Admin picked a different specific release — bypass the user's pick
     firePreferredGrab(request.tmdb_id, request.media_type, qualityProfileId, body.overrideRelease)
   } else if (!body.ignorePreferred && preferred) {
-    // Grab the specific release the user picked — non-blocking
     firePreferredGrab(request.tmdb_id, request.media_type, qualityProfileId, preferred)
   } else {
-    // No pre-selection or admin chose to ignore it — auto-search and grab best result
-    fireImmediateGrab(request.tmdb_id, request.media_type)
+    needsConfirm = true
   }
 
   const updated = getRequestById(id)
   return NextResponse.json({
     ...updated,
     preferredRelease: preferred ?? null,
+    ...(needsConfirm ? { itemId } : {}),
   })
 }

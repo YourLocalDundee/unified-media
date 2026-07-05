@@ -5,11 +5,16 @@
  * plain TV season OR a TMDB story arc (Bug 7), depending on which props are passed.
  *
  * Three actions in the modal:
- *   1. "Grab pack"      — POST /api/grab/season mode:auto → one-shot season/arc pack search.
+ *   1. "Grab pack"      — POST /api/grab/season mode:auto → creates the 'wanted' item and opens
+ *      GrabConfirmModal(itemId), which does the actual pack search and lets the admin confirm,
+ *      walk to the next best, or drop to the interactive picker. Nothing is grabbed by this click
+ *      alone — see the route's doc comment.
  *   2. "Choose release" — admin interactive pick: searches /api/torrent-search (FULL candidate set,
  *      zero hard rejects) and grabs the chosen release via the SAME enqueue path (override mode).
- *   3. "Grab episode by episode" (fallback when no pack) — mode:episodes fans out one wanted item
- *      per episode for the 5-min grab cron. These are SCHEDULED for search, not downloading yet.
+ *   3. "Grab episode by episode" — mode:episodes fans out one wanted item per episode for the
+ *      5-min grab cron. These are SCHEDULED for search, not downloading yet (covering packs found
+ *      for this scope ARE grabbed immediately — a bulk fan-out action, no single release to
+ *      confirm, so it's untouched by grab-confirmation).
  *
  * Rendered only when the viewer is an admin (the parent gates on session.role).
  */
@@ -18,7 +23,8 @@ import { useEffect, useRef, useState } from 'react'
 import { Download, Loader2, X, Check, Search } from 'lucide-react'
 import { ModalPortal } from '@/components/ui/ModalPortal'
 import { useFocusTrap } from '@/hooks/useFocusTrap'
-import { LANGUAGE_OPTIONS } from './RequestOptions'
+import { LANGUAGE_OPTIONS, AUDIO_MODE_OPTIONS } from './RequestOptions'
+import { useGrabConfirm } from './GrabConfirmModal'
 import { formatBytes } from '@/lib/utils'
 
 interface ArcScope {
@@ -53,6 +59,8 @@ interface Candidate {
   // Hard-gate failures from the search API (feature 1). Shown as badges; the row stays grab-able
   // because this is the override surface.
   gates?: string[]
+  // Detected dub/sub tag (null/undefined = untagged) — server-computed, see torrent-search/route.ts.
+  audioMode?: 'dub' | 'sub' | null
 }
 
 // Client-side labels for gate reasons (mirrors GATE_REASON_LABELS in lib/automation/gates.ts;
@@ -64,7 +72,7 @@ const GATE_LABELS: Record<string, string> = {
   oversize: 'oversize',
 }
 
-type UIState = 'idle' | 'searching' | 'no_pack' | 'grabbed' | 'queuing' | 'queued' | 'choosing' | 'error'
+type UIState = 'idle' | 'searching' | 'grabbed' | 'queuing' | 'queued' | 'choosing' | 'error'
 
 // Live releases first, then by score. Everything is shown (dead included) and every row is grab-able.
 function sortCandidates(list: Candidate[]): Candidate[] {
@@ -89,11 +97,12 @@ function dedupeByInfoHash(list: Candidate[]): Candidate[] {
 export function SeasonGrabControl({ tmdbId, title, year, seasonNumber, seasonName, episodeCount, arc }: Props) {
   const [open, setOpen] = useState(false)
   const [language, setLanguage] = useState('en')
+  const [audioMode, setAudioMode] = useState('any')
   const [profiles, setProfiles] = useState<QualityProfile[]>([])
   const [profileId, setProfileId] = useState<number>(1)
   const [ui, setUi] = useState<UIState>('idle')
   const [msg, setMsg] = useState('')
-  const [foundEpisodeCount, setFoundEpisodeCount] = useState<number>(episodeCount ?? arc?.episodes.length ?? 0)
+  const foundEpisodeCount = episodeCount ?? arc?.episodes.length ?? 0
   const [candidates, setCandidates] = useState<Candidate[]>([])
   const [grabbingKey, setGrabbingKey] = useState<string | null>(null)
   // Manual override search inside the chooser: a second, user-typed query against the same indexer path.
@@ -106,6 +115,8 @@ export function SeasonGrabControl({ tmdbId, title, year, seasonNumber, seasonNam
 
   const dialogRef = useRef<HTMLDivElement>(null)
   useFocusTrap(dialogRef, open, () => setOpen(false))
+
+  const { openGrabConfirm, grabConfirmModal } = useGrabConfirm()
 
   useEffect(() => {
     if (!open || profiles.length > 0) return
@@ -150,13 +161,14 @@ export function SeasonGrabControl({ tmdbId, title, year, seasonNumber, seasonNam
     const res = await fetch('/api/grab/season', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ tmdbId, title, year, language, qualityProfileId: profileId, ...scopeBody(), ...extra }),
+      body: JSON.stringify({ tmdbId, title, year, language, audioMode, qualityProfileId: profileId, ...scopeBody(), ...extra }),
     })
     const data = await res.json().catch(() => ({})) as {
       result?: string; error?: string; episodeCount?: number
       queued?: number; failed?: number; total?: number
       packsGrabbed?: number; coveredByPacks?: number
       release?: { title: string; indexer: string }
+      itemId?: number
     }
     if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`)
     return data
@@ -166,12 +178,13 @@ export function SeasonGrabControl({ tmdbId, title, year, seasonNumber, seasonNam
     setUi('searching'); setMsg('')
     try {
       const data = await postGrab({ mode: 'auto' })
-      if (data.result === 'pack_grabbed') {
-        setUi('grabbed')
-        setMsg(data.release ? `${data.release.title} · ${data.release.indexer}` : 'Pack sent to your download client.')
+      // 'auto' no longer grabs directly — it creates the 'wanted' item and hands off to the
+      // confirmation modal, which does the actual pack search.
+      if (data.result === 'pending_confirm' && data.itemId != null) {
+        setOpen(false)
+        openGrabConfirm({ itemId: data.itemId, tmdbId, type: 'tv', title, year })
       } else {
-        setFoundEpisodeCount(data.episodeCount ?? foundEpisodeCount)
-        setUi('no_pack')
+        throw new Error(data.error ?? 'Unexpected response')
       }
     } catch (err) {
       setUi('error'); setMsg(err instanceof Error ? err.message : String(err))
@@ -291,6 +304,13 @@ export function SeasonGrabControl({ tmdbId, title, year, seasonNumber, seasonNam
                         {GATE_LABELS[g] ?? g}
                       </span>
                     ))}
+                    {c.audioMode && (
+                      <span
+                        className={`ml-1 align-middle rounded px-1 py-0.5 text-[10px] ${c.audioMode === 'dub' ? 'bg-sky-900/60 text-sky-300' : 'bg-amber-900/50 text-amber-300'}`}
+                      >
+                        {c.audioMode === 'dub' ? 'Dub' : 'Sub'}
+                      </span>
+                    )}
                   </td>
                   <td className="py-1.5 px-2 text-right">
                     {c.seeders > 0 ? <span className="text-zinc-400">{c.seeders}</span> : <span className="text-red-400" title="0 seeds — dead">0 ⚠</span>}
@@ -320,6 +340,7 @@ export function SeasonGrabControl({ tmdbId, title, year, seasonNumber, seasonNam
 
   return (
     <>
+      {grabConfirmModal}
       <button
         type="button"
         onClick={() => { reset(); setOpen(true) }}
@@ -366,6 +387,18 @@ export function SeasonGrabControl({ tmdbId, title, year, seasonNumber, seasonNam
                 </label>
 
                 <label className="flex flex-col gap-1 text-xs text-zinc-400">
+                  Audio
+                  <select
+                    value={audioMode}
+                    onChange={(e) => setAudioMode(e.target.value)}
+                    disabled={busy}
+                    className="rounded-md bg-zinc-800 px-2 py-1.5 text-sm text-zinc-100 outline-none focus:ring-1 focus:ring-sky-600"
+                  >
+                    {AUDIO_MODE_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                  </select>
+                </label>
+
+                <label className="flex flex-col gap-1 text-xs text-zinc-400">
                   Quality profile
                   <select
                     value={profileId}
@@ -391,24 +424,6 @@ export function SeasonGrabControl({ tmdbId, title, year, seasonNumber, seasonNam
                 )}
                 {ui === 'error' && (
                   <p className="rounded-md bg-red-900/40 px-3 py-2 text-xs text-red-300">{msg || 'Something went wrong.'}</p>
-                )}
-
-                {ui === 'no_pack' && (
-                  <div className="flex flex-col gap-2">
-                    <p className="rounded-md bg-amber-900/30 px-3 py-2 text-xs text-amber-200">
-                      No {kind} pack found in {LANGUAGE_OPTIONS.find((l) => l.value === language)?.label ?? language}.
-                      {foundEpisodeCount > 0 && ` Grab the ${foundEpisodeCount} episodes individually`} (they’ll keep
-                      searching), or choose a release manually.
-                    </p>
-                    <div className="flex gap-2">
-                      <button onClick={grabEpisodes} className="flex-1 rounded-md bg-amber-700 px-3 py-2 text-sm font-medium text-white hover:bg-amber-600">
-                        Grab episode by episode
-                      </button>
-                      <button onClick={openChooser} className="flex-1 rounded-md bg-zinc-700 px-3 py-2 text-sm font-medium text-white hover:bg-zinc-600">
-                        Choose release
-                      </button>
-                    </div>
-                  </div>
                 )}
 
                 {/* Interactive candidate list — full set, zero hard rejects, every row grab-able.
@@ -479,8 +494,8 @@ export function SeasonGrabControl({ tmdbId, title, year, seasonNumber, seasonNam
                       disabled={busy}
                       className="flex w-full items-center justify-center gap-2 rounded-md bg-sky-700 px-4 py-2 text-sm font-medium text-white hover:bg-sky-600 disabled:opacity-60"
                     >
-                      {busy && <Loader2 className="h-4 w-4 animate-spin" />}
-                      {ui === 'searching' ? `Searching for ${kind} pack…` : ui === 'queuing' ? 'Queuing episodes…' : `Grab ${kind} pack`}
+                      {ui === 'searching' && <Loader2 className="h-4 w-4 animate-spin" />}
+                      {ui === 'searching' ? 'Preparing…' : `Grab ${kind} pack`}
                     </button>
                     <button
                       onClick={openChooser}
@@ -488,6 +503,14 @@ export function SeasonGrabControl({ tmdbId, title, year, seasonNumber, seasonNam
                       className="w-full rounded-md bg-zinc-700 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-600 disabled:opacity-60"
                     >
                       Choose release (interactive)
+                    </button>
+                    <button
+                      onClick={grabEpisodes}
+                      disabled={busy}
+                      className="flex w-full items-center justify-center gap-2 rounded-md border border-zinc-700 px-4 py-2 text-sm text-zinc-300 hover:bg-zinc-800 disabled:opacity-60"
+                    >
+                      {ui === 'queuing' && <Loader2 className="h-4 w-4 animate-spin" />}
+                      {ui === 'queuing' ? 'Queuing episodes…' : 'Grab episode by episode'}
                     </button>
                   </div>
                 )}

@@ -71,6 +71,7 @@ secret in both Seerr and `SEERR_WEBHOOK_SECRET`. `/api/seerr/webhook` receives `
 | Delay profiles (hold releases N minutes before grab) | v0.11.5 | — |
 | Per-indexer queries/day + grabs/day rate limiting | v0.11.3 | CLAUDE.md §17, `docs/features/decision-engine.md` |
 | **On-demand subtitle search** + live `<track>` injection | v0.9.11 | `docs/player/audio-subtitles.md` |
+| Edition/HC flags + AKA alternate-title fallback | v0.11.3 | `docs/features/decision-engine.md` |
 | Decision engine — hard gates + custom formats | v0.10.0 | `docs/features/decision-engine.md` |
 | Season/arc grab pipeline (TMDB episode_groups, interactive picker) | v0.9.7–0.9.10 | CLAUDE.md §5 (browse) |
 | Admin user monitoring + per-user detail | v0.5.3 | CLAUDE.md §5 |

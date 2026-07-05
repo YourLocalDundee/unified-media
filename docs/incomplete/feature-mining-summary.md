@@ -44,6 +44,7 @@ the "top candidates" ranking is rebuilt around what is still grabbable.
 | Party Play: guest join via invite link | (not from sources) | v0.11.4 |
 | Movie Collections — follow a TMDB franchise | radarr #1 | v0.11.5 |
 | Delay profiles — hold releases N min before grab | sonarr #5 | v0.11.5 |
+| Edition flags + HC-sub detection + AKA fallback search | radarr #3 | v0.11.3 |
 
 ---
 
@@ -64,14 +65,11 @@ _(All original Tier-1 items shipped. See "Already shipped" table above.)_
 3. **Indexer flags + indexer stats** (prowlarr #6/#7). Thread freeleech/internal/scene flags from Torznab
    attrs (they feed a Custom Format like "prefer freeleech", the flag matcher already exists) and add a
    per-indexer stats surface (query/grab counts, success rate) on `/admin/indexers`, built on `grab_history`.
-4. **Edition / AKA / hardcoded-sub parsing** (radarr #3). Parse Director's Cut / Extended / IMAX editions and
-   AKA alternate titles, and flag burned-in subs (HC/KORSUB). Folds straight into the Custom Format matcher
-   so a user can prefer the Extended cut and de-prioritize HC. Small parser additions.
-5. **Voice chat in Party Play** (watchparty #2). Highest *raw* value for watch-together, the natural step
+4. **Voice chat in Party Play** (watchparty #2). Highest *raw* value for watch-together, the natural step
    after text chat + reactions. Signaling is trivial on our existing WS server. Carries WebRTC + STUN/TURN
    infra cost (STUN free, a coturn TURN container needed as a fallback for symmetric-NAT pairs), which is why
    it sits here and not Tier 1. Voice-only first, webcam tiles later.
-6. **Calendar of upcoming episodes** (sonarr #13). A calendar of upcoming/aired episodes for monitored series
+5. **Calendar of upcoming episodes** (sonarr #13). A calendar of upcoming/aired episodes for monitored series
    off TMDB data, with an optional iCal export. Nice user-facing surface.
 
 ### Tier 3 — opportunistic / pairs with the above

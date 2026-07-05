@@ -55,6 +55,25 @@ export function parseLanguage(name: string): string | null {
   return null
 }
 
+// ── dub/sub detection ─────────────────────────────────────────────────────────
+//
+// Deliberately independent of parseLanguage/LANGUAGE_PATTERNS above: a release tagged
+// "English Subbed" matches LANGUAGE_PATTERNS' /English/ and would be indistinguishable from an
+// English-DUBBED release if this reused that table. Anime subs are more likely than dubs to spell
+// out "English" at all (dubs are commonly tagged Dual Audio / Dubbed, or left untagged), so a
+// single language axis silently prefers subs when a dub was wanted. Checked dub-first: a release
+// tagged both ("Dual Audio" pack with sub track) is still audio-dubbed for scoring purposes.
+const DUB_PATTERNS: RegExp[] = [/\bDub(bed)?\b/i, /\bDual[ ._-]?Audio\b/i, /\bMulti[ ._-]?Audio\b/i, /\bMULTI\b/]
+const SUB_PATTERNS: RegExp[] = [/\bSub(bed|s)?\b/i, /\bESub\b/i, /\bVOSTFR\b/i, /\bSoftsubs?\b/i]
+
+// Returns 'dub' or 'sub' if an explicit audio-track tag is found, or null if untagged.
+// Null means "unknown" — never assumed to be either, since many legitimate dubs ship untagged.
+export function parseAudioMode(name: string): 'dub' | 'sub' | null {
+  if (DUB_PATTERNS.some((re) => re.test(name))) return 'dub'
+  if (SUB_PATTERNS.some((re) => re.test(name))) return 'sub'
+  return null
+}
+
 // ── regex constants ────────────────────────────────────────────────────────────
 
 // Word-boundary anchors (\b) prevent partial matches like "480p" inside "1480p"
@@ -192,7 +211,10 @@ export function parseReleaseName(rawName: string): ReleaseMeta {
   // detected language (null = untagged, not necessarily English)
   const language = parseLanguage(name)
 
-  return { resolution, codec, source, group, season, episode, year, parsedTitle, language }
+  // detected audio mode (null = untagged, not assumed dub or sub)
+  const audioMode = parseAudioMode(name)
+
+  return { resolution, codec, source, group, season, episode, year, parsedTitle, language, audioMode }
 }
 
 // ── scorer ────────────────────────────────────────────────────────────────────

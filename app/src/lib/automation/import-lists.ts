@@ -224,7 +224,8 @@ export async function syncImportList(list: ImportList): Promise<SyncResult> {
       tmdb_id: c.tmdbId,
       year: resolved.year ?? undefined,
       quality_profile_id: list.quality_profile_id,
-      monitor_future: c.mediaType === 'tv',
+      // Default off (2026-07): monitoring future episodes is opt-in, not opt-out.
+      monitor_future: false,
     })
     ledgerAdd.run(list.id, c.tmdbId, c.mediaType, Date.now())
     added++

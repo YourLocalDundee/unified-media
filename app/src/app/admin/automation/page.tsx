@@ -18,6 +18,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { useFocusTrap } from '@/hooks/useFocusTrap'
 import ImportListsCard from './ImportListsCard'
 import { Loader2, Trash2, Play, ChevronDown, ChevronUp, Plus, X, Ban, SlidersHorizontal, Bell, ArrowUpCircle } from 'lucide-react'
+import { useGrabConfirm } from '@/components/media/GrabConfirmModal'
 
 interface MonitoredItem {
   id: number
@@ -152,9 +153,6 @@ export default function AdminAutomationPage() {
   const [loadingHistory, setLoadingHistory] = useState(true)
   const [error, setError] = useState('')
 
-  // grabState maps item.id → current grab status string; absent key means idle
-  const [grabState, setGrabState] = useState<Record<number, string>>({})
-
   // Modal state
   const [showModal, setShowModal] = useState(false)
   const modalRef = useRef<HTMLDivElement>(null)
@@ -234,6 +232,10 @@ export default function AdminAutomationPage() {
     }
   }, [])
 
+  // Refresh both tables once a grab is actually confirmed (mirrors the old immediate-grab
+  // success path, which also refreshed items + history).
+  const { openGrabConfirm, grabConfirmModal } = useGrabConfirm(() => { void fetchItems(); void fetchHistory() })
+
   const fetchGate = useCallback(async () => {
     try {
       const res = await fetch('/api/admin/settings')
@@ -293,23 +295,11 @@ export default function AdminAutomationPage() {
     return () => clearTimeout(id)
   }, [fetchItems, fetchProfiles, fetchHistory, fetchGate, fetchBlocklist, fetchUpgrades])
 
-  async function handleGrab(item: MonitoredItem) {
-    setGrabState(s => ({ ...s, [item.id]: 'loading' }))
-    try {
-      const res = await fetch(`/api/automation/items/${item.id}/grab`, { method: 'POST' })
-      const data = await res.json() as { result: string }
-      setGrabState(s => ({ ...s, [item.id]: data.result }))
-      // On success, refresh both tables so status badge and grab history update immediately
-      if (data.result === 'grabbed') {
-        void fetchItems()
-        void fetchHistory()
-      }
-      // Auto-clear the per-item result after 4s so the button returns to its default state
-      setTimeout(() => setGrabState(s => { const n = { ...s }; delete n[item.id]; return n }), 4000)
-    } catch {
-      setGrabState(s => ({ ...s, [item.id]: 'error' }))
-      setTimeout(() => setGrabState(s => { const n = { ...s }; delete n[item.id]; return n }), 4000)
-    }
+  // "Grab Now" used to POST straight to the grab route and commit immediately with no chance to
+  // see or veto the pick — now it opens the grab-confirmation modal against the existing item.
+  function handleGrab(item: MonitoredItem) {
+    if (item.tmdb_id == null) return // no tmdb_id (manually-added item) — nothing to confirm against
+    openGrabConfirm({ itemId: item.id, tmdbId: item.tmdb_id, type: item.type, title: item.title, year: item.year })
   }
 
   async function handleDelete(item: MonitoredItem) {
@@ -518,27 +508,9 @@ export default function AdminAutomationPage() {
   // Show last 20 grabs by default; "Show all" expands to full 100-row cap from the API
   const displayedHistory = showAllGrabs ? history : history.slice(0, 20)
 
-  // Label and class helpers keep the JSX rows clean; both derive from grabState[id]
-  function grabButtonLabel(id: number): React.ReactNode {
-    const state = grabState[id]
-    if (!state) return <><Play className="h-3 w-3" />Grab Now</>
-    if (state === 'loading') return <><Loader2 className="h-3 w-3 animate-spin" />Grabbing…</>
-    if (state === 'grabbed') return 'Grabbed!'
-    if (state === 'not_found') return 'Not found'
-    return 'Error'
-  }
-
-  function grabButtonClass(id: number): string {
-    const state = grabState[id]
-    const base = 'flex items-center gap-1 rounded px-2 py-1 text-xs font-medium transition-colors'
-    if (!state || state === 'loading') return `${base} bg-primary/10 hover:bg-primary/20 text-primary disabled:opacity-50`
-    if (state === 'grabbed') return `${base} bg-green-500/20 text-green-400`
-    if (state === 'not_found') return `${base} bg-yellow-500/20 text-yellow-400`
-    return `${base} bg-red-500/20 text-red-400`  // covers 'error' and any unexpected state
-  }
-
   return (
     <div className="space-y-8">
+      {grabConfirmModal}
       <h1 className="text-2xl font-bold text-foreground">Download Automation</h1>
 
       {error && (
@@ -800,11 +772,12 @@ export default function AdminAutomationPage() {
                     <td className="px-4 py-2">
                       <div className="flex items-center gap-1">
                         <button
-                          onClick={() => void handleGrab(item)}
-                          disabled={grabState[item.id] === 'loading'}
-                          className={grabButtonClass(item.id)}
+                          onClick={() => handleGrab(item)}
+                          disabled={item.tmdb_id == null}
+                          title={item.tmdb_id == null ? 'No TMDB match — cannot open grab confirmation' : undefined}
+                          className="flex items-center gap-1 rounded px-2 py-1 text-xs font-medium transition-colors bg-primary/10 hover:bg-primary/20 text-primary disabled:opacity-50"
                         >
-                          {grabButtonLabel(item.id)}
+                          <Play className="h-3 w-3" />Grab Now
                         </button>
                         <button
                           onClick={() => void handleDelete(item)}

@@ -48,6 +48,13 @@ const FLAG_PATTERNS: Record<string, RegExp> = {
   dv: /\b(?:dv|dovi|dolby[\s.]?vision)\b/i,
   atmos: /\batmos\b/i,
   imax: /\bimax\b/i,
+  // Edition flags — dotted scene titles use [._\s-] as separators, so patterns must match across them
+  directors_cut: /\bdirectors?'?[._\s-]?cut\b/i,
+  theatrical:    /\btheatrical(?:[._\s-]?(?:cut|edition|version))?\b/i,
+  remastered:    /\bre-?master(?:ed)?\b/i,
+  unrated:       /\bunrated(?:[._\s-]?(?:cut|edition))?\b/i,
+  // Hardcoded (burned-in) subtitle flag — de-prioritize or reject these releases
+  hc: /\b(?:HC|HCSUB|KORSUB|RUSUB|HardSub|HardCoded)\b/i,
 }
 
 // Known flag keys, exported so the admin UI can offer them as a dropdown.
@@ -244,6 +251,8 @@ export interface QualityProfileFull {
   cutoff_format_score: number
   // ISO 639-1 language code or 'any'. 'any' disables the language constraint on auto-pick grabs.
   language: string
+  // 'any' | 'dub' | 'sub' — soft audio-track preference constraint, mirrors `language`.
+  audio_mode: string
   // Minutes to wait after a release is first seen before it becomes eligible for auto-grab. 0 = no delay.
   delay_minutes: number
   formats: Array<{ format_id: number; name: string; specs: string; score: number }>
@@ -276,11 +285,12 @@ export function getProfileFull(profileId: number): QualityProfileFull | null {
   return {
     id: profile.id as number,
     name: profile.name as string,
-    upgrade_allowed: (profile.upgrade_allowed as number) ?? 1,
+    upgrade_allowed: (profile.upgrade_allowed as number) ?? 0,
     cutoff_quality_id: profile.cutoff_quality_id as number | null,
     min_format_score: (profile.min_format_score as number) ?? 0,
     cutoff_format_score: (profile.cutoff_format_score as number) ?? 0,
     language: (profile.language as string) ?? 'any',
+    audio_mode: (profile.audio_mode as string) ?? 'any',
     delay_minutes: (profile.delay_minutes as number) ?? 0,
     formats,
     conditions,

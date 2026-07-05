@@ -5,8 +5,11 @@ import { requireAuth } from '@/lib/dal'
 import { getMovieDetail, getTVDetail, getArcs } from '@/lib/media-server/tmdb'
 import { getItemsByTmdbIds } from '@/lib/media-server/library'
 import { getRequestByTmdb } from '@/lib/requests/monitor'
+import { getDisplayModeOverride } from '@/lib/media-server/display-prefs'
 import RequestButton from './RequestButton'
-import { SeasonGrabControl } from '@/components/media/SeasonGrabControl'
+import { SeasonCard } from '@/components/media/SeasonCard'
+import { ArcCard } from '@/components/media/ArcCard'
+import { DisplayModeToggle } from '@/components/media/DisplayModeToggle'
 
 interface PageProps {
   params: Promise<{ mediaType: string; tmdbId: string }>
@@ -89,6 +92,12 @@ export default async function DiscoverDetailPage({ params }: PageProps) {
   const tv = !isMovie ? (detail as Awaited<ReturnType<typeof getTVDetail>>) : null
   // Admins get the per-season direct-grab control on the Seasons list.
   const isAdmin = session.role === 'admin'
+
+  // Arcs vs Seasons: default to Arcs when TMDB has story-arc grouping data, else plain Seasons —
+  // an admin can override per-show (e.g. force Seasons for a show whose "arcs" read poorly).
+  // The override only matters when arcs actually exist; a show with none only ever has Seasons.
+  const displayOverride = !isMovie ? getDisplayModeOverride(tmdbId) : null
+  const showArcs = arcs.length > 0 && displayOverride !== 'seasons'
 
   const title = movie?.title ?? tv?.name ?? ''
   const tagline = movie?.tagline ?? tv?.tagline ?? null
@@ -234,79 +243,35 @@ export default async function DiscoverDetailPage({ params }: PageProps) {
 
         {/* TV Arcs (Bug 7) — when TMDB groups this series into story arcs, show those instead of
             the merged "seasons" so each arc (e.g. Impel Down) is separately grabbable with its
-            own true episode range. */}
-        {arcs.length > 0 && (
+            own true episode range. Admins can override this per-show via DisplayModeToggle when
+            arcs exist but plain Seasons reads better for that title. */}
+        {showArcs && (
           <section className="pb-12">
-            <h2 className="mb-1 text-lg font-semibold">Arcs</h2>
+            <div className="flex flex-wrap items-baseline justify-between gap-2 mb-1">
+              <h2 className="text-lg font-semibold">Arcs</h2>
+              {isAdmin && <DisplayModeToggle tmdbId={tmdbId} mode="arcs" />}
+            </div>
             <p className="mb-4 text-xs text-zinc-500">Story arcs from TMDB — each grabs only its own episode range.</p>
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
-              {arcs.map((a) => {
-                const nums = a.episodes.map((e) => e.e).filter((n) => n > 0).sort((x, y) => x - y)
-                const range = nums.length > 0 ? (nums[0] === nums[nums.length - 1] ? `Ep ${nums[0]}` : `Eps ${nums[0]}–${nums[nums.length - 1]}`) : null
-                return (
-                  <div key={a.id} className="flex flex-col justify-between overflow-hidden rounded-lg bg-zinc-900 p-3 ring-1 ring-white/5">
-                    <div>
-                      <p className="text-xs font-semibold text-white line-clamp-2">{a.name}</p>
-                      <p className="mt-0.5 text-[10px] text-zinc-400">{a.episodeCount} episodes{range ? ` · ${range}` : ''}</p>
-                    </div>
-                    {isAdmin && (
-                      <SeasonGrabControl
-                        tmdbId={tmdbId}
-                        title={title}
-                        year={year}
-                        seasonName={a.name}
-                        episodeCount={a.episodeCount}
-                        arc={{ name: a.name, episodes: a.episodes }}
-                      />
-                    )}
-                  </div>
-                )
-              })}
+              {arcs.map((a) => (
+                <ArcCard key={a.id} tmdbId={tmdbId} title={title} year={year} arc={a} isAdmin={isAdmin} />
+              ))}
             </div>
           </section>
         )}
 
-        {/* TV Seasons — shown only when the series has no TMDB arc grouping (fallback). */}
-        {arcs.length === 0 && tv?.seasons && tv.seasons.length > 0 && (
+        {/* TV Seasons — shown when the series has no TMDB arc grouping, or an admin overrode a
+            show that has arcs back to plain Seasons. */}
+        {!showArcs && tv?.seasons && tv.seasons.length > 0 && (
           <section className="pb-12">
-            <h2 className="mb-4 text-lg font-semibold">Seasons</h2>
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
-              {tv.seasons.map((s) => {
-                const sPosterUrl = s.posterPath
-                  ? `https://image.tmdb.org/t/p/w185${s.posterPath}`
-                  : null
-                return (
-                  <div key={s.id} className="flex flex-col overflow-hidden rounded-lg bg-zinc-900 ring-1 ring-white/5">
-                    <div className="relative aspect-[2/3] w-full bg-zinc-800">
-                      {sPosterUrl ? (
-                        <Image src={sPosterUrl} alt={s.name ?? `Season ${s.seasonNumber}`} fill sizes="150px" className="object-cover" />
-                      ) : (
-                        <div className="flex h-full w-full items-center justify-center text-zinc-600 text-xs">No Image</div>
-                      )}
-                    </div>
-                    <div className="p-2">
-                      <p className="text-xs font-semibold text-white line-clamp-1">{s.name ?? `Season ${s.seasonNumber}`}</p>
-                      {s.episodeCount && (
-                        <p className="text-[10px] text-zinc-400 mt-0.5">{s.episodeCount} episodes</p>
-                      )}
-                      {s.airDate && (
-                        <p className="text-[10px] text-zinc-500">{s.airDate.slice(0, 4)}</p>
-                      )}
-                      {/* Admin-only per-season direct grab (skip specials/season 0). */}
-                      {isAdmin && s.seasonNumber > 0 && (
-                        <SeasonGrabControl
-                          tmdbId={tmdbId}
-                          title={title}
-                          year={year}
-                          seasonNumber={s.seasonNumber}
-                          seasonName={s.name ?? `Season ${s.seasonNumber}`}
-                          episodeCount={s.episodeCount}
-                        />
-                      )}
-                    </div>
-                  </div>
-                )
-              })}
+            <div className="flex flex-wrap items-baseline justify-between gap-2 mb-1">
+              <h2 className="text-lg font-semibold">Seasons</h2>
+              {isAdmin && arcs.length > 0 && <DisplayModeToggle tmdbId={tmdbId} mode="seasons" />}
+            </div>
+            <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
+              {tv.seasons.map((s) => (
+                <SeasonCard key={s.id} tmdbId={tmdbId} title={title} year={year} season={s} isAdmin={isAdmin} />
+              ))}
             </div>
           </section>
         )}
