@@ -6,21 +6,25 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { Home, Film, Library, ClipboardList, Download } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { useAuth } from '@/context/AuthContext'
 
 const navItems = [
   { href: '/', icon: Home, label: 'Dashboard' },
   { href: '/browse', icon: Film, label: 'Browse' },
   { href: '/library', icon: Library, label: 'Library' },
   { href: '/requests', icon: ClipboardList, label: 'Requests' },
-  { href: '/downloads', icon: Download, label: 'Downloads' },
+  // Downloads is admin-only (see Sidebar) — hidden from regular users.
+  { href: '/downloads', icon: Download, label: 'Downloads', adminOnly: true },
 ]
 
 export function MobileNav() {
   const pathname = usePathname()
+  const { user } = useAuth()
+  const items = navItems.filter((item) => !item.adminOnly || user?.role === 'admin')
 
   return (
     <nav className="fixed bottom-0 left-0 right-0 z-50 flex h-16 items-center justify-around border-t border-border bg-card md:hidden">
-      {navItems.map(({ href, icon: Icon, label }) => {
+      {items.map(({ href, icon: Icon, label }) => {
         const isActive = href === '/'
           ? pathname === '/'
           : pathname === href || pathname.startsWith(href + '/')

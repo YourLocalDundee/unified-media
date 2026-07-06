@@ -10,7 +10,7 @@
 //  2. Query params are preserved on POST requests.
 //  3. 403 responses trigger one re-auth-and-retry before returning the error.
 import { NextRequest, NextResponse } from 'next/server'
-import { requireAuth, requireAdmin } from '@/lib/dal'
+import { requireAdmin } from '@/lib/dal'
 import { verifyOrigin } from '@/lib/csrf'
 import { qbitFetch, getQbitSession, clearSession } from '@/lib/qbittorrent/session'
 
@@ -19,10 +19,11 @@ const UMT_URL = process.env.UMT_URL ?? 'http://qbittorrent:8080'
 type Params = { params: Promise<{ path: string[] }> }
 
 export async function GET(req: NextRequest, { params }: Params) {
-  // A7-01: this proxy attaches qBittorrent's server-side SID, so without auth any caller that can
-  // reach the container drives the full qBit API (read save paths/prefs) with our credentials.
-  // Gate it like the sibling sonarr/radarr/prowlarr proxies.
-  await requireAuth()
+  // Admin-only: the download queue and qBittorrent prefs are visible to admins only. This proxy
+  // attaches qBittorrent's server-side SID, so any authed caller could otherwise read the full
+  // queue/save-paths/prefs with our credentials. Reads are gated to admin to match the write path
+  // and keep the Downloads page + Torrent settings admin-only end to end.
+  await requireAdmin()
   const { path } = await params
   const endpoint = '/api/v2/' + path.join('/')
   // Preserve all query params (e.g. ?rid=0, ?hash=..., ?filter=...)

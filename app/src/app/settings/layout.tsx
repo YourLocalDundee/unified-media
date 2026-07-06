@@ -12,12 +12,15 @@ const USER_NAV = [
   { href: '/settings/playback', label: 'Playback' },
   { href: '/settings/display', label: 'Display' },
   { href: '/settings/quality', label: 'Quality' },
-  { href: '/settings/torrent', label: 'Torrent' },
   { href: '/settings/media', label: 'Media' },
   { href: '/settings/advanced', label: 'Advanced' },
   { href: '/settings/about', label: 'About' },
   { href: '/settings/shortcuts', label: 'Shortcuts' },
 ]
+
+// Admin-only tabs: qBittorrent prefs are download infrastructure (the /settings/torrent page and the
+// /api/qbit proxy are both admin-gated), so the Torrent tab is hidden from regular users.
+const ADMIN_NAV = [{ href: '/settings/torrent', label: 'Torrent' }]
 
 export default async function SettingsLayout({ children }: { children: React.ReactNode }) {
   const session = await requireAuth()
@@ -36,6 +39,12 @@ export default async function SettingsLayout({ children }: { children: React.Rea
           ))}
           {isAdmin && (
             <>
+              {ADMIN_NAV.map(({ href, label }) => (
+                <Link key={href} href={href}
+                  className="flex-shrink-0 rounded-md px-3 py-2 text-sm font-medium hover:bg-accent hover:text-accent-foreground transition-colors text-muted-foreground">
+                  {label}
+                </Link>
+              ))}
               {/* Divider only visible on md+ where the nav is vertical */}
               <div className="hidden md:block h-px bg-border my-1" />
               <Link href="/admin"

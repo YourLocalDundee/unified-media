@@ -10,19 +10,24 @@ import { Home, Film, Library, ClipboardList, Download, ChevronLeft, ChevronRight
 import { cn } from '@/lib/utils'
 import { useAppStore } from '@/store'
 import { useDisplayPrefs } from '@/hooks/useSettings'
+import { useAuth } from '@/context/AuthContext'
 
 const navItems = [
   { href: '/', icon: Home, label: 'Dashboard' },
   { href: '/browse', icon: Film, label: 'Browse' },
   { href: '/library', icon: Library, label: 'Library' },
   { href: '/requests', icon: ClipboardList, label: 'Requests' },
-  { href: '/downloads', icon: Download, label: 'Downloads' },
+  // Downloads (qBittorrent queue) is admin-only — the /downloads route and /api/qbit proxy are both
+  // admin-gated, so the link is hidden from regular users.
+  { href: '/downloads', icon: Download, label: 'Downloads', adminOnly: true },
 ]
 
 // Isolated into its own component so it can be wrapped in a Suspense boundary
 // (Next.js requires client hooks like usePathname to be in a Suspense subtree on static pages).
 function SidebarNav({ sidebarOpen }: { sidebarOpen: boolean }) {
   const pathname = usePathname()
+  const { user } = useAuth()
+  const items = navItems.filter((item) => !item.adminOnly || user?.role === 'admin')
 
   function isActive(href: string): boolean {
     if (href === '/') return pathname === '/'
@@ -31,7 +36,7 @@ function SidebarNav({ sidebarOpen }: { sidebarOpen: boolean }) {
 
   return (
     <nav className="flex flex-1 flex-col gap-1 p-2">
-      {navItems.map(({ href, icon: Icon, label }) => (
+      {items.map(({ href, icon: Icon, label }) => (
         <Link
           key={href}
           href={href}

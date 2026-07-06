@@ -26,7 +26,8 @@ import type { ContinueItem, RecentItem } from './HomeCarousels'
 // ---------------------------------------------------------------------------
 
 export default async function HomePage() {
-  await requireAuth()
+  const session = await requireAuth()
+  const isAdmin = session.role === 'admin'
   return (
     <div className="space-y-10">
       <div className="flex items-center justify-end">
@@ -42,9 +43,12 @@ export default async function HomePage() {
       <Suspense fallback={<SectionSkeleton title="Pending Requests" />}>
         <PendingRequestsSection />
       </Suspense>
-      <Suspense fallback={<SectionSkeleton title="Active Downloads" />}>
-        <ActiveDownloadsSection />
-      </Suspense>
+      {/* Downloads are admin-only — hide the queue section from regular users. */}
+      {isAdmin && (
+        <Suspense fallback={<SectionSkeleton title="Active Downloads" />}>
+          <ActiveDownloadsSection />
+        </Suspense>
+      )}
     </div>
   )
 }
