@@ -9,6 +9,12 @@
 //  1. Multipart bodies (torrent file uploads) are forwarded verbatim including the boundary.
 //  2. Query params are preserved on POST requests.
 //  3. 403 responses trigger one re-auth-and-retry before returning the error.
+//
+// One more special case lives in GET: /torrentcreator/torrentFile (the finished-.torrent
+// download for the async create-torrent task API) returns a binary application/x-bittorrent
+// body. qbitFetch() always calls res.text() on non-JSON responses, which decodes the bytes as
+// UTF-8 and corrupts binary content — so that one path bypasses qbitFetch and streams the
+// response through as an ArrayBuffer instead, same 403-retry-once behavior as everything else.
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAdmin } from '@/lib/dal'
 import { verifyOrigin } from '@/lib/csrf'
@@ -28,6 +34,31 @@ export async function GET(req: NextRequest, { params }: Params) {
   const endpoint = '/api/v2/' + path.join('/')
   // Preserve all query params (e.g. ?rid=0, ?hash=..., ?filter=...)
   const search = req.nextUrl.search
+
+  if (endpoint === '/api/v2/torrentcreator/torrentFile') {
+    try {
+      const sid = await getQbitSession()
+      let qbtRes = await fetch(`${UMT_URL}${endpoint}${search}`, { headers: { Cookie: sid } })
+      if (qbtRes.status === 403) {
+        clearSession()
+        const newSid = await getQbitSession()
+        qbtRes = await fetch(`${UMT_URL}${endpoint}${search}`, { headers: { Cookie: newSid } })
+      }
+      if (!qbtRes.ok) {
+        return NextResponse.json({ error: `qBittorrent GET ${endpoint}: ${qbtRes.status}` }, { status: qbtRes.status })
+      }
+      const buf = await qbtRes.arrayBuffer()
+      return new NextResponse(buf, {
+        headers: {
+          'Content-Type': qbtRes.headers.get('content-type') ?? 'application/x-bittorrent',
+          'Content-Disposition': qbtRes.headers.get('content-disposition') ?? 'attachment',
+        },
+      })
+    } catch (err) {
+      return NextResponse.json({ error: String(err) }, { status: 500 })
+    }
+  }
+
   try {
     const data = await qbitFetch(`${endpoint}${search}`)
     return NextResponse.json(data)

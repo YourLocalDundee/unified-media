@@ -137,6 +137,60 @@ export interface AddTorrentParams {
 }
 
 // ---------------------------------------------------------------------------
+// Torrent creation (qBittorrent 5.0+, Web API v2.10.4) — async task API
+// ---------------------------------------------------------------------------
+// Creating a .torrent from a local file/folder is asynchronous: POST
+// /torrentcreator/addTask queues a task and returns only {taskID}; the actual
+// hashing happens server-side. Progress and the final result are read back via
+// GET /torrentcreator/status?taskID=..., polled until status is terminal
+// (Finished/Failed). Endpoint scope is "torrentcreator", NOT "torrents" —
+// verified against qBittorrent's TorrentCreatorController source (registered
+// as u"torrentcreator"_s in webapplication.cpp), not to be confused with the
+// unrelated /torrents/add ("add an existing torrent") endpoint above.
+export type TorrentCreationStatus = 'Queued' | 'Running' | 'Finished' | 'Failed'
+
+// Shape of one entry in the JSON array returned by GET /torrentcreator/status.
+// Field names match the controller's KEY_* constants verbatim (taskID, not
+// task_id; urlSeeds, not url_seeds) so no adapter layer is needed.
+export interface TorrentCreationTask {
+  taskID: string
+  sourcePath: string
+  pieceSize: number
+  ignoreDotfiles: boolean
+  private: boolean
+  timeAdded: number
+  status: TorrentCreationStatus
+  comment?: string
+  torrentFilePath?: string
+  source?: string
+  trackers?: string[]
+  urlSeeds?: string[]
+  timeStarted?: number
+  timeFinished?: number
+  // Present only once the task is finished AND failed.
+  errorMessage?: string
+  // Present only while the task is running (0.0 - 1.0).
+  progress?: number
+}
+
+// Parameters accepted by POST /torrentcreator/addTask. sourcePath is the only
+// required field — it must be a path qBittorrent's own process can read (this
+// runs on the qBit host, not the browser or this app's server). trackers/
+// urlSeeds are sent newline-joined on the wire. startSeeding defaults server-
+// side to true when no torrentFilePath is given (we never send one), so the
+// created torrent is added and seeded automatically unless explicitly disabled.
+export interface CreateTorrentParams {
+  sourcePath: string
+  trackers?: string[]
+  urlSeeds?: string[]
+  private?: boolean
+  comment?: string
+  source?: string
+  startSeeding?: boolean
+  pieceSize?: number      // bytes; 0/omitted = automatic
+}
+
+// ---------------------------------------------------------------------------
 // Helper functions
 // ---------------------------------------------------------------------------
 
