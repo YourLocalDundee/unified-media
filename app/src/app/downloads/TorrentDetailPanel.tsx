@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import type { QbtTorrentProperties, QbtFileInfo, QbtTrackerInfo, QbtPeerInfo } from '@/types/torrent'
 import { formatBytes } from '@/lib/utils'
+import { PieceMap } from './PieceMap'
 
 type DetailTab = 'overview' | 'files' | 'trackers' | 'peers'
 
@@ -27,6 +28,10 @@ export function TorrentDetailPanel({ hash, name, colSpan, onClose }: Props) {
   const [files, setFiles] = useState<QbtFileInfo[]>([])
   const [trackers, setTrackers] = useState<QbtTrackerInfo[]>([])
   const [peers, setPeers] = useState<QbtPeerInfo[]>([])
+  // Piece map (Files tab): 0=not downloaded, 1=downloading, 2=downloaded. Fetched only while the
+  // Files tab is open — same lazy pattern as fetchPeers below — since it can be a large array
+  // (tens of thousands of entries for big season packs) and is otherwise unused.
+  const [pieceStates, setPieceStates] = useState<number[]>([])
   const [loading, setLoading] = useState(true)
   // Bug 5: distinguish "the client returned an empty list" from "the fetch failed". A silent "0"
   // sent us chasing a non-bug for a round; now a failed fetch shows an explicit error instead.
@@ -60,6 +65,14 @@ export function TorrentDetailPanel({ hash, name, colSpan, onClose }: Props) {
     }
   }, [hash])
 
+  const fetchPieceStates = useCallback(async () => {
+    const res = await fetch(`/api/qbit/torrents/pieceStates?hash=${hash}`)
+    if (res.ok) {
+      const data = await res.json() as number[]
+      if (Array.isArray(data)) setPieceStates(data)
+    }
+  }, [hash])
+
   // Deferred a tick so the reset setStates run outside the effect's synchronous
   // commit path (react-hooks/set-state-in-effect).
   useEffect(() => {
@@ -70,6 +83,7 @@ export function TorrentDetailPanel({ hash, name, colSpan, onClose }: Props) {
       setFiles([])
       setTrackers([])
       setPeers([])
+      setPieceStates([])
       setError(null)
       fetchOverview().finally(() => setLoading(false))
     }, 0)
@@ -81,6 +95,12 @@ export function TorrentDetailPanel({ hash, name, colSpan, onClose }: Props) {
     const id = setTimeout(() => void fetchPeers(), 0)
     return () => clearTimeout(id)
   }, [tab, fetchPeers])
+
+  useEffect(() => {
+    if (tab !== 'files') return
+    const id = setTimeout(() => void fetchPieceStates(), 0)
+    return () => clearTimeout(id)
+  }, [tab, fetchPieceStates])
 
   // Resolve the library match once per torrent (not on the 2s poll). A null response = no match.
   // All setState is deferred a tick so none runs synchronously in the effect (react-hooks/set-state-in-effect).
@@ -99,10 +119,11 @@ export function TorrentDetailPanel({ hash, name, colSpan, onClose }: Props) {
   useEffect(() => {
     const id = setInterval(() => {
       if (tab === 'overview' || tab === 'files') fetchOverview()
+      if (tab === 'files') fetchPieceStates()
       else if (tab === 'peers') fetchPeers()
     }, 2000)
     return () => clearInterval(id)
-  }, [tab, fetchOverview, fetchPeers])
+  }, [tab, fetchOverview, fetchPeers, fetchPieceStates])
 
   async function setPriority(fileIndex: number, priority: 0 | 1 | 6 | 7) {
     await fetch('/api/qbit/torrents/filePrio', {
@@ -194,7 +215,11 @@ export function TorrentDetailPanel({ hash, name, colSpan, onClose }: Props) {
 
             {/* Files */}
             {!loading && !error && tab === 'files' && (
-              files.length === 0
+              <>
+              {props && (
+                <PieceMap pieceStates={pieceStates} piecesNum={props.pieces_num} files={files} />
+              )}
+              {files.length === 0
                 ? <p className="text-xs text-gray-400">This torrent has no files reported by the client.</p>
                 : (
                   <table className="w-full text-xs">
@@ -250,7 +275,8 @@ export function TorrentDetailPanel({ hash, name, colSpan, onClose }: Props) {
                       })}
                     </tbody>
                   </table>
-                )
+                )}
+              </>
             )}
 
             {/* Trackers */}
