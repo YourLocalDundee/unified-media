@@ -36,6 +36,10 @@ const PUBLIC_PATHS = [
   '/api/auth/change-password',
   '/api/health',
   '/api/party/guest-session',
+  // Offline PWA fallback shell (public/sw.js precaches this at install time,
+  // which may run before there's a session cookie) — no user data, safe to
+  // serve to anyone.
+  '/offline',
 ]
 
 export function proxy(request: NextRequest) {
