@@ -8,7 +8,7 @@
 // interval honors the user's configurable refreshInterval (A7-13) and pauses
 // while the document is hidden.
 import { useState, useEffect, useRef, useCallback } from 'react'
-import type { MainData, Torrent, TransferInfo } from './types'
+import type { MainData, Torrent, TransferInfo, CreateTorrentParams, TorrentCreationTask } from './types'
 
 // A7-13: read the user's configurable refresh interval from the same localStorage
 // key the Torrent settings UI writes (TorrentUIPreferences.refreshInterval).
@@ -271,4 +271,116 @@ export function useAddTorrent() {
   }, [])
 
   return { addTorrent, isPending, error }
+}
+
+// ---------------------------------------------------------------------------
+// useCreateTorrentTask — qBittorrent 5.x async torrent-creation task
+// ---------------------------------------------------------------------------
+// POST /torrentcreator/addTask only queues the job and returns {taskID}; the
+// actual hashing happens server-side. We poll GET /torrentcreator/status?
+// taskID=... until the task's status is Finished or Failed. See the
+// CreateTorrentParams / TorrentCreationTask doc comments in ./types for the
+// full endpoint contract (verified against qBittorrent's
+// TorrentCreatorController source — scope is "torrentcreator", not "torrents").
+
+export type CreateTorrentUIStatus =
+  | 'idle'
+  | 'submitting'  // initial addTask request in flight
+  | 'polling'     // task queued/running, waiting on the next status poll
+  | 'finished'
+  | 'failed'      // task reached a terminal Failed state (server-reported)
+  | 'error'       // a network/proxy error either submitting or polling
+
+const POLL_INTERVAL_MS = 1500
+
+async function fetchTaskStatus(taskId: string): Promise<TorrentCreationTask> {
+  const res = await fetch(`/api/qbit/torrentcreator/status?taskID=${encodeURIComponent(taskId)}`)
+  if (!res.ok) throw new Error(`Status check failed (HTTP ${res.status})`)
+  const data = (await res.json()) as TorrentCreationTask[] | TorrentCreationTask
+  const task = Array.isArray(data) ? data[0] : data
+  if (!task) throw new Error('Task not found — it may have expired on the qBittorrent side.')
+  return task
+}
+
+export function useCreateTorrentTask() {
+  const [uiStatus, setUIStatus] = useState<CreateTorrentUIStatus>('idle')
+  const [taskId, setTaskId] = useState<string | null>(null)
+  const [task, setTask] = useState<TorrentCreationTask | null>(null)
+  const [submitError, setSubmitError] = useState<string | null>(null)
+
+  // Polls while a task is outstanding; stops itself once the task reaches a
+  // terminal state or the caller clears taskId (reset()).
+  useEffect(() => {
+    if (!taskId) return
+    let cancelled = false
+    let timer: ReturnType<typeof setTimeout> | null = null
+
+    const tick = () => {
+      fetchTaskStatus(taskId)
+        .then((t) => {
+          if (cancelled) return
+          setTask(t)
+          if (t.status === 'Finished') { setUIStatus('finished'); return }
+          if (t.status === 'Failed') { setUIStatus('failed'); return }
+          setUIStatus('polling')
+          timer = setTimeout(tick, POLL_INTERVAL_MS)
+        })
+        .catch((e) => {
+          if (cancelled) return
+          setUIStatus('error')
+          setSubmitError(e instanceof Error ? e.message : String(e))
+        })
+    }
+
+    // Deferred a tick so the first poll's setState doesn't run synchronously in
+    // the effect's commit path (react-hooks/set-state-in-effect); the recurring
+    // ticks are already deferred via their own setTimeout scheduling above.
+    timer = setTimeout(tick, 0)
+    return () => { cancelled = true; if (timer) clearTimeout(timer) }
+  }, [taskId])
+
+  const submit = useCallback(async (params: CreateTorrentParams) => {
+    setUIStatus('submitting')
+    setSubmitError(null)
+    setTask(null)
+    setTaskId(null)
+
+    const body = new URLSearchParams()
+    body.set('sourcePath', params.sourcePath)
+    if (params.trackers && params.trackers.length > 0) body.set('trackers', params.trackers.join('\n'))
+    if (params.urlSeeds && params.urlSeeds.length > 0) body.set('urlSeeds', params.urlSeeds.join('\n'))
+    if (params.private !== undefined) body.set('private', String(params.private))
+    if (params.comment) body.set('comment', params.comment)
+    if (params.source) body.set('source', params.source)
+    if (params.startSeeding !== undefined) body.set('startSeeding', String(params.startSeeding))
+    if (params.pieceSize) body.set('pieceSize', String(params.pieceSize))
+
+    try {
+      const res = await fetch('/api/qbit/torrentcreator/addTask', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: body.toString(),
+      })
+      if (!res.ok) {
+        const errJson = (await res.json().catch(() => null)) as { error?: string; message?: string } | null
+        throw new Error(errJson?.error ?? errJson?.message ?? `Create failed (HTTP ${res.status})`)
+      }
+      const data = (await res.json()) as { taskID?: string }
+      if (!data.taskID) throw new Error('qBittorrent did not return a task ID.')
+      setTaskId(data.taskID)
+    } catch (e) {
+      setUIStatus('error')
+      setSubmitError(e instanceof Error ? e.message : String(e))
+      throw e
+    }
+  }, [])
+
+  const reset = useCallback(() => {
+    setTaskId(null)
+    setTask(null)
+    setSubmitError(null)
+    setUIStatus('idle')
+  }, [])
+
+  return { uiStatus, task, submitError, submit, reset }
 }

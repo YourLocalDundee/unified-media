@@ -3,6 +3,7 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react'
 import TorrentSettingsClient from '@/app/settings/torrent/TorrentSettingsClient'
 import { TorrentDetailPanel } from './TorrentDetailPanel'
+import { CreateTorrentDialog } from './CreateTorrentDialog'
 import { formatBytes } from '@/lib/utils'
 import { useFocusTrap } from '@/hooks/useFocusTrap'
 import {
@@ -851,6 +852,7 @@ export default function DownloadsPage() {
   const settingsDialogRef = useRef<HTMLDivElement>(null)
   const closeSettings = useCallback(() => setShowSettings(false), [])
   useFocusTrap(settingsDialogRef, showSettings, closeSettings)
+  const [showCreateTorrent, setShowCreateTorrent] = useState(false)
   // A7-04: surfaces a failed pause/resume/delete action (the action hooks now
   // throw on a non-2xx response). Announced via an aria-live region below.
   const [actionError, setActionError] = useState<string | null>(null)
@@ -1169,6 +1171,24 @@ export default function DownloadsPage() {
         {/* Add torrent form */}
         <AddTorrentForm />
 
+        {/* Create torrent (admin) — builds a .torrent from a local file/folder path via
+            qBittorrent's async torrent-creation task API. See CreateTorrentDialog. */}
+        <div className="mb-4">
+          <button
+            onClick={() => setShowCreateTorrent(true)}
+            className="flex items-center gap-1.5 rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-offset-2"
+          >
+            <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+              <path
+                fillRule="evenodd"
+                d="M2 4.75A2.75 2.75 0 0 1 4.75 2h5.5A2.75 2.75 0 0 1 13 4.75v1.5h1.25A2.75 2.75 0 0 1 17 9v6.25A2.75 2.75 0 0 1 14.25 18h-8.5A2.75 2.75 0 0 1 3 15.25V13.5H1.75A.75.75 0 0 1 1 12.75v-6.5A.75.75 0 0 1 1.75 5.5H2v-.75Zm1.5 2.25v6h1.5v-6h-1.5Zm3-1.5h5v-.75c0-.69-.56-1.25-1.25-1.25h-5A1.25 1.25 0 0 0 4 4.75v.75h2.5Zm-.5 8v1.75c0 .69.56 1.25 1.25 1.25h8.5c.69 0 1.25-.56 1.25-1.25V9a1.25 1.25 0 0 0-1.25-1.25H6.25A1.25 1.25 0 0 0 5 9v4.5h1Z"
+                clipRule="evenodd"
+              />
+            </svg>
+            Create Torrent
+          </button>
+        </div>
+
         {/* Filter tabs */}
         <div className="mb-4 flex gap-1 overflow-x-auto border-b border-gray-200 dark:border-gray-800">
           {tabs.map((tab) => (
@@ -1422,6 +1442,11 @@ export default function DownloadsPage() {
           onConfirm={handleConfirmDelete}
           onCancel={() => setPendingDelete(null)}
         />
+      )}
+
+      {/* Create torrent (admin) */}
+      {showCreateTorrent && (
+        <CreateTorrentDialog onClose={() => setShowCreateTorrent(false)} />
       )}
     </div>
   )
