@@ -292,3 +292,19 @@ Guests can join a party without an account. Key variables and design decisions f
 **Files.** `app/src/app/join/page.tsx` (server component); `app/src/app/join/JoinForm.tsx` (client
 component); `app/src/app/api/party/guest-session/route.ts` (POST, public); `src/proxy.ts` (PUBLIC_PATHS
 + party-URL redirect); `VideoPlayer.tsx` (joinUrl format); `migrations.ts` (`is_guest` addCols).
+
+## Ready-check + 5s start countdown (v0.11.8)
+
+A pre-play lobby gate, separate from the technical buffer-readiness gate described above. Members mark
+themselves ready via a new **`userReady`** flag; the host presses "Let's start the party (X/Y ready)" to
+fire a synchronized 5-second countdown on every client, then playback begins in sync. The host can start
+regardless of ready state — this is a social nudge, not a hard gate.
+
+| Concept | Detail |
+| ------- | ------ |
+| `userReady` | New field on `PartyMemberLive` / `MemberSummary`. **Distinct from** `ready` (the existing technical buffer-readiness flag reported on the video `'playing'` event). Reset to `false` on every `start_countdown`. |
+| `set_user_ready` | Client→server: any member toggles their own `userReady`. |
+| `start_countdown` | Client→server, **host-gated**: starts the countdown regardless of who's ready. |
+| `countdown` | Server→client broadcast: `{endsAt, startPositionTicks}`. Every client pauses and seeks to `startPositionTicks` immediately, then plays locally once wall-clock reaches the shared `endsAt` — no further server round-trip needed to start in sync. |
+| `COUNTDOWN_DURATION_MS` | `5000`, in `constants.ts`. |
+| `CountdownOverlay.tsx` | Wired into `VideoPlayer`. Uses `useSyncExternalStore` for the reduced-motion check and defers its first tick a frame — both to satisfy the §7 `set-state-in-effect` lint rule, not stylistic choices. |

@@ -24,27 +24,17 @@ the "top candidates" ranking is rebuilt around what is still grabbable.
 
 ## Already shipped (do not re-suggest)
 
-| Feature | Source | Version |
-|---|---|---|
-| Decision gate-chain + rejection reasons | sonarr #1 | v0.10.0 (§17) |
-| Real Custom Formats (language/group/size/flag) | sonarr #3 / radarr #3 | v0.10.0 (§17) |
-| Blocklist + auto-retry on failed grab (reaper) | sonarr #9 | v0.10.0 (§17) |
-| Shared queue for Party Play + auto-advance | watchparty #1 / vynchronize #1 | v0.10.0 (§16) |
-| Notifications on request-available (Discord / ntfy) | sonarr #7 | v0.11.0 (§18) |
-| Upgrade-until-cutoff + proper/repack (MOVIES) | sonarr #2 | v0.11.0–v0.12.0 (§19) |
-| Indexer health + exponential backoff | prowlarr #3 | v0.12.0 (§21) |
-| Import Lists (Trakt + RSS auto-add) | sonarr #6 / radarr #2 | v0.12.0 (§20) |
-| Transmission + Deluge download clients | (not from sources) | v0.12.0 |
-| Interactive search with rejection reasons | sonarr #8 | shipped with §17 |
-| On-demand subtitle search | (Bazarr-adjacent) | v0.9.11 (§10b) |
-| Keyboard-shortcut registry | (not from sources) | v0.12.0 |
-| Theme marketplace | (not from sources) | v0.12.0 |
-| Per-indexer rate limiting (queries/day + grabs/day) | prowlarr #4 | v0.11.3 |
-| Party Play: creator-kick + control-lock | watchparty #3 | v0.11.3 |
-| Party Play: guest join via invite link | (not from sources) | v0.11.4 |
-| Movie Collections — follow a TMDB franchise | radarr #1 | v0.11.5 |
-| Delay profiles — hold releases N min before grab | sonarr #5 | v0.11.5 |
-| Edition flags + HC-sub detection + AKA fallback search | radarr #3 | v0.11.3 |
+Sourced-from-mining items: decision gate-chain + rejection reasons (sonarr #1), real Custom Formats
+(sonarr #3/radarr #3), blocklist + auto-retry reaper (sonarr #9), Party shared queue + auto-advance
+(watchparty #1/vynchronize #1), Discord/ntfy availability notifications (sonarr #7), movie
+upgrade-until-cutoff + proper/repack (sonarr #2), indexer health/backoff (prowlarr #3), Import Lists
+(sonarr #6/radarr #2), interactive search with rejection reasons (sonarr #8), on-demand subtitle search
+(Bazarr-adjacent), per-indexer rate limiting (prowlarr #4), Party creator-kick + control-lock
+(watchparty #3), Movie Collections (radarr #1), delay profiles (sonarr #5), edition/HC/AKA parsing
+(radarr #3). Not from sources: Transmission + Deluge clients, keyboard-shortcut registry, theme
+marketplace, Party guest join, Web Push notifications, Mobile PWA, Party ready-check countdown,
+sequential download piece map, create-torrent dialog. Version-by-version detail:
+`docs/complete/FEATURES.md`; full history: `CHANGELOG.md`.
 
 ---
 

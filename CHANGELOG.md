@@ -8,6 +8,35 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- **Web Push notifications (VAPID).** Fires a browser push to the user who requested a title when it
+  becomes available, sent alongside the existing Discord/ntfy channels through the single
+  `notifyMediaAvailable` funnel. New `src/lib/push.ts` (VAPID init + `sendPushToUser`, no-ops when
+  VAPID env is unset, mirrors `email.ts`), `push_subscriptions` table, `POST /api/push/subscribe` /
+  `unsubscribe` + `GET /api/push/vapid-public-key`, a subscribe toggle on `/settings/profile`, and the
+  service worker's `push`/`notificationclick` handlers (previously stubs). New dep `web-push`. Env:
+  `VAPID_PUBLIC_KEY`/`VAPID_PRIVATE_KEY`/`VAPID_SUBJECT` (optional — no-ops if unset).
+- **Party Play: ready-check + 5s start countdown lobby.** Members mark themselves ready via a new
+  `userReady` flag (separate from the existing technical buffer-readiness `ready` flag); the host
+  presses "Let's start the party (X/Y ready)" to fire a synchronized 5-second countdown on every
+  client (shared server `endsAt` + captured start position), then playback begins in sync. The host
+  can start regardless of ready state. New WS messages `set_user_ready` + `start_countdown`
+  (host-gated) + `countdown` broadcast; `CountdownOverlay.tsx` wired into `VideoPlayer`.
+- **Mobile PWA.** Installable web app shell: `src/app/manifest.ts` (icons, theme colors, standalone
+  display), a hand-written service worker (`public/sw.js`) that caches only static assets + `/offline`
+  — **never** `/api/*` or personalized HTML, since this app has no external auth gateway and Cache
+  Storage isn't user-scoped — `ServiceWorkerRegistration.tsx`, and `/offline` (a public no-auth
+  fallback shell, added to `proxy.ts` `PUBLIC_PATHS`). Apple-web-app meta + maskable icons for iOS/
+  Android install.
+- **Create-torrent dialog (admin).** `CreateTorrentDialog.tsx` builds a `.torrent` from a local path
+  via qBittorrent 5.x's async torrent-creation task API: submit (`POST .../torrentcreator/addTask`) →
+  poll `GET .../torrentcreator/status` → download the finished `.torrent`. The `/api/qbit` GET proxy
+  gained a binary-safe passthrough for `/torrentcreator/torrentFile` (streams as `ArrayBuffer` instead
+  of corrupting the binary body via the JSON/text decode path).
+- **Sequential download piece map.** `PieceMap.tsx` renders a canvas strip in the downloads Files tab
+  showing per-piece downloaded/downloading/missing state, from a new `GET
+  /api/qbit/torrents/pieceStates` endpoint. Pixel-column binning keeps draw cost O(pieces) regardless
+  of torrent size; colors read the app's `--theme-*` CSS vars so all built-in and custom themes render
+  correctly.
 - **Edition flags, hardcoded-sub detection, and AKA alternate-title fallback search.**
   Five new named flags in `FLAG_PATTERNS` (`quality.ts`) are now usable in custom formats:
   `hc` (matches `HC`/`HCSUB`/`KORSUB`/`RUSUB`/`HardSub`/`HardCoded`), `directors_cut`,
@@ -90,6 +119,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   out of scope.
 
 ### Changed
+- **Downloads are now admin-only.** `/downloads`, `/api/qbit` (GET+POST), `/settings/torrent`, the
+  dashboard "Active Downloads" section, and the Downloads nav item are all gated to `role === 'admin'`.
+  The GET proxy used to be `requireAuth`; since it carries the server-side qBittorrent session cookie,
+  any authed user could otherwise read the full queue/save-paths/prefs with our credentials — it now
+  matches the already-admin write path. Non-admins lose nothing usable (torrent mutations were already
+  admin-only).
+- **Documentation pass:** trimmed `CLAUDE.md` further per Anthropic's current CLAUDE.md guidance
+  (progressive disclosure, "would removing this cause a mistake" litmus test) — moved the Two-Mode
+  Request System (§15) and Grab Confirmation Flow (§18) deep-dives to `docs/features/`, collapsed the
+  Decision Engine section (§17) to a pointer (the detail already lived in
+  `docs/features/decision-engine.md`, so it was duplicated), and added a new §19 pointer for the
+  Mobile PWA / Web Push docs below. Every §7 "known constraint / gotcha" bullet was preserved verbatim.
+  Condensed `docs/incomplete/backlog-buildout-progress.md` (a fully-completed session tracker) and
+  removed backlog items that had already shipped or were stale.
 - **Renamed `subtitle_wants.jellyfin_item_id` / `jellyfin_item_type` → `media_item_id` /
   `media_item_type`** (legacy naming artifact; data was always sourced from the native `media_items`
   table). Idempotent `ALTER TABLE … RENAME COLUMN` migration preserves existing rows and
