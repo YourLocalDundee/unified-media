@@ -8,6 +8,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
+import PushNotificationToggle from '@/components/pwa/PushNotificationToggle'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -605,6 +606,9 @@ export default function ProfileClient({
           {demoStatus === 'saving' ? 'Saving…' : 'Save Profile'}
         </button>
       </section>
+
+      {/* Push notifications */}
+      <PushNotificationToggle />
 
       {/* Sessions section */}
       <SessionsSection currentSessionId={currentSessionId} />

@@ -1006,4 +1006,23 @@ export function runMigrations(db: Database.Database): void {
   // Additive: index on media_items(added_at) for ORDER BY added_at sort on /library.
   // Not present in the original media_items block, so existing DBs need the explicit exec.
   db.exec('CREATE INDEX IF NOT EXISTS idx_media_added_at ON media_items(added_at)')
+
+  // --------------------------------------------------------------------------
+  // Web Push subscriptions (PWA notifications). One row per browser PushSubscription
+  // a user has registered. endpoint is globally unique (it IS the push identity), so a
+  // re-subscribe from the same browser upserts rather than duplicating. p256dh/auth are
+  // the subscription's encryption keys, needed to encrypt each push. user_id is TEXT to
+  // match users.id (UUID). Pruned on 404/410 by lib/push.ts when the endpoint is gone.
+  // --------------------------------------------------------------------------
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS push_subscriptions (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id    TEXT NOT NULL,
+      endpoint   TEXT NOT NULL UNIQUE,
+      p256dh     TEXT NOT NULL,
+      auth       TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user ON push_subscriptions(user_id);
+  `)
 }
