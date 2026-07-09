@@ -31,6 +31,7 @@ import { PartyPanel } from '@/components/party/PartyPanel'
 import { ChatPanel } from '@/components/party/ChatPanel'
 import { ReactionBar } from '@/components/party/ReactionBar'
 import { ReactionOverlay } from '@/components/party/ReactionOverlay'
+import { CountdownOverlay } from '@/components/party/CountdownOverlay'
 import { StartPartyButton } from '@/components/party/StartPartyButton'
 import { joinParty, getPartyInfo, leaveParty, endParty } from '@/lib/party/client'
 
@@ -1431,6 +1432,11 @@ export default function VideoPlayer(props: PlaybackData) {
         <ReactionOverlayMemo reactions={party.reactions} onExpire={party.expireReaction} />
       )}
 
+      {/* Party pre-play countdown overlay (feature: ready-check countdown lobby) */}
+      {partyActive && party.countdown && (
+        <CountdownOverlay endsAt={party.countdown.endsAt} />
+      )}
+
       {/* Party readiness-gate "waiting for others to buffer" overlay */}
       {partyActive && party.waitingFor.length > 0 && (
         <div className="absolute left-1/2 top-20 z-30 -translate-x-1/2 rounded-lg bg-black/80 px-4 py-2 text-center text-sm text-amber-200">
@@ -1716,6 +1722,9 @@ export default function VideoPlayer(props: PlaybackData) {
             controlLocked={party.controlLocked}
             onKick={party.kickMember}
             onControlLockToggle={party.toggleControlLock}
+            userReady={party.userReady}
+            onSetUserReady={party.sendUserReady}
+            onStartCountdown={party.sendStartCountdown}
           />
           <ChatPanelMemo
             messages={party.chatMessages}
