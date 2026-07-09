@@ -17,6 +17,8 @@
  */
 
 import { getSetting } from '@/lib/settings/index'
+import { getDb } from '@/lib/db/index'
+import { sendPushToUser } from '@/lib/push'
 
 const TMDB_IMG = 'https://image.tmdb.org/t/p/w200'
 const SEND_TIMEOUT_MS = 8000
@@ -29,6 +31,8 @@ export interface MediaAvailablePayload {
   posterPath?: string | null
   /** username / display name of the requester, best-effort */
   requestedBy?: string | null
+  /** id of the user who requested this item — the Web Push recipient (best-effort) */
+  userId?: string | null
 }
 
 export interface ChannelResult {
@@ -156,6 +160,25 @@ async function dispatch(p: MediaAvailablePayload): Promise<ChannelResult[]> {
 }
 
 /**
+ * Resolve a deep-link path for the now-available item. Prefers the owned library
+ * item (which exists by the time availability fires) so the push opens straight to
+ * it; falls back to the requests list if it can't be resolved.
+ */
+function resolveDeepLink(tmdbId: number, mediaType: 'movie' | 'tv'): string {
+  try {
+    // media_items stores TV as type='series'.
+    const type = mediaType === 'movie' ? 'movie' : 'series'
+    const row = getDb()
+      .prepare('SELECT id FROM media_items WHERE tmdb_id = ? AND type = ?')
+      .get(tmdbId, type) as { id: string } | undefined
+    if (row) return `/library/${row.id}`
+  } catch {
+    /* DB read failed — fall through to the generic requests page */
+  }
+  return '/requests'
+}
+
+/**
  * Fire the "media now available" notification across all channels. Respects the
  * notify_on_available master toggle. Best-effort: logs channel failures, never throws.
  */
@@ -164,6 +187,19 @@ export async function notifyMediaAvailable(p: MediaAvailablePayload): Promise<vo
   const results = await dispatch(p)
   for (const r of results) {
     if (!r.ok) console.error(`[notify] ${r.channel} failed for "${p.title}": ${r.error}`)
+  }
+
+  // Web Push — sent alongside the Discord/ntfy channels above, to the user who
+  // requested the item. No-op (logs only) when VAPID is unconfigured. Best-effort:
+  // never lets a push failure break the notification path.
+  if (p.userId) {
+    await sendPushToUser(p.userId, {
+      title: `Now available: ${titleLine(p)}`,
+      body: bodyLine(p),
+      url: resolveDeepLink(p.tmdbId, p.mediaType),
+    }).catch((e: unknown) => {
+      console.error(`[notify] push failed for "${p.title}": ${errMsg(e)}`)
+    })
   }
 }
 

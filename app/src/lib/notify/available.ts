@@ -29,6 +29,7 @@ export function collectAvailableNotifications(
   const db = getDb()
   const placeholders = fromStatuses.map(() => '?').join(',')
   type Row = {
+    user_id: string | null
     title: string
     year: number | null
     poster_path: string | null
@@ -37,7 +38,7 @@ export function collectAvailableNotifications(
   }
   const rows = db
     .prepare(
-      `SELECT mr.title, mr.year, mr.poster_path, u.username, u.display_name
+      `SELECT mr.user_id, mr.title, mr.year, mr.poster_path, u.username, u.display_name
          FROM media_requests mr
          LEFT JOIN users u ON u.id = mr.user_id
         WHERE mr.tmdb_id = ? AND mr.media_type = ? AND mr.status IN (${placeholders})`,
@@ -51,6 +52,7 @@ export function collectAvailableNotifications(
     tmdbId,
     posterPath: r.poster_path,
     requestedBy: r.display_name || r.username || null,
+    userId: r.user_id,
   }))
 }
 

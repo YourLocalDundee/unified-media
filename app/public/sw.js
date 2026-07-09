@@ -134,9 +134,61 @@ async function networkFirstNavigation(request) {
 }
 
 // -----------------------------------------------------------------------------
-// Push notifications — stub for a future feature (Web Push). Intentionally a
-// no-op today; a later feature extends this section rather than replacing
-// this worker, so keep push/notificationclick handling isolated here.
+// Push notifications (Web Push).
+//
+// The server (lib/push.ts) sends a JSON payload: { title, body, icon, data.url }.
+// `push` shows the notification; `notificationclick` focuses an existing tab on
+// the target URL if one is open, otherwise opens a new window. Both are wrapped
+// in waitUntil so the SW stays alive until the async work settles.
+//
+// This section is isolated from the cache logic above and does not touch it.
 // -----------------------------------------------------------------------------
-self.addEventListener('push', () => {})
-self.addEventListener('notificationclick', () => {})
+const DEFAULT_ICON = '/icons/icon-192.png'
+
+self.addEventListener('push', event => {
+  let payload = {}
+  try {
+    payload = event.data ? event.data.json() : {}
+  } catch {
+    // Non-JSON or empty payload — fall back to a plain text body if present.
+    payload = { body: event.data ? event.data.text() : '' }
+  }
+
+  const title = payload.title || 'Unified Media'
+  const url = (payload.data && payload.data.url) || '/'
+  const options = {
+    body: payload.body || '',
+    icon: payload.icon || DEFAULT_ICON,
+    badge: DEFAULT_ICON,
+    data: { url },
+  }
+
+  event.waitUntil(self.registration.showNotification(title, options))
+})
+
+self.addEventListener('notificationclick', event => {
+  event.notification.close()
+
+  const targetUrl = (event.notification.data && event.notification.data.url) || '/'
+  const targetPath = new URL(targetUrl, self.location.origin).pathname
+
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(clientList => {
+      // Focus an already-open tab whose path matches the target, else any open tab
+      // navigated to the target, else open a fresh window.
+      for (const client of clientList) {
+        const clientPath = new URL(client.url).pathname
+        if (clientPath === targetPath && 'focus' in client) {
+          return client.focus()
+        }
+      }
+      for (const client of clientList) {
+        if ('navigate' in client && 'focus' in client) {
+          return client.navigate(targetUrl).then(navigated => (navigated || client).focus())
+        }
+      }
+      if (self.clients.openWindow) return self.clients.openWindow(targetUrl)
+      return undefined
+    })
+  )
+})
