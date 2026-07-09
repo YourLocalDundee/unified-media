@@ -25,9 +25,12 @@ Documentation for the unified-frontend / unified-media project. `CLAUDE.md` at t
 | `player/quality-resolution.md` | Quality option building, switching, aspect ratio, screen-aware tiers |
 | `player/chrome-orientation.md` | Chrome suppression, fullscreen/orientation, resume-seek, error handling |
 | `player/audio-subtitles.md` | Embedded subs → WebVTT, audio switching, language defaults, on-demand subtitle search |
-| `features/torrent-system.md` | qBittorrent client UI, types, proxy, endpoint catalogue, settings tabs |
-| `features/party-play.md` | Watch-together: architecture, protocol, sync, queue, audit, edge test |
+| `features/torrent-system.md` | qBittorrent client UI, types, proxy, endpoint catalogue, settings tabs, admin-only gating, piece map, create-torrent |
+| `features/party-play.md` | Watch-together: architecture, protocol, sync, queue, moderation, guest join, ready-check countdown, audit, edge test |
 | `features/decision-engine.md` | Hard gates + custom formats in the grabber |
+| `features/request-system.md` | Two-mode (Quick / Long-term) request system |
+| `features/grab-confirmation.md` | User-facing grab confirmation flow + tiered candidate API |
+| `features/pwa-notifications.md` | Mobile PWA shell + Web Push (VAPID) notifications |
 
 The original full-text per-section content also lives in git history if a condensed pointer ever loses
 a detail you need.

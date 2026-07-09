@@ -1,9 +1,9 @@
 # unified-frontend
 
-A single-pane-of-glass web app for the minime home server media stack (v0.11.2). Replaces the
-old multi-tab workflow with one fully native interface for browsing, requesting, watching, and
-monitoring downloads. The app runs its own media server, indexer aggregation, download automation,
-and subtitle management — zero Jellyfin dependency.
+A single-pane-of-glass web app for the minime home server media stack (v0.11.9 doc-tracked; see note
+below). Replaces the old multi-tab workflow with one fully native interface for browsing, requesting,
+watching, and monitoring downloads. The app runs its own media server, indexer aggregation, download
+automation, and subtitle management — zero Jellyfin dependency.
 
 > **This file is the lean entry point.** Deep-dives, shipped-feature history, and the backlog now
 > live under `docs/`. Start with `docs/README.md` for the index and conventions. Section pointers
@@ -14,9 +14,11 @@ and subtitle management — zero Jellyfin dependency.
 
 ## Status & docs map
 
-- **Current version:** v0.11.2 (`app/package.json` + this header).
+- **Current version:** v0.11.9 is the latest doc-tracked feature-batch label (see
+  `docs/complete/FEATURES.md`); `app/package.json` is still `0.11.2`, bumped only at an actual
+  release cut, so the two numbers legitimately diverge between cuts.
 - **Audit:** the 2026-06-13 21-agent audit is closed (all P0/P1 fixed). History +
-  remediation: `docs/analysis/audit-2026-06-13-summary.md`; live tracker `analysis/open-issues.md`.
+  remediation: `docs/analysis/audit-2026-06-13-summary.md`; live tracker `docs/incomplete/open-issues.md`.
 - **What's shipped:** `docs/complete/FEATURES.md`.
 - **What's open / next:** `docs/incomplete/BACKLOG.md`.
 - **Chronology:** `CHANGELOG.md`.
@@ -26,12 +28,13 @@ and subtitle management — zero Jellyfin dependency.
 | Overview, architecture, services, env | §1–§5, §8 | — |
 | Gotchas / "don't trip over this" | §7 | — |
 | Video player (tools, quality, chrome, audio/subs) | pointer §9 | `docs/player/` |
-| Torrent system internals | pointer §12 | `docs/features/torrent-system.md` |
-| Two-mode request system | §15 | — |
-| Party Play (watch together) | pointer §16 | `docs/features/party-play.md` |
+| Torrent system internals (+ admin-only gating, piece map, create-torrent) | pointer §12 | `docs/features/torrent-system.md` |
+| Two-mode request system | pointer §15 | `docs/features/request-system.md` |
+| Party Play (watch together, incl. ready-check countdown) | pointer §16 | `docs/features/party-play.md` |
 | Decision engine (gates + custom formats) | pointer §17 | `docs/features/decision-engine.md` |
 | Independence build (native media stack) | pointer §14 | `docs/complete/FEATURES.md` |
-| Grab confirmation flow | §18 | — |
+| Grab confirmation flow | pointer §18 | `docs/features/grab-confirmation.md` |
+| Mobile PWA + Web Push notifications | pointer §19 | `docs/features/pwa-notifications.md` |
 
 ---
 
@@ -147,14 +150,8 @@ via `UMT_*`. Cookie session is obtained by POSTing creds to `/api/v2/auth/login`
 re-authenticate and retry once. See §7 for the v5 cookie-name gotcha and the `/api/qbit` vs `/api/qbt`
 typo trap. Full endpoint catalogue: `docs/features/torrent-system.md`.
 
-**Download client registry** (`src/lib/download-client/`): `qbittorrent.ts` is the implemented
-primary; `transmission.ts` / `deluge.ts` are stubs. Active client chosen by `DOWNLOAD_CLIENT`
-(default `umt`).
-
-Per-service API operation tables (Seerr search/request, qBt torrents) have moved out of this file to
-keep it lean — they live alongside the feature deep-dives in `docs/`. Native media browse/playback
-is documented in `docs/complete/FEATURES.md` and `docs/player/`. The env + URL + proxy facts above
-are the daily-reference subset.
+**Download client registry** (`src/lib/download-client/`): `qbittorrent.ts`, `transmission.ts`, and
+`deluge.ts` are all implemented. Active client chosen by `DOWNLOAD_CLIENT` (default `umt`).
 
 ---
 
@@ -201,8 +198,7 @@ app/app/
 - Already-owned card reached *from discovery* → `/browse/${id}` (acquisition detail, intentional).
 - **Never** link home/library-context cards to `/browse/[id]` for owned content — that drops the user
   into the acquisition UI for something they already have. See §7 for the series-container `/play`
-  trap. Page-by-page specs that used to live here are condensed into the route comments above; the
-  detailed per-page spec is recoverable from git history if needed.
+  trap.
 
 ---
 
@@ -314,6 +310,8 @@ TRUSTED_PROXY_COUNT=2     # XFF depth: BunkerWeb→Caddy=2; unset in dev. Drives
 # SMTP (all optional; unset → codes print to docker logs)
 SMTP_HOST= SMTP_PORT=587 SMTP_USER= SMTP_PASS= SMTP_FROM=
 EMAIL_VERIFICATION_REQUIRED=          # 'true' to require email code; default false
+# Web Push (all optional; unset → push is a logging no-op, mirrors SMTP above)
+VAPID_PUBLIC_KEY= VAPID_PRIVATE_KEY= VAPID_SUBJECT=   # generate: npx web-push generate-vapid-keys
 ```
 
 ### Independence-build env (native stack)
@@ -403,9 +401,15 @@ cleanup job.
 
 The full qBittorrent client UI (`/downloads` + `TorrentDetailPanel`), the `src/types/torrent.ts` type
 catalogue (44-field `QbtTorrent`, 90-field `QbtPreferences`, etc.), the proxy multipart/query/re-auth
-fixes, the complete endpoint table (~40 ops), and the 8-tab `/settings/torrent` page are documented in
-`docs/features/torrent-system.md`. Live-page note: `src/app/downloads/components/*` is a **dead
-alternate UI** — the live UI is `page.tsx` + `TorrentDetailPanel.tsx`. Proxy spelling is **`/api/qbit`**.
+fixes, the complete endpoint table (~40 ops), the 8-tab `/settings/torrent` page, the Files-tab piece
+map, and the create-torrent dialog are documented in `docs/features/torrent-system.md`. Live-page note:
+`src/app/downloads/components/*` is a **dead alternate UI** — the live UI is `page.tsx` +
+`TorrentDetailPanel.tsx`. Proxy spelling is **`/api/qbit`**.
+
+**Downloads are admin-only:** `/downloads`, `/api/qbit` (GET+POST), `/settings/torrent`, the dashboard
+"Active Downloads" section, and the Downloads nav item are all gated to `role === 'admin'` — the GET
+proxy carries the server-side qBittorrent session cookie, so a regular authed user could otherwise
+read the full queue/prefs via it. Detail: `docs/features/torrent-system.md`.
 
 ---
 
@@ -426,25 +430,12 @@ Seerr webhook config are in `docs/complete/FEATURES.md`.
 
 ---
 
-## 15. Two-Mode Request System (v0.9.0+)
+## 15. Two-Mode Request System → see `docs/features/request-system.md`
 
-Every request is **Quick** or **Long-term** (`media_requests.request_type`).
-
-**Quick:** only for content `year < currentYear`; auto-approved on creation (system `auto-pick` only —
-an interactive hand-picked release stays `request_method='interactive'` and goes to the admin queue);
-added to `monitored_items`; slot-limited **1 movie / 2 TV** per user (`status IN approved,available`);
-on availability `auto_delete_at = now + 48h`; the hourly cron deletes files + marks `expired`, freeing
-the slot; a full slot at submit → row deleted, API returns `429`.
-
-**Long-term:** any content; manual admin approval (`pending` until approve/decline); never auto-deleted;
-no slot limit.
-
-**UI** (`src/components/media/RequestOptions.tsx`): old content → "Quick (48h)" + "Long-term"; new
-content → single "Request" (long-term only); status badge carries the type label.
-
-Key files: `requests/types.ts`, `requests/auto-approve.ts` (`tryAutoApprove()` gates on quick +
-auto-pick + year + slot), `automation/availability.ts`, `automation/auto-delete.ts`,
-`api/requests/route.ts`.
+Every request is **Quick** (old content, auto-approved, slot-limited 1 movie/2 TV per user, 48h
+auto-delete after availability) or **Long-term** (any content, manual admin approval, never
+auto-deleted, no slot limit) — `media_requests.request_type`. Full rules, the auto-approve gate
+conditions, and key files: `docs/features/request-system.md`.
 
 ---
 
@@ -458,9 +449,11 @@ so the `globalThis`-pinned `PartyStateStore` is shared. Browser connects same-or
 
 Full architecture (data model, the PartyStateStore scale seam, the server-authority command pipeline,
 drift bands, readiness gate, resilience/grace, the three action-origin correctness rule, the shared
-queue + idempotent auto-advance + navigation-race handling, the v0.9.5 audit remediation, and the
-**mandated off-tailnet cellular idle edge test**) is in `docs/features/party-play.md`. The feature
-audit is `PARTY_PLAY_AUDIT.md` at repo root (all findings fixed).
+queue + idempotent auto-advance + navigation-race handling, creator-kick/control-lock, guest join, the
+**ready-check + 5s start countdown lobby** (`userReady`, separate from the technical buffer-readiness
+`ready` flag), the v0.9.5 audit remediation, and the **mandated off-tailnet cellular idle edge test**)
+is in `docs/features/party-play.md`. The feature audit is `PARTY_PLAY_AUDIT.md` at repo root (all
+findings fixed).
 
 **Party play coordinates the existing player only** — it does not touch transcode/codec/audio/subtitle
 behavior, and `position_ticks` remains the single source of truth for progress.
@@ -469,57 +462,32 @@ behavior, and `position_ticks` remains the single source of truth for progress.
 
 ## 17. Decision Engine — Gate-Chain + Custom Formats → see `docs/features/decision-engine.md`
 
-Two-stage release evaluation in the grabber (Sonarr/Radarr-style): **hard gates** decide what's
-grabbable, then a **soft score** ranks survivors. Auto-pick never grabs a gated release; the
-interactive admin picker lists gated releases (with reasons) and can override-grab.
-
-Gates (`src/lib/automation/gates.ts`): blocklist / seed-floor / sample / size-cap, thresholds in
-`app_settings` (editable at `/admin/automation` → "Grab Gates", v0.10.2). Custom formats
-(`src/lib/automation/quality.ts`): `title_regex | resolution | source | codec | language |
-release_group | size | flag`, scored within `autoPickScore`. Edition/HC flags include `hc`
-(hardcoded subs), `directors_cut`, `theatrical`, `remastered`, `unrated` (plus `extended`/`imax`/
-`uncut` from before). **AKA fallback:** if the primary title search returns 0 results, `grabItem`
-tries up to 5 stored `alternative_titles` as fallback queries; titles are fetched from TMDB and
-stored at approval time. Full gate table, flag catalogue, and AKA details:
-`docs/features/decision-engine.md`.
+Two-stage release evaluation in the grabber (Sonarr/Radarr-style): **hard gates** (blocklist /
+seed-floor / sample / size-cap, editable at `/admin/automation` → "Grab Gates") decide what's
+grabbable, then a **soft score** (custom formats incl. edition/HC/AKA-alternate-title fallback search)
+ranks survivors. Auto-pick never grabs a gated release; the interactive admin picker lists gated
+releases (with reasons) and can override-grab. Full gate table, custom-format types, flag catalogue,
+and AKA fallback details: `docs/features/decision-engine.md`.
 
 ---
 
-## 18. Grab Confirmation Flow
+## 18. Grab Confirmation Flow → see `docs/features/grab-confirmation.md`
 
 Every user-initiated auto-pick action shows the release it would grab and lets the user Grab it /
 walk to the Next best / drop to the interactive picker / Cancel, instead of firing straight to the
-download client. The 5-minute background cron (`scheduler.ts`) and the Seerr webhook path are
-**untouched** — confirmation only applies where there's a live user session to show a modal to.
+download client. The 5-minute background cron and the Seerr webhook path are **untouched** —
+confirmation only applies where there's a live user session to show a modal to. Core split
+(`searchAndScoreItem` → `grabSpecificRelease`), the tiered candidate API (`GET /api/grab/candidates`,
+`POST /api/grab/confirm`), the shared `<GrabConfirmModal>` client, and the Vitest setup notes are in
+`docs/features/grab-confirmation.md`.
 
-**Core split** (`src/lib/automation/grabber.ts`): `grabItem` used to do everything inline. It's now
-`searchAndScoreItem` (search + scope-filter + gate-partition + score — no side effects besides the
-delay-gate's `release_seen_timestamps` upsert) → `grabSpecificRelease` (the actual commit: addTorrent
-+ grab_history + status→'grabbed'). `grabItem` itself is now a thin wrapper: D3 claim →
-`searchAndScoreItem` → `grabSpecificRelease`. `searchCandidatesForItem` dispatches to this generic
-pipeline OR to `findSeasonPackCandidates`/`findArcPackCandidates` (the bespoke range/pack-aware
-search) depending on the item's scope — the confirmation flow's one entrypoint for "what would we
-grab," shared by the candidates preview and the confirm-time re-validation. `splitTiers` divides a
-scored candidate list into Tier 1 (gate-passing + live, `autoPickScore` order) and Tier 2 (gated
-and/or dead, revealed only after explicit opt-in, grab requires a second confirm).
+---
 
-**API:** `GET /api/grab/candidates` (cached-first via `grab_results`, `?refresh=true` for a live
-re-search — never written back to `grab_results`, that table is cron/grab history) and
-`POST /api/grab/confirm` (re-validates fresh, requires `override:true` to commit a Tier-2 release,
-calls `grabSpecificRelease`). Both accept `itemId` (preferred) or `tmdbId`+`type` (resolved via
-`resolveMonitoredItemForRequest`, for callers that only have the request row).
+## 19. Mobile PWA + Web Push Notifications → see `docs/features/pwa-notifications.md`
 
-**Client:** `useGrabConfirm()` / `<GrabConfirmModal>` (`src/components/media/GrabConfirmModal.tsx`)
-— every trigger point (`RequestOptions` Auto-grab, `SeasonGrabControl` Grab pack, admin/automation
-Grab Now, requests-page Re-Search / Approve-auto-search) opens the same modal rather than
-duplicating UI. Two flows (`RequestOptions`, `SeasonGrabControl`'s "Grab pack") had to split
-"create the wanted item" from "grab it" — the item/request is created exactly as before, only the
-immediate grab is deferred; Cancel just leaves the item `'wanted'` for the cron, same as a
-not-found grab attempt always did. `TorrentPickModal`'s optional `onSubmitOverride` prop routes a
-manual pick through `/api/grab/confirm` instead of its own `POST /api/requests` (which would 409 —
-a request already exists by the time the confirm modal's "Search manually" is reachable).
-
-**Testing:** Vitest is now installed (`vitest.config.ts`, `npm run test`). Test files live next to
-their source (`src/lib/automation/grabber.test.ts`) — this was the first test in the repo, so there
-was no prior mocking convention; `vi.hoisted()` is required when a `vi.mock()` factory needs to
-reference a shared mock function (plain module-scope `const`s aren't visible inside a hoisted factory).
+Installable PWA shell (manifest, service worker, offline fallback) plus VAPID Web Push notifications
+on request-available, sent alongside the existing Discord/ntfy channels. The service worker's cache
+boundary is load-bearing: it caches **only** static assets + `/offline`, **never** `/api/*` or any
+personalized HTML — this app has no external auth gateway and Cache Storage isn't user-scoped, so
+caching an authenticated response could leak across accounts on a shared device. VAPID env vars are
+in §8. Full detail: `docs/features/pwa-notifications.md`.

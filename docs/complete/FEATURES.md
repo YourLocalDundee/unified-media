@@ -32,7 +32,7 @@ Seven shipped phases of native TypeScript services inside the monorepo. All tabl
 
 **Admin nav order:** Overview → User Monitoring → User Management → Invites → Requests → Watch Activity
 → Audit Log → Server Status → Indexers → Automation → Request Bridge → Subtitles → Media Server →
-Quality Profiles → Settings.
+Quality Profiles → Collections → Settings.
 
 ### Independence-build env vars
 
@@ -61,7 +61,7 @@ secret in both Seerr and `SEERR_WEBHOOK_SECRET`. `/api/seerr/webhook` receives `
 | Feature | Version | Deep-dive |
 | ------- | ------- | --------- |
 | Video player — tools, quality, chrome/orientation, audio+subtitle tracks | v0.9.3–0.9.4 | `docs/player/` |
-| Two-mode request system (Quick / Long-term) | v0.9.0+ | CLAUDE.md §15 |
+| Two-mode request system (Quick / Long-term) | v0.9.0+ | `docs/features/request-system.md` |
 | Unified torrent client UI + 8-tab settings | v0.5.2+ / v0.9.10 | `docs/features/torrent-system.md` |
 | **Watch party sync** (shared control, presence, chat, reactions) | v0.9.5 | `docs/features/party-play.md` |
 | Party shared queue + auto-advance | v0.10.0 | `docs/features/party-play.md` |
@@ -69,13 +69,19 @@ secret in both Seerr and `SEERR_WEBHOOK_SECRET`. `/api/seerr/webhook` receives `
 | Party guest join (invite link, no account needed) | v0.11.4 | `docs/features/party-play.md` |
 | Movie Collections (follow a TMDB franchise) | v0.11.5 | — |
 | Delay profiles (hold releases N minutes before grab) | v0.11.5 | — |
-| Per-indexer queries/day + grabs/day rate limiting | v0.11.3 | CLAUDE.md §17, `docs/features/decision-engine.md` |
+| Per-indexer queries/day + grabs/day rate limiting | v0.11.3 | `docs/features/decision-engine.md` |
 | **On-demand subtitle search** + live `<track>` injection | v0.9.11 | `docs/player/audio-subtitles.md` |
 | Edition/HC flags + AKA alternate-title fallback | v0.11.3 | `docs/features/decision-engine.md` |
 | Decision engine — hard gates + custom formats | v0.10.0 | `docs/features/decision-engine.md` |
 | Season/arc grab pipeline (TMDB episode_groups, interactive picker) | v0.9.7–0.9.10 | CLAUDE.md §5 (browse) |
 | Admin user monitoring + per-user detail | v0.5.3 | CLAUDE.md §5 |
 | Profile/account settings (self-contained, no external identity provider) | v0.5.2+ | CLAUDE.md §11 |
+| Downloads made admin-only (queue, torrent settings, dashboard widget, nav) | v0.11.6 | `docs/features/torrent-system.md` |
+| Sequential download piece map (Files tab canvas) | v0.11.6 | `docs/features/torrent-system.md` |
+| Create-torrent dialog (admin) | v0.11.6 | `docs/features/torrent-system.md` |
+| Mobile PWA (manifest, service worker, offline shell) | v0.11.7 | `docs/features/pwa-notifications.md` |
+| Party ready-check + 5s start countdown lobby | v0.11.8 | `docs/features/party-play.md` |
+| Web Push notifications (VAPID) | v0.11.9 | `docs/features/pwa-notifications.md` |
 
 ## Done items pulled from the old §13 backlog
 
@@ -86,6 +92,7 @@ secret in both Seerr and `SEERR_WEBHOOK_SECRET`. `/api/seerr/webhook` receives `
   pick → `POST /api/media/subtitles/grab` → live `<track>` served by stable `subtitle_wants.id`, no
   reload.
 - **Admin tools** — per-user watch history, sessions, audit log, login history implemented at
-  `/admin/users/[id]` (v0.5.3). (Remaining: bulk session revoke, audit CSV export — see BACKLOG.)
+  `/admin/users/[id]` (v0.5.3), plus bulk "Revoke all sessions" on `/admin/monitoring` and audit-log
+  CSV export (`/api/admin/audit/export`).
 - **Sonarr/Radarr status** — read-only monitoring status on media detail pages (shipped as part of the
   independence build).
