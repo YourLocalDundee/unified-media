@@ -87,6 +87,11 @@ export interface PartyMemberLive {
   socketId: string
   displayName: string
   ready: boolean
+  /** Lobby "I'm ready to watch" flag (feature: ready-check countdown). Distinct from
+   *  `ready` (technical buffer-readiness gate reported on the video 'playing' event) —
+   *  this one is a manual user toggle in the pre-play lobby. Reset to false on every
+   *  `start_countdown`. */
+  userReady: boolean
   lastHeartbeat: number
   reportedPositionTicks: number
   clockOffsetMs: number
@@ -130,6 +135,8 @@ export interface MemberSummary {
   userId: string
   displayName: string
   ready: boolean
+  /** Lobby "I'm ready to watch" flag — see PartyMemberLive.userReady. */
+  userReady: boolean
   connectionState: ConnectionState
 }
 
@@ -233,6 +240,20 @@ export interface ControlLockMessage {
   partyId: string
   locked: boolean
 }
+// --- ready-check + countdown (feature: pre-play lobby) ---
+/** Any member toggles their own lobby "ready" flag. Distinct from the technical
+ *  buffer-readiness `ready` message — this is a manual pre-play affordance. */
+export interface SetUserReadyMessage {
+  type: 'set_user_ready'
+  partyId: string
+  ready: boolean
+}
+/** Host-only: start the synchronized 5-second countdown. The host may start whether
+ *  or not everyone has marked themselves ready. */
+export interface StartCountdownMessage {
+  type: 'start_countdown'
+  partyId: string
+}
 
 export type ClientMessage =
   | JoinMessage
@@ -249,6 +270,8 @@ export type ClientMessage =
   | QueueAdvanceRequest
   | KickMessage
   | ControlLockMessage
+  | SetUserReadyMessage
+  | StartCountdownMessage
 
 // ---------------------------------------------------------------------------
 // Server -> Client messages
@@ -344,6 +367,17 @@ export interface ControlLockedMessage {
   partyId: string
   locked: boolean
 }
+// --- ready-check + countdown (feature: pre-play lobby) ---
+/** Broadcast to all members when the host starts the countdown. Every client pauses
+ *  and seeks to startPositionTicks immediately, then plays locally once wall-clock
+ *  reaches endsAt — shared by every client, so no further message is needed to start
+ *  playback in sync. */
+export interface CountdownMessage {
+  type: 'countdown'
+  partyId: string
+  endsAt: number
+  startPositionTicks: number
+}
 
 export type ServerMessage =
   | StateMessage
@@ -359,6 +393,7 @@ export type ServerMessage =
   | ErrorMessage
   | MemberKickedMessage
   | ControlLockedMessage
+  | CountdownMessage
 
 // ---------------------------------------------------------------------------
 // Session identity resolved from the unified-session cookie at WS upgrade.

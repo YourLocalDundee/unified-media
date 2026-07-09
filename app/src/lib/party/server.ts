@@ -56,6 +56,7 @@ import {
   SESSION_RECHECK_INTERVAL_MS,
   TICKS_PER_MS,
   allowedWsOrigins,
+  COUNTDOWN_DURATION_MS,
 } from './constants'
 import {
   extrapolatePosition,
@@ -98,6 +99,7 @@ import type {
   QueueAdvanceRequest,
   KickMessage,
   ControlLockMessage,
+  StartCountdownMessage,
 } from './types'
 
 const PERIODIC_TICK_MS = 2500
@@ -177,6 +179,7 @@ function buildStateMessage(state: PartyLiveState, effectiveAt: number, serverTim
       userId: m.userId,
       displayName: m.displayName,
       ready: m.ready,
+      userReady: m.userReady,
       connectionState: m.connectionState,
     })
   }
@@ -703,6 +706,51 @@ async function handleControlLock(
 }
 
 // ---------------------------------------------------------------------------
+// Ready-check + countdown (feature: pre-play lobby)
+// ---------------------------------------------------------------------------
+
+/** Host starts the synchronized 5-second countdown. Whether or not everyone has
+ *  marked themselves userReady, the host may always start. Broadcasts endsAt (shared
+ *  wall-clock target so every client starts playback in sync with no further message)
+ *  and the current authoritative positionTicks so every client aligns before counting
+ *  down. Resets every member's userReady — a fresh lobby for the next round. */
+async function handleStartCountdown(
+  rt: ServerRuntime,
+  entry: SocketEntry,
+  identity: PartySessionIdentity,
+  msg: StartCountdownMessage,
+): Promise<void> {
+  const partyId = msg.partyId
+  const partyRow = getActivePartyById(partyId)
+  if (!partyRow || identity.userId !== partyRow.host_user_id) {
+    sendError(entry.ws, 'not_host', 'Only the host can start the countdown')
+    return
+  }
+
+  const store = getPartyStore()
+  const now = Date.now()
+  const endsAt = now + COUNTDOWN_DURATION_MS
+  let startPositionTicks = 0
+
+  try {
+    await store.updateParty(partyId, (s) => {
+      startPositionTicks = Math.round(extrapolatePosition(s, now))
+      for (const m of s.members.values()) m.userReady = false
+    })
+  } catch {
+    sendError(entry.ws, 'party_not_found', 'Party not found')
+    return
+  }
+
+  broadcastToParty(rt, partyId, {
+    type: 'countdown',
+    partyId,
+    endsAt,
+    startPositionTicks,
+  })
+}
+
+// ---------------------------------------------------------------------------
 // Inbound validation (C1) + rate limiting (H3)
 // ---------------------------------------------------------------------------
 
@@ -921,6 +969,28 @@ function validateMessage(entry: SocketEntry, msg: ClientMessage): boolean {
       return true
     }
 
+    case 'set_user_ready': {
+      const m = msg as { partyId?: unknown; ready?: unknown }
+      if (typeof m.partyId !== 'string' || m.partyId.length === 0) {
+        sendError(entry.ws, 'bad_field', 'Invalid partyId')
+        return false
+      }
+      if (typeof m.ready !== 'boolean') {
+        sendError(entry.ws, 'bad_field', 'Invalid ready')
+        return false
+      }
+      return true
+    }
+
+    case 'start_countdown': {
+      const m = msg as { partyId?: unknown }
+      if (typeof m.partyId !== 'string' || m.partyId.length === 0) {
+        sendError(entry.ws, 'bad_field', 'Invalid partyId')
+        return false
+      }
+      return true
+    }
+
     default:
       return true
   }
@@ -1103,6 +1173,20 @@ async function handleMessage(rt: ServerRuntime, entry: SocketEntry, raw: string)
       await handleControlLock(rt, entry, identity, msg)
       break
 
+    case 'set_user_ready': {
+      await store.setMemberUserReady(partyId, identity.userId, msg.ready)
+      // Broadcast promptly (unlike the technical `ready` gate) so the roster's
+      // userReady dots and the host's "(X/Y ready)" label update live for everyone,
+      // not just at the next periodic keepalive.
+      const fresh = await store.getParty(partyId)
+      if (fresh) broadcastState(rt, fresh, Date.now())
+      break
+    }
+
+    case 'start_countdown':
+      await handleStartCountdown(rt, entry, identity, msg)
+      break
+
     default:
       sendError(entry.ws, 'unknown_type', 'Unknown message type')
   }
@@ -1197,6 +1281,7 @@ async function handleJoin(rt: ServerRuntime, entry: SocketEntry, partyId: string
       socketId: entry.id,
       displayName: identity.displayName,
       ready: false,
+      userReady: false,
       lastHeartbeat: now,
       reportedPositionTicks,
       clockOffsetMs: 0,

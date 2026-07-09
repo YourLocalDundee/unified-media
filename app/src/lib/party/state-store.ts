@@ -36,6 +36,9 @@ export interface PartyStateStore {
   addMember(partyId: string, member: PartyMemberLive): Promise<void>
   removeMember(partyId: string, userId: string): Promise<void>
   setMemberReady(partyId: string, userId: string, ready: boolean): Promise<void>
+  /** Lobby "I'm ready to watch" flag (feature: ready-check countdown) — distinct from
+   *  setMemberReady's technical buffer-readiness gate. */
+  setMemberUserReady(partyId: string, userId: string, ready: boolean): Promise<void>
   heartbeat(
     partyId: string,
     userId: string,

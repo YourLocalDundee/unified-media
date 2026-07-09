@@ -55,6 +55,15 @@ export interface PartyReaction {
   ts: number
 }
 
+/** A live host-triggered start countdown (feature: ready-check + countdown lobby).
+ *  endsAt is a shared server wall-clock target — every client independently plays
+ *  locally once its clock (adjusted by the smoothed offset) reaches it, so no further
+ *  message is needed for everyone to start in sync. */
+export interface PartyCountdown {
+  endsAt: number
+  startPositionTicks: number
+}
+
 export interface UsePartySyncResult {
   connected: boolean
   members: MemberSummary[]
@@ -87,6 +96,14 @@ export interface UsePartySyncResult {
   controlLocked: boolean
   kickMember: (targetUserId: string) => void
   toggleControlLock: (locked: boolean) => void
+  // --- ready-check + countdown (feature: pre-play lobby) ---
+  /** The local user's own lobby-ready flag, derived from `members`. */
+  userReady: boolean
+  sendUserReady: (ready: boolean) => void
+  /** Host-only (server enforces); starts the synchronized 5s countdown. */
+  sendStartCountdown: () => void
+  /** Non-null while a countdown is in flight; null once playback has started. */
+  countdown: PartyCountdown | null
 }
 
 interface UsePartySyncOpts {
@@ -145,6 +162,7 @@ export function usePartySync(
   }
   const [queue, setQueue] = useState<QueueItemDTO[]>([])
   const [controlLocked, setControlLocked] = useState(false)
+  const [countdown, setCountdown] = useState<PartyCountdown | null>(null)
   // Transient, user-facing server error surfaced to the panel (A5-06).
   const [lastError, setLastError] = useState<string | null>(null)
   const errorClearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -161,6 +179,9 @@ export function usePartySync(
   const transitionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   // H6: the reseek macrotask, tracked so it can be cleared on reschedule/unmount.
   const reseekTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // The countdown's scheduled "play at endsAt" macrotask — tracked so a fresh
+  // countdown (or teardown) can clear a stale one, mirroring reseekTimerRef.
+  const countdownTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const readyDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const lastReadyReportedRef = useRef<boolean | null>(null)
   const closedByUsRef = useRef(false)
@@ -400,6 +421,35 @@ export function usePartySync(
           }
           break
         }
+        case 'countdown': {
+          // Every client aligns to the same startPositionTicks and pauses immediately
+          // (the countdown overlay takes over the screen), then plays locally once wall
+          // clock reaches msg.endsAt — shared by everyone, so no extra message is needed
+          // for the room to start in sync.
+          setCountdown({ endsAt: msg.endsAt, startPositionTicks: msg.startPositionTicks })
+          withRemoteApply(() => {
+            const v = videoRef.current
+            if (!v) return
+            if (!v.paused) v.pause()
+            v.currentTime = ticksToSeconds(msg.startPositionTicks)
+          })
+
+          if (countdownTimerRef.current) clearTimeout(countdownTimerRef.current)
+          const localEndsAt = msg.endsAt - offsetRef.current
+          const fireStart = () => {
+            countdownTimerRef.current = null
+            const v = videoRef.current
+            if (v) playRemote(v)
+            setCountdown(null)
+          }
+          const startDelay = localEndsAt - Date.now()
+          if (startDelay <= 0) {
+            fireStart()
+          } else {
+            countdownTimerRef.current = setTimeout(fireStart, startDelay)
+          }
+          break
+        }
         case 'waiting':
           setWaitingFor(msg.waitingFor)
           break
@@ -469,6 +519,11 @@ export function usePartySync(
           onQueueAdvanceRef.current?.(msg.mediaId, msg.joinCode)
           break
         case 'party_ended':
+          if (countdownTimerRef.current) {
+            clearTimeout(countdownTimerRef.current)
+            countdownTimerRef.current = null
+          }
+          setCountdown(null)
           setEnded(true)
           setConnectionState('ended')
           closedByUsRef.current = true
@@ -477,6 +532,11 @@ export function usePartySync(
         case 'member_kicked':
           if (msg.userId === selfUserIdRef.current) {
             // We were kicked — treat as party ended so VideoPlayer tears down.
+            if (countdownTimerRef.current) {
+              clearTimeout(countdownTimerRef.current)
+              countdownTimerRef.current = null
+            }
+            setCountdown(null)
             setEnded(true)
             setConnectionState('ended')
             closedByUsRef.current = true
@@ -510,7 +570,7 @@ export function usePartySync(
         }
       }
     },
-    [applyState, withRemoteApply, videoRef, markConnectionStable],
+    [applyState, withRemoteApply, videoRef, markConnectionStable, playRemote],
   )
 
   // -------------------------------------------------------------------------
@@ -737,6 +797,12 @@ export function usePartySync(
         clearTimeout(reseekTimerRef.current)
         reseekTimerRef.current = null
       }
+      // Same tracking for the countdown's scheduled "play at endsAt" — a party ending
+      // or the component unmounting mid-countdown must not fire a stray play().
+      if (countdownTimerRef.current) {
+        clearTimeout(countdownTimerRef.current)
+        countdownTimerRef.current = null
+      }
       if (readyDebounceRef.current) clearTimeout(readyDebounceRef.current)
       const ws = wsRef.current
       if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
@@ -835,6 +901,22 @@ export function usePartySync(
     [partyId, send],
   )
 
+  // --- ready-check + countdown (feature: pre-play lobby) ---
+  const sendUserReady = useCallback(
+    (ready: boolean) => {
+      if (!partyId) return
+      send({ type: 'set_user_ready', partyId, ready })
+    },
+    [partyId, send],
+  )
+  const sendStartCountdown = useCallback(() => {
+    if (!partyId) return
+    send({ type: 'start_countdown', partyId })
+  }, [partyId, send])
+
+  // The local user's own lobby-ready flag, read off the authoritative member list.
+  const userReady = members.find((m) => m.userId === selfUserId)?.userReady ?? false
+
   // A disabled (non-party) instance has no socket — surface a settled state instead
   // of whatever stale values the state holds, derived here rather than via a
   // setState in the lifecycle effect.
@@ -864,5 +946,9 @@ export function usePartySync(
     controlLocked,
     kickMember,
     toggleControlLock,
+    userReady,
+    sendUserReady,
+    sendStartCountdown,
+    countdown: active ? countdown : null,
   }
 }

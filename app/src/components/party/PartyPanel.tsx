@@ -7,7 +7,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react'
-import { Copy, Check, LogOut, X, Crown, Loader2, AlertCircle, Trash2, SkipForward, Plus, Search, ChevronUp, ChevronDown, Lock, Unlock, UserX } from 'lucide-react'
+import { Copy, Check, LogOut, X, Crown, Loader2, AlertCircle, Trash2, SkipForward, Plus, Search, ChevronUp, ChevronDown, Lock, Unlock, UserX, CircleCheck, CircleDashed, Rocket } from 'lucide-react'
 import type { MemberSummary, LastActor, QueueItemDTO } from '@/lib/party/types'
 
 interface Props {
@@ -32,6 +32,10 @@ interface Props {
   controlLocked: boolean
   onKick: (userId: string) => void
   onControlLockToggle: (locked: boolean) => void
+  // --- ready-check + countdown (feature: pre-play lobby) ---
+  userReady: boolean
+  onSetUserReady: (ready: boolean) => void
+  onStartCountdown: () => void
 }
 
 // A playable library item returned by /api/media/items?q= — only non-series rows are queueable.
@@ -143,10 +147,20 @@ export function PartyPanel({
   controlLocked,
   onKick,
   onControlLockToggle,
+  userReady,
+  onSetUserReady,
+  onStartCountdown,
 }: Props) {
   const [copied, setCopied] = useState(false)
   const [copyFailed, setCopyFailed] = useState(false)
   const isHost = hostUserId != null && selfUserId === hostUserId
+
+  // Lobby ready-check tally (feature: ready-check countdown). Counts connected members
+  // who have marked themselves ready via the manual toggle — distinct from the technical
+  // buffer-readiness `ready` flag.
+  const connectedMembers = members.filter((m) => m.connectionState !== 'grace')
+  const readyCount = connectedMembers.filter((m) => m.userReady).length
+  const totalCount = connectedMembers.length
 
   const flashCopied = () => {
     setCopyFailed(false)
@@ -299,6 +313,12 @@ export function PartyPanel({
                 {m.displayName}
                 {m.userId === selfUserId && ' (you)'}
               </span>
+              {/* Lobby ready-check indicator (feature: ready-check countdown). */}
+              {m.userReady ? (
+                <CircleCheck className="h-3.5 w-3.5 text-emerald-400" aria-label="Ready" />
+              ) : (
+                <CircleDashed className="h-3.5 w-3.5 text-zinc-600" aria-label="Not ready" />
+              )}
               {m.userId === hostUserId && (
                 <Crown className="h-3 w-3 text-amber-400" aria-label="Host" />
               )}
@@ -316,6 +336,42 @@ export function PartyPanel({
             </div>
           )
         })}
+      </div>
+
+      {/* Ready-check + start countdown lobby (feature: pre-play lobby) */}
+      <div className="flex flex-col gap-2 border-t border-zinc-800 pt-2">
+        <button
+          type="button"
+          onClick={() => onSetUserReady(!userReady)}
+          className={`flex items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-xs transition-colors ${
+            userReady
+              ? 'bg-emerald-900/60 text-emerald-200 hover:bg-emerald-900'
+              : 'bg-zinc-800 text-zinc-200 hover:bg-zinc-700'
+          }`}
+        >
+          {userReady ? (
+            <>
+              <CircleCheck className="h-3.5 w-3.5" />
+              Ready ✓
+            </>
+          ) : (
+            <>
+              <CircleDashed className="h-3.5 w-3.5" />
+              Ready
+            </>
+          )}
+        </button>
+
+        {isHost && (
+          <button
+            type="button"
+            onClick={onStartCountdown}
+            className="flex items-center justify-center gap-1.5 rounded-md bg-sky-600 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-sky-500"
+          >
+            <Rocket className="h-4 w-4" />
+            Let&apos;s start the party ({readyCount}/{totalCount} ready)
+          </button>
+        )}
       </div>
 
       {/* Shared queue (feature 3) */}

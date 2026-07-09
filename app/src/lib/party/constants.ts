@@ -39,6 +39,9 @@ export const MEDIAN_OUTLIER_RESEEK_S = 1.5 // a client this far off the median r
 // --- readiness gate ---
 export const READINESS_GATE_MAX_WAIT_MS = 20000 // release a held play when all ready OR after this
 
+// --- ready-check + countdown (feature: pre-play lobby) ---
+export const COUNTDOWN_DURATION_MS = 5000 // host-triggered synchronized start countdown
+
 // --- lifecycle / resilience ---
 export const DISCONNECT_GRACE_MS = 30000 // a dropped member sits in 'grace' this long before eviction
 export const EMPTY_PARTY_IDLE_END_MS = 60000 // a party with zero connected members ends after this idle window

@@ -115,6 +115,14 @@ export class InMemoryPartyStateStore implements PartyStateStore {
     this.emit(state)
   }
 
+  async setMemberUserReady(partyId: string, userId: string, ready: boolean): Promise<void> {
+    const state = this.requireParty(partyId)
+    const member = state.members.get(userId)
+    if (!member) return
+    member.userReady = ready
+    this.emit(state)
+  }
+
   async setMemberConnectionState(
     partyId: string,
     userId: string,
