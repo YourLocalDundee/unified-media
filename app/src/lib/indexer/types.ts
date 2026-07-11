@@ -30,6 +30,18 @@ export interface Indexer {
   daily_query_count: number
   daily_grab_count: number
   daily_stats_date: string
+  // capabilities (Torznab t=caps probe, run as part of testIndexer). JSON: IndexerCategory[].
+  // null = never probed, or the indexer's search_type doesn't support caps (yts/eztv/nyaa).
+  caps_categories: string | null
+  caps_checked_at: number | null // Unix ms
+}
+
+// A category (or top-level category with subcats) reported by an indexer's Torznab
+// `t=caps` response, e.g. { id: '2000', name: 'Movies', subcats: [{ id: '2010', name: 'Movies/Foreign' }] }.
+export interface IndexerCategory {
+  id: string
+  name: string
+  subcats?: { id: string; name: string }[]
 }
 
 export interface IndexerDefinition {
@@ -73,4 +85,5 @@ export interface IndexerHealth {
   responseTimeMs: number
   resultCount?: number
   errorMessage?: string
+  categories?: IndexerCategory[]  // parsed from a torznab t=caps response, when available
 }

@@ -12,7 +12,6 @@ const USER_NAV = [
   { href: '/settings/playback', label: 'Playback' },
   { href: '/settings/display', label: 'Display' },
   { href: '/settings/quality', label: 'Quality' },
-  { href: '/settings/media', label: 'Media' },
   { href: '/settings/advanced', label: 'Advanced' },
   { href: '/settings/about', label: 'About' },
   { href: '/settings/shortcuts', label: 'Shortcuts' },

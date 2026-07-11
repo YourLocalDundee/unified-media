@@ -5,7 +5,7 @@
 // not proxied through Prowlarr.
 import { parseStringPromise } from 'xml2js'
 import { getSearchableIndexers, recordIndexerResult, tryConsumeIndexerToken, checkQueryLimit, incrementDailyQueryCount } from './config'
-import type { Indexer, TorznabResult, TorznabSearchParams, IndexerHealth } from './types'
+import type { Indexer, TorznabResult, TorznabSearchParams, IndexerHealth, IndexerCategory } from './types'
 import { searchYts } from './adapters/yts'
 import { searchEztv } from './adapters/eztv'
 import { searchNyaa } from './adapters/nyaa'
@@ -299,14 +299,64 @@ export async function searchAllIndexers(
 }
 
 // ---------------------------------------------------------------------------
+// parseCapsXml
+// ---------------------------------------------------------------------------
+
+/**
+ * Parse a Torznab `t=caps` XML response into the categories (and subcats) it
+ * advertises. Returns [] on any parse error or missing <categories> block —
+ * never throws. Closes the "no category management UI" MVP gap (Phase 1):
+ * the admin UI can show what each indexer actually supports.
+ */
+export async function parseCapsXml(xml: string): Promise<IndexerCategory[]> {
+  if (xml.length > MAX_XML_BYTES) return []
+  let parsed: Record<string, unknown>
+  try {
+    parsed = await parseStringPromise(xml, { explicitArray: true })
+  } catch {
+    return []
+  }
+
+  const caps = parsed as { caps?: { categories?: Array<{ category?: unknown[] }> } }
+  const rawCategories = caps?.caps?.categories?.[0]?.category
+  if (!Array.isArray(rawCategories)) return []
+
+  const categories: IndexerCategory[] = []
+  for (const raw of rawCategories) {
+    const cat = raw as {
+      $?: { id?: string; name?: string }
+      subcat?: Array<{ $?: { id?: string; name?: string } }>
+    }
+    const id = cat.$?.id
+    const name = cat.$?.name
+    if (!id || !name) continue
+
+    const subcats = Array.isArray(cat.subcat)
+      ? cat.subcat
+          .map(s => ({ id: s.$?.id ?? '', name: s.$?.name ?? '' }))
+          .filter(s => s.id && s.name)
+      : []
+
+    categories.push({ id, name, ...(subcats.length > 0 ? { subcats } : {}) })
+  }
+  return categories
+}
+
+// ---------------------------------------------------------------------------
 // testIndexer
 // ---------------------------------------------------------------------------
 
 /**
- * Perform a caps check against an indexer and return its health status.
- * Never throws.
+ * Perform a caps check against an indexer and return its health status (plus
+ * the categories it advertises, for torznab indexers). Never throws.
  */
 export async function testIndexer(indexer: Indexer): Promise<IndexerHealth> {
+  // Only Torznab exposes a caps endpoint. The built-in yts/eztv/nyaa adapters are
+  // fixed-purpose trackers with no torznab_url — nothing to probe over HTTP.
+  if (indexer.search_type !== 'torznab') {
+    return { status: 'ok', responseTimeMs: 0 }
+  }
+
   const url = new URL(indexer.torznab_url)
   url.searchParams.set('t', 'caps')
   if (indexer.api_key) url.searchParams.set('apikey', indexer.api_key)
@@ -328,9 +378,9 @@ export async function testIndexer(indexer: Indexer): Promise<IndexerHealth> {
       }
     }
 
-    // Optionally count results — for a caps response the "result count" is
-    // not meaningful, so we just confirm the indexer replied successfully.
-    return { status: 'ok', responseTimeMs }
+    const xml = await res.text()
+    const categories = await parseCapsXml(xml)
+    return { status: 'ok', responseTimeMs, categories }
   } catch (err) {
     clearTimeout(timer)
     const responseTimeMs = Date.now() - start

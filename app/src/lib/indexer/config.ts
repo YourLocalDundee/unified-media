@@ -212,6 +212,17 @@ export function updateIndexerHealth(
     .run(Date.now(), status, id)
 }
 
+/**
+ * Persist a successful caps probe (see testIndexer). Only called when the probe returned at
+ * least one category — a transient error or an indexer with no caps categories leaves the
+ * last known-good value in place rather than wiping it.
+ */
+export function updateIndexerCaps(id: number, categoriesJson: string): void {
+  getDb()
+    .prepare('UPDATE indexers SET caps_categories = ?, caps_checked_at = ? WHERE id = ?')
+    .run(categoriesJson, Date.now(), id)
+}
+
 export function getPendingIndexers(): Indexer[] {
   return getDb()
     .prepare('SELECT * FROM indexers WHERE requires_auth = 1 AND enabled = 0 ORDER BY name')

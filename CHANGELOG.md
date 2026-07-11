@@ -8,6 +8,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- **Indexer capabilities probe (category management, part 1).** `testIndexer()` now parses the
+  Torznab `t=caps` response (`parseCapsXml` in `src/lib/indexer/index.ts`) into the categories/subcats
+  an indexer advertises, persisted on new `indexers.caps_categories`/`caps_checked_at` columns and
+  shown as badges in `/admin/indexers` (populated by the existing "Test" button — no extra network
+  round trip). Non-torznab adapters (yts/eztv/nyaa, which have no `torznab_url`) short-circuit to a
+  synthetic `ok` result instead of throwing on `new URL('')`. Closes half of the Phase 1 MVP gap "no
+  category management UI" (`docs/analysis/prowlarr-analysis.md` #5); mapping to the Newznab standard
+  category tree and a manual-search category picker remain open (`docs/incomplete/FEATURE-IDEAS.md`).
 - **Web Push notifications (VAPID).** Fires a browser push to the user who requested a title when it
   becomes available, sent alongside the existing Discord/ntfy channels through the single
   `notifyMediaAvailable` funnel. New `src/lib/push.ts` (VAPID init + `sendPushToUser`, no-ops when
@@ -91,6 +99,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `/play/{id}?party={code}` URL are intercepted in the proxy and sent to `/join?code={code}`.
 
 ### Removed
+- **Sonarr/Radarr/Bazarr fully removed (2026-07-09).** `lib/sonarr/`, `lib/radarr/`, `lib/bazarr/`
+  and every caller (the `/browse/[id]` monitored-status badge, the old `/settings/media` TV/Movies/
+  Subtitles tabs) are gone — no proxy routes ever existed for them despite older docs implying
+  otherwise. The native decision engine, quality profiles, and subtitle system are the real
+  replacements; those three services keep running on minime for direct/power use only, with zero
+  integration into this app.
+- **Prowlarr-direct admin surface removed (2026-07-10) — first piece of the Prowlarr replacement.**
+  Deleted `/settings/media`, `/api/prowlarr/[...path]`, and `lib/prowlarr/` (`client.ts`, `types.ts`,
+  and the already-dead `api.ts`). That page duplicated `/admin/indexers` (the native `indexers` table)
+  with a worse UI and no health/rate-limit persistence — toggling a Prowlarr indexer there never
+  affected what our own search fan-out actually queries. `/admin/indexers` is now the only indexer
+  admin surface. `PROWLARR_URL`/`PROWLARR_API_KEY` are still read once at first boot by
+  `src/lib/indexer/discovery.ts` to seed native `indexers` rows from Prowlarr's per-tracker Torznab
+  endpoints (the pragmatic "keep Prowlarr as a Torznab source" call from
+  `docs/analysis/prowlarr-analysis.md` #1) — that one-shot bridge is not a live proxy. Full Prowlarr
+  independence (porting the Cardigann engine) stays deferred as high-effort/low-value for a home
+  server.
 - **Purged upstream `sources/` reference material (147 MB, 7 directories).** The native stack is
   complete and the source copies were reference-only (gitignored, never imported). All value was
   mined before deletion: `docs/analysis/source-mining-log.md` is the permanent record covering all

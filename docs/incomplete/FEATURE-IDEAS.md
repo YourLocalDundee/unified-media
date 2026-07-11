@@ -62,9 +62,11 @@ These came out of the source purge; ranked detail is in `feature-mining-summary.
 - ~~**Delay profiles.**~~ **SHIPPED v0.11.5** — `delay_minutes` on quality profiles.
 - **TV season-pack upgrade-until-cutoff.** Upgrade/cutoff shipped for movies (§19); TV was deferred for
   multi-file / partial-overlap complexity. Closing the gap makes "get the right copy" work for shows too.
-- **Standard category mapping + capabilities.** Probe each indexer's capabilities on activation and map
-  tracker categories to the Newznab standard tree. Closes the MVP gap that makes "TV only" searches
-  incorrect across heterogeneous indexers; enables a category picker in manual search.
+- ~~**Capabilities probe.**~~ **SHIPPED 2026-07-10** — `testIndexer()` parses the Torznab `t=caps`
+  response into categories/subcats (`parseCapsXml`), persisted on `indexers.caps_categories` and shown
+  as badges in `/admin/indexers`. Still open: mapping tracker-specific categories to the Newznab
+  standard tree, and a category picker in manual search (there is no manual-search admin UI yet — see
+  "Parameter-based manual search" in `docs/analysis/prowlarr-analysis.md` #8).
 - **Indexer flags + per-indexer stats.** Thread freeleech/internal/scene flags from Torznab `attr`
   elements — they feed a Custom Format matcher ("prefer freeleech") that already exists. Add a stats
   surface to `/admin/indexers` (query/grab counts, success rate, avg response time) built on

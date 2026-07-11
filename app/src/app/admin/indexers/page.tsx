@@ -28,12 +28,21 @@ interface Indexer {
   daily_query_count: number
   daily_grab_count: number
   daily_stats_date: string
+  caps_categories: string | null  // JSON: IndexerCategory[], from the last successful Test probe
+  caps_checked_at: number | null
+}
+
+interface IndexerCategory {
+  id: string
+  name: string
+  subcats?: { id: string; name: string }[]
 }
 
 interface TestResult {
   status: 'ok' | 'error'
   responseTimeMs: number
   errorMessage?: string
+  categories?: IndexerCategory[] | null
 }
 
 interface FormState {
@@ -83,6 +92,49 @@ function HealthBadge({ status, lastCheck }: { status: string | null; lastCheck: 
     )
   }
   return <span className="text-muted-foreground text-sm">—</span>
+}
+
+// Renders the categories an indexer advertised on its last successful Test probe
+// (Torznab t=caps). Truncated to the first 3 with a "+N" overflow badge, since
+// some trackers advertise 40+ subcats and this is a table cell, not a detail page.
+function CategoryBadges({ categoriesJson }: { categoriesJson: string | null }) {
+  if (!categoriesJson) {
+    return <span className="text-muted-foreground text-xs">Not probed</span>
+  }
+  let categories: IndexerCategory[]
+  try {
+    categories = JSON.parse(categoriesJson) as IndexerCategory[]
+  } catch {
+    return <span className="text-muted-foreground text-xs">—</span>
+  }
+  if (categories.length === 0) {
+    return <span className="text-muted-foreground text-xs">None advertised</span>
+  }
+
+  const shown = categories.slice(0, 3)
+  const overflow = categories.length - shown.length
+
+  return (
+    <div className="flex flex-wrap gap-1 max-w-[14rem]">
+      {shown.map(c => (
+        <span
+          key={c.id}
+          title={c.subcats?.length ? `${c.name}: ${c.subcats.map(s => s.name).join(', ')}` : c.name}
+          className="rounded px-1.5 py-0.5 text-xs bg-muted text-muted-foreground"
+        >
+          {c.name}
+        </span>
+      ))}
+      {overflow > 0 && (
+        <span
+          title={categories.slice(3).map(c => c.name).join(', ')}
+          className="rounded px-1.5 py-0.5 text-xs bg-muted text-muted-foreground"
+        >
+          +{overflow}
+        </span>
+      )}
+    </div>
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -372,7 +424,7 @@ export default function AdminIndexersPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-border">
-                  {['Name', 'URL', 'Status', 'Enabled', 'Actions'].map(h => (
+                  {['Name', 'URL', 'Status', 'Categories', 'Enabled', 'Actions'].map(h => (
                     <th key={h} className="px-4 py-2 text-left text-muted-foreground font-medium">{h}</th>
                   ))}
                 </tr>
@@ -382,6 +434,10 @@ export default function AdminIndexersPage() {
                   const rowTest = testState[row.id]
                   const isTesting = rowTest === 'testing'
                   const testResult = rowTest && rowTest !== 'testing' ? rowTest : null
+                  // Prefer the just-run test's categories (freshest) over the persisted column.
+                  const categoriesJson = testResult && testResult.categories !== undefined
+                    ? (testResult.categories ? JSON.stringify(testResult.categories) : null)
+                    : row.caps_categories
 
                   return (
                     <tr key={row.id}>
@@ -419,6 +475,9 @@ export default function AdminIndexersPage() {
                         ) : (
                           <HealthBadge status={row.health_status} lastCheck={row.last_health_check} />
                         )}
+                      </td>
+                      <td className="px-4 py-3">
+                        <CategoryBadges categoriesJson={categoriesJson} />
                       </td>
                       <td className="px-4 py-3">
                         <button
@@ -473,7 +532,7 @@ export default function AdminIndexersPage() {
                 })}
                 {indexers.length === 0 && (
                   <tr>
-                    <td colSpan={5} className="px-4 py-8 text-center text-muted-foreground">
+                    <td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">
                       No indexers configured. Add one to get started.
                     </td>
                   </tr>

@@ -771,6 +771,10 @@ export function runMigrations(db: Database.Database): void {
     // Soft preference only — see audioModePenalty in grabber.ts; never hard-rejects a release.
     "ALTER TABLE monitored_items ADD COLUMN audio_mode TEXT NOT NULL DEFAULT 'any'",
     "ALTER TABLE quality_profiles ADD COLUMN audio_mode TEXT NOT NULL DEFAULT 'any'",
+    // indexers — capabilities probe (Torznab t=caps, run as part of testIndexer/config.ts).
+    // caps_categories is JSON (IndexerCategory[]); NULL = never probed successfully.
+    'ALTER TABLE indexers ADD COLUMN caps_categories TEXT',
+    'ALTER TABLE indexers ADD COLUMN caps_checked_at INTEGER',
   ]
   for (const sql of addCols) {
     try { db.exec(sql) } catch { /* column already exists — safe to ignore */ }

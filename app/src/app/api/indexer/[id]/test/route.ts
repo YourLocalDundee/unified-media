@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAdmin } from '@/lib/dal'
 import { verifyOrigin } from '@/lib/csrf'
-import { getIndexerById, updateIndexerHealth } from '@/lib/indexer/config'
+import { getIndexerById, updateIndexerHealth, updateIndexerCaps } from '@/lib/indexer/config'
 import { testIndexer } from '@/lib/indexer/index'
 
 export const dynamic = 'force-dynamic'
@@ -26,10 +26,14 @@ export async function POST(
 
   const result = await testIndexer(indexer)
   updateIndexerHealth(id, result.status, result.responseTimeMs)
+  if (result.categories && result.categories.length > 0) {
+    updateIndexerCaps(id, JSON.stringify(result.categories))
+  }
 
   return NextResponse.json({
     status: result.status,
     responseTimeMs: result.responseTimeMs,
     errorMessage: result.errorMessage ?? null,
+    categories: result.categories ?? null,
   })
 }

@@ -58,8 +58,15 @@ request → watch, with download status visible inline.
 
 ### What this is NOT
 
-- Not a replacement for Sonarr, Radarr, Prowlarr, or Bazarr at the ops level. They still exist for
-  power use; the native stack handles the in-app path.
+- Not a replacement for Sonarr, Radarr, or Bazarr — those aren't used by this app at all (removed
+  2026-07-09; the native decision engine, quality profiles, and subtitle system fully replace them).
+  They still run on minime for direct/power use, just with zero integration here. Prowlarr is
+  partially replaced (2026-07-10): the redundant Prowlarr-direct admin surface (`/settings/media`,
+  `/api/prowlarr`, `lib/prowlarr/`) is gone — `/admin/indexers` (native `indexers` table) is now the
+  only indexer admin surface. Prowlarr itself still backs some seeded indexers as a Torznab source
+  (one-time discovery bridge in `src/lib/indexer/discovery.ts`) — full independence would mean
+  porting Prowlarr's Cardigann engine, deferred as high-effort/low-value for a home server (see
+  `docs/analysis/prowlarr-analysis.md`).
 - The app no longer calls Jellyfin. A standalone Jellyfin still runs at `jellyfin.minijoe.dev` for
   direct TV use, fully independent of this app and out of scope for it.
 - Not a full Seerr replacement. Seerr still runs at `seerr.minijoe.dev` for admin/approval.
@@ -140,10 +147,20 @@ All service-to-service calls run from Next.js server code. Credentials live in e
 | ------- | ------------ | ---- | ----------- | --- |
 | Seerr | `http://seerr:5055` (`/api/v1`) | `X-API-Key` header | (native `/api/requests/`; old `/api/seerr/[...path]` removed in Phase 7) | `SEERR_URL`, `SEERR_API_KEY` |
 | qBittorrent | `http://qbittorrent:8080` (`/api/v2`) | cookie session (SID), held server-side | `/api/qbit/[...path]` (**`qbit`** with an `i`) | `UMT_URL`, `UMT_USERNAME`, `UMT_PASSWORD` |
-| Sonarr | `http://sonarr:8989` | `X-Api-Key` | `/api/sonarr/[...path]` | `SONARR_URL`, `SONARR_API_KEY` |
-| Radarr | `http://radarr:7878` | `X-Api-Key` | `/api/radarr/[...path]` | `RADARR_URL`, `RADARR_API_KEY` |
-| Prowlarr | `http://prowlarr:9696` | `X-Api-Key` | `/api/prowlarr/[...path]` | `PROWLARR_URL`, `PROWLARR_API_KEY` |
-| Bazarr | `http://bazarr:6767` | `X-Api-Key` | `/api/bazarr/[...path]` | `BAZARR_URL`, `BAZARR_API_KEY` |
+| Prowlarr | `http://prowlarr:9696` | `X-Api-Key` | none (no live proxy route; one-time discovery fetch only, see below) | `PROWLARR_URL`, `PROWLARR_API_KEY` |
+
+**Sonarr/Radarr/Bazarr removed (2026-07-09):** `lib/sonarr/`, `lib/radarr/`, `lib/bazarr/` and every
+caller (the `/browse/[id]` monitored-status badge, the TV/Movies/Subtitles tabs on the old
+`/settings/media`) are gone — no proxy routes ever existed for them despite older docs implying
+otherwise. The native decision engine, quality profiles, and subtitle system are the real
+replacements.
+
+**Prowlarr-direct admin surface removed (2026-07-10):** `/settings/media`, `/api/prowlarr/[...path]`,
+and `lib/prowlarr/` (`client.ts`, `types.ts`, `api.ts`) are gone — that page duplicated
+`/admin/indexers` (the native `indexers` table) with a worse UI and no health/rate-limit persistence.
+`/admin/indexers` is now the only indexer admin surface. `PROWLARR_URL`/`PROWLARR_API_KEY` are still
+read once, at first boot, by `src/lib/indexer/discovery.ts` to seed native `indexers` rows pointing at
+Prowlarr's per-tracker Torznab endpoints — that's a one-shot bridge, not a live proxy.
 
 **qBittorrent (UMT layer):** the client abstraction is **UMT (Unified Media Torrent)**, configured
 via `UMT_*`. Cookie session is obtained by POSTing creds to `/api/v2/auth/login`; on 403,
