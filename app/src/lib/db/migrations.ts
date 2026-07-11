@@ -159,6 +159,21 @@ export function runMigrations(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_indexers_enabled ON indexers(enabled);
   `)
 
+  // indexers.name was never actually unique — discoverProwlarr() and every manual "Add Indexer"
+  // call use INSERT OR IGNORE / rely on a name collision to avoid duplicates, but no constraint
+  // ever enforced one (caught 2026-07-11: a re-run of the Prowlarr bridge silently double-inserted
+  // 10 rows in production because of this). Dedup first — keep the lowest id per name — since an
+  // existing DB may already carry duplicates from before this fix, then the index is safe to add.
+  try {
+    db.exec(`
+      DELETE FROM indexers
+      WHERE id NOT IN (SELECT MIN(id) FROM indexers GROUP BY name)
+    `)
+  } catch { /* best-effort; if this fails the unique index creation below will surface it */ }
+  try {
+    db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_indexers_name ON indexers(name)')
+  } catch { /* dedup above failed for some other reason — leave the DB as-is rather than crash startup */ }
+
   // NOTE: watch_events.position_ticks is added in the addCols block at the bottom of this
   // function along with all other additive column migrations. It is placed there so that the
   // ordering is consistent — all ALTER TABLE statements run after every CREATE TABLE.

@@ -109,6 +109,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   form and are redirected straight to `/play`. Unauthenticated visitors following an old-style
   `/play/{id}?party={code}` URL are intercepted in the proxy and sent to `/join?code={code}`.
 
+### Fixed
+- **`indexers.name` had no unique constraint, despite every insert path assuming one.**
+  `discoverProwlarr()` and manual "Add Indexer" both rely on `INSERT OR IGNORE` to prevent
+  duplicate rows, but the original `CREATE TABLE indexers` never declared `name` unique — caught
+  2026-07-11 when re-running the Prowlarr bridge to pick up newly-added trackers silently
+  double-inserted 10 rows in production. `src/lib/db/migrations.ts` now dedupes any existing
+  duplicate names (keeping the lowest id) and adds `CREATE UNIQUE INDEX IF NOT EXISTS
+  idx_indexers_name`, so the constraint is retroactively enforced on every existing DB, not just
+  fresh ones.
+
 ### Removed
 - **Sonarr/Radarr/Bazarr fully removed (2026-07-09).** `lib/sonarr/`, `lib/radarr/`, `lib/bazarr/`
   and every caller (the `/browse/[id]` monitored-status badge, the old `/settings/media` TV/Movies/
