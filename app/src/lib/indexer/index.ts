@@ -5,6 +5,7 @@
 // not proxied through Prowlarr.
 import { parseStringPromise } from 'xml2js'
 import { getSearchableIndexers, recordIndexerResult, tryConsumeIndexerToken, checkQueryLimit, incrementDailyQueryCount } from './config'
+import { resolveCategoriesForIndexer } from './categories'
 import type { Indexer, TorznabResult, TorznabSearchParams, IndexerHealth, IndexerCategory } from './types'
 import { searchYts } from './adapters/yts'
 import { searchEztv } from './adapters/eztv'
@@ -171,7 +172,8 @@ export async function searchIndexer(
   url.searchParams.set('t', 'search')
   if (indexer.api_key) url.searchParams.set('apikey', indexer.api_key)
   if (params.q) url.searchParams.set('q', params.q)
-  if (params.cats) url.searchParams.set('cat', params.cats)
+  // Additive-only: never sends fewer categories than requested (see categories.ts).
+  if (params.cats) url.searchParams.set('cat', resolveCategoriesForIndexer(indexer.caps_categories, params.cats))
   if (params.imdbid) url.searchParams.set('imdbid', params.imdbid)
   if (params.season) url.searchParams.set('season', params.season)
   if (params.ep) url.searchParams.set('ep', params.ep)

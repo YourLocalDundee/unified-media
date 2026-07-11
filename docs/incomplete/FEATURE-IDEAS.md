@@ -64,9 +64,16 @@ These came out of the source purge; ranked detail is in `feature-mining-summary.
   multi-file / partial-overlap complexity. Closing the gap makes "get the right copy" work for shows too.
 - ~~**Capabilities probe.**~~ **SHIPPED 2026-07-10** — `testIndexer()` parses the Torznab `t=caps`
   response into categories/subcats (`parseCapsXml`), persisted on `indexers.caps_categories` and shown
-  as badges in `/admin/indexers`. Still open: mapping tracker-specific categories to the Newznab
-  standard tree, and a category picker in manual search (there is no manual-search admin UI yet — see
-  "Parameter-based manual search" in `docs/analysis/prowlarr-analysis.md` #8).
+  as badges in `/admin/indexers`.
+- ~~**Standard category mapping + manual search.**~~ **SHIPPED 2026-07-11** — since every indexer here
+  is a Torznab endpoint (Jackett/Prowlarr-backed), standard category IDs already work correctly against
+  every tracker without a mapping layer; the real gap was additive-only widening for indexers whose caps
+  probe shows a subcat but not the requested parent id (`resolveCategoriesForIndexer` in
+  `src/lib/indexer/categories.ts` — never narrows/suppresses a query, only appends). `/admin/indexers/
+  search` is the manual-search debug tool from `docs/analysis/prowlarr-analysis.md` #8: query + category
+  picker → fans out via the existing `/api/torznab/search` → results table with a Grab button that posts
+  straight to `/api/qbit/torrents/add`, bypassing quality profiles/gates on purpose (it's for "does this
+  tracker return results", not library import).
 - **Indexer flags + per-indexer stats.** Thread freeleech/internal/scene flags from Torznab `attr`
   elements — they feed a Custom Format matcher ("prefer freeleech") that already exists. Add a stats
   surface to `/admin/indexers` (query/grab counts, success rate, avg response time) built on

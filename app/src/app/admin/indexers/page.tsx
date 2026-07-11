@@ -4,6 +4,7 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef } from 'react'
+import Link from 'next/link'
 import { useFocusTrap } from '@/hooks/useFocusTrap'
 import { Loader2, Trash2, Pencil, FlaskConical } from 'lucide-react'
 
@@ -407,12 +408,20 @@ export default function AdminIndexersPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-foreground">Indexers</h1>
-        <button
-          onClick={openAddModal}
-          className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground hover:bg-primary/90"
-        >
-          Add Indexer
-        </button>
+        <div className="flex items-center gap-2">
+          <Link
+            href="/admin/indexers/search"
+            className="rounded-lg border border-border px-4 py-2 text-sm font-semibold text-foreground hover:bg-muted"
+          >
+            Manual Search
+          </Link>
+          <button
+            onClick={openAddModal}
+            className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground hover:bg-primary/90"
+          >
+            Add Indexer
+          </button>
+        </div>
       </div>
 
       {/* Table */}

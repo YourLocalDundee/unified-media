@@ -8,6 +8,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- **Standard category widening + manual search (category management, part 2).** New
+  `src/lib/indexer/categories.ts`: a fixed Newznab-standard category subset
+  (`NEWZNAB_STANDARD_CATEGORIES`) and `resolveCategoriesForIndexer`, wired into `searchIndexer`.
+  Additive-only by design — `searchIndexer`/`searchAllIndexers` is the same path the automation
+  grabber uses for wanted-item searches, so a caps-probe false negative must never suppress a query;
+  the function only ever appends a known subcat id when an indexer's last caps probe shows it but not
+  the requested parent, and passes the requested cats through unchanged when caps are absent/malformed.
+  New `/admin/indexers/search` — a manual-search debug page (`prowlarr-analysis.md` #8): query +
+  category picker fans out via the existing `/api/torznab/search`, results list with a Grab button
+  that posts straight to `/api/qbit/torrents/add`. Deliberately bypasses quality profiles/gates/
+  monitored_items — it answers "does this tracker return results," not a library-import flow.
 - **Indexer capabilities probe (category management, part 1).** `testIndexer()` now parses the
   Torznab `t=caps` response (`parseCapsXml` in `src/lib/indexer/index.ts`) into the categories/subcats
   an indexer advertises, persisted on new `indexers.caps_categories`/`caps_checked_at` columns and

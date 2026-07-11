@@ -16,6 +16,7 @@ const NAV = [
   { href: '/admin/audit', label: 'Audit Log' },
   { href: '/admin/server', label: 'Server Status' },
   { href: '/admin/indexers', label: 'Indexers' },
+  { href: '/admin/indexers/search', label: 'Manual Search' },
   { href: '/admin/automation', label: 'Automation' },
   { href: '/admin/automation/bridge', label: 'Request Bridge' },
   { href: '/admin/subtitles', label: 'Subtitles' },
