@@ -1,6 +1,6 @@
 # unified-frontend
 
-A single-pane-of-glass web app for the minime home server media stack (v0.11.9 doc-tracked; see note
+A single-pane-of-glass web app for the minime home server media stack (v0.11.10 doc-tracked; see note
 below). Replaces the old multi-tab workflow with one fully native interface for browsing, requesting,
 watching, and monitoring downloads. The app runs its own media server, indexer aggregation, download
 automation, and subtitle management — zero Jellyfin dependency.
@@ -14,9 +14,11 @@ automation, and subtitle management — zero Jellyfin dependency.
 
 ## Status & docs map
 
-- **Current version:** v0.11.9 is the latest doc-tracked feature-batch label (see
+- **Current version:** v0.11.10 is the latest doc-tracked feature-batch label (see
   `docs/complete/FEATURES.md`); `app/package.json` is still `0.11.2`, bumped only at an actual
-  release cut, so the two numbers legitimately diverge between cuts.
+  release cut, so the two numbers legitimately diverge between cuts. Deployed to production
+  (`unified.minijoe.dev`) as of 2026-07-11 — the doc-tracked and deployed versions are in sync as of
+  this writing, but re-check `docker inspect unified-frontend` before assuming that still holds.
 - **Audit:** the 2026-06-13 21-agent audit is closed (all P0/P1 fixed). History +
   remediation: `docs/analysis/audit-2026-06-13-summary.md`; live tracker `docs/incomplete/open-issues.md`.
 - **What's shipped:** `docs/complete/FEATURES.md`.
@@ -63,10 +65,11 @@ request → watch, with download status visible inline.
   They still run on minime for direct/power use, just with zero integration here. Prowlarr is
   partially replaced (2026-07-10): the redundant Prowlarr-direct admin surface (`/settings/media`,
   `/api/prowlarr`, `lib/prowlarr/`) is gone — `/admin/indexers` (native `indexers` table) is now the
-  only indexer admin surface. Prowlarr itself still backs some seeded indexers as a Torznab source
-  (one-time discovery bridge in `src/lib/indexer/discovery.ts`) — full independence would mean
-  porting Prowlarr's Cardigann engine, deferred as high-effort/low-value for a home server (see
-  `docs/analysis/prowlarr-analysis.md`).
+  only indexer admin surface. Prowlarr itself still backs most seeded indexers as a Torznab source —
+  30 configured in Prowlarr, 35 rows in our own `indexers` table as of 2026-07-11 (up from 10/15),
+  spanning general movie/TV and anime public trackers, added with zero third-party account signups.
+  Full independence would mean porting Prowlarr's Cardigann engine, deferred as high-effort/low-value
+  for a home server (see `docs/analysis/prowlarr-analysis.md`).
 - The app no longer calls Jellyfin. A standalone Jellyfin still runs at `jellyfin.minijoe.dev` for
   direct TV use, fully independent of this app and out of scope for it.
 - Not a full Seerr replacement. Seerr still runs at `seerr.minijoe.dev` for admin/approval.
@@ -160,7 +163,23 @@ and `lib/prowlarr/` (`client.ts`, `types.ts`, `api.ts`) are gone — that page d
 `/admin/indexers` (the native `indexers` table) with a worse UI and no health/rate-limit persistence.
 `/admin/indexers` is now the only indexer admin surface. `PROWLARR_URL`/`PROWLARR_API_KEY` are still
 read once, at first boot, by `src/lib/indexer/discovery.ts` to seed native `indexers` rows pointing at
-Prowlarr's per-tracker Torznab endpoints — that's a one-shot bridge, not a live proxy.
+Prowlarr's per-tracker Torznab endpoints — that's a one-shot bridge (only fires on an empty
+`indexers` table), not a live proxy.
+
+**Indexer expansion (2026-07-11):** Prowlarr grew from 10 to 30 configured indexers — all
+zero-signup public trackers, general movie/TV and anime — added directly via Prowlarr's own
+`/api/v1/indexer` API (schema pulled from `/api/v1/indexer/schema`; a few needed `enable: false` +
+`forceSave=true` first when Prowlarr's live connectivity test flaked, then a follow-up `PUT` to
+flip them on). `discovery.ts` itself wasn't touched — its bridge only runs once against an empty
+table — so picking up the new Prowlarr indexers into our own `indexers` table required manually
+replicating its exact insert loop (`INSERT OR IGNORE ... Prowlarr: ${name}`) against the running
+container's DB (`docker exec` + a scratch Node script using the container's own `better-sqlite3`).
+That surfaced a real bug: **`indexers.name` had no unique constraint** anywhere (not a migration
+artifact — it was simply never declared), so the first sync silently double-inserted 10 rows in
+production. Fixed in `migrations.ts` (dedup existing rows, then `CREATE UNIQUE INDEX IF NOT EXISTS
+idx_indexers_name`) and redeployed; see the `### Fixed` entry in `CHANGELOG.md`. If Prowlarr gains
+more indexers later, the safe re-sync is: same manual script, now protected by the unique index —
+`INSERT OR IGNORE` will actually ignore existing rows instead of silently duplicating them.
 
 **qBittorrent (UMT layer):** the client abstraction is **UMT (Unified Media Torrent)**, configured
 via `UMT_*`. Cookie session is obtained by POSTing creds to `/api/v2/auth/login`; on 403,

@@ -82,6 +82,11 @@ secret in both Seerr and `SEERR_WEBHOOK_SECRET`. `/api/seerr/webhook` receives `
 | Mobile PWA (manifest, service worker, offline shell) | v0.11.7 | `docs/features/pwa-notifications.md` |
 | Party ready-check + 5s start countdown lobby | v0.11.8 | `docs/features/party-play.md` |
 | Web Push notifications (VAPID) | v0.11.9 | `docs/features/pwa-notifications.md` |
+| Sonarr/Radarr/Bazarr fully removed + Prowlarr-direct admin surface removed | v0.11.10 | CLAUDE.md §3 |
+| Indexer capabilities probe (Torznab `t=caps` → category badges in `/admin/indexers`) | v0.11.10 | — |
+| Standard category widening (additive-only) + `/admin/indexers/search` manual-search debug page | v0.11.10 | — |
+| `indexers.name` unique-constraint fix (retroactive dedup migration) | v0.11.10 | CLAUDE.md §3 |
+| Indexer expansion: Prowlarr 10 → 30 configured, `indexers` table 15 → 35 rows, zero signups | v0.11.10 | CLAUDE.md §3 |
 
 ## Done items pulled from the old §13 backlog
 

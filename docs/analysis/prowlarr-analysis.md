@@ -2,9 +2,11 @@
 
 Source: `sources/Prowlarr/` (C# engine `src/NzbDrone.Core/`, React frontend `frontend/src/`)
 Prowlarr is the *arr indexer manager/proxy. Our **Independence Build Phase 1** (CLAUDE.md §14) replaced
-its core with an MVP: an `indexers` table + a Torznab fan-out search (`src/lib/indexer/`). Known MVP gaps
-(from `implementation-status.md`): *no category management UI, no per-indexer caching, search route is
-unauthenticated*. Prowlarr is exactly the feature depth we'd grow into.
+its core with an MVP: an `indexers` table + a Torznab fan-out search (`src/lib/indexer/`). Original MVP
+gaps (from `implementation-status.md`): *no category management UI, no per-indexer caching, search
+route is unauthenticated*. The category management gap is closed as of 2026-07-11 (see
+"Recommendation" below); search-route auth and per-indexer caching are unrelated to this file's scope.
+Prowlarr is exactly the feature depth we'd grow into.
 
 ---
 
@@ -98,13 +100,25 @@ manual search in admin** for debugging "does this tracker even return results."
 ## Recommendation
 
 The pragmatic path for a home server, in order:
-1. **Keep Prowlarr as a Torznab source** behind our `indexers` table (#1 alternative) — instant access to
-   500+ trackers for ~zero effort. Do this before considering Cardigann.
-2. **Health + backoff** (#3) and **per-indexer rate limiting** (#4) — cheap reliability/account-safety.
-3. **Standard category mapping + capabilities** (#5) — closes our logged MVP gap, enables correct
-   type-scoped search.
-4. **FlareSolverr proxy** (#2) — when a wanted tracker is Cloudflare-gated.
-5. Indexer stats (#6) and flags (#7) as polish; flags pair with the custom-format work.
+1. ~~**Keep Prowlarr as a Torznab source** behind our `indexers` table (#1 alternative).~~ **DONE,
+   expanded 2026-07-11** — 30 indexers configured in Prowlarr (up from 10), 35 rows in our own
+   `indexers` table, all zero-signup public trackers (general movie/TV + anime). See CLAUDE.md §3.
+2. ~~**Health + backoff** (#3) and **per-indexer rate limiting** (#4).~~ **DONE** (v0.11.3) —
+   `consecutive_failures`/`disabled_until` exponential backoff and `rate_limit_per_min` /
+   `rate_limit_queries_per_day` / `rate_limit_grabs_per_day` all live in `src/lib/indexer/config.ts`.
+3. ~~**Standard category mapping + capabilities** (#5).~~ **DONE** (2026-07-10/11) — Torznab `t=caps`
+   probe + category badges, additive-only standard-category widening, and a manual-search debug page
+   (`/admin/indexers/search`). See CLAUDE.md §3 and `CHANGELOG.md`.
+4. **FlareSolverr proxy** (#2) — **partially done, not actually wired.** `src/lib/indexer/
+   flaresolverr.ts` (`flareSolve()`) exists and a `flaresolverr` container runs in the stack, but
+   `flareSolve()` is never called from `searchIndexer()` or anywhere in the search path (confirmed
+   2026-07-11: grep for callers turns up only schema/type plumbing). It's moot for every indexer we
+   currently have, though: Prowlarr-bridge rows hardcode `requires_flaresolverr: 0` (Prowlarr handles
+   Cloudflare-gated trackers, including the two `kickasstorrents.*` entries added 2026-07-11, with its
+   own FlareSolverr before we ever see the response), and every entry in `catalog.ts`'s direct-Torznab
+   catalog hardcodes it `false` too. The gap only matters if a future *direct* (non-Prowlarr)
+   Cloudflare-gated indexer gets added — see `docs/incomplete/FEATURE-IDEAS.md`.
+5. Indexer stats (#6) and flags (#7) as polish; flags pair with the custom-format work. Still open.
 
 Porting the full **Cardigann engine** (#1) is the only true road to Prowlarr independence but is a large
 DSL-interpreter effort — defer unless independence from Prowlarr becomes a hard requirement.

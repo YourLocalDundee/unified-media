@@ -78,6 +78,19 @@ These came out of the source purge; ranked detail is in `feature-mining-summary.
   elements — they feed a Custom Format matcher ("prefer freeleech") that already exists. Add a stats
   surface to `/admin/indexers` (query/grab counts, success rate, avg response time) built on
   `grab_history`. Pairs with the existing indexer health dashboard idea above.
+- **Wire up FlareSolverr.** Discovered 2026-07-11 while auditing `prowlarr-analysis.md` #2:
+  `src/lib/indexer/flaresolverr.ts` (`flareSolve()`) is fully implemented and a `flaresolverr`
+  container runs in the stack, and `indexers.requires_flaresolverr` is a real column — but nothing
+  in the search path (`searchIndexer()` in `src/lib/indexer/index.ts`) ever calls `flareSolve()`,
+  and nothing currently sets the column true either: every `PUBLIC_INDEXER_CATALOG`/
+  `PENDING_INDEXER_CATALOG` entry in `catalog.ts` hardcodes `requires_flaresolverr: false`, and every
+  Prowlarr-bridge row (`discovery.ts`) hardcodes it `0` — Prowlarr handles Cloudflare-gated trackers
+  with its own FlareSolverr integration before we ever see the Torznab response, so bridge rows never
+  need ours. The gap only bites a *direct* (non-Prowlarr) Torznab indexer added later that's
+  Cloudflare-gated: nothing would flip the flag or resolve it. Fix, when that need shows up: an
+  "Requires FlareSolverr" toggle in the `/admin/indexers` add/edit form, and in `searchIndexer()`,
+  resolve via `flareSolve()` first when `indexer.requires_flaresolverr` and use its cookies/UA for
+  the actual Torznab fetch instead of a bare `fetch()`.
 - **Edition / AKA / hardcoded-sub parsing (movie-specific).** Parse Director's Cut / IMAX / Extended
   editions and AKA alternate titles from release names, and flag burned-in subs (HC/KORSUB). These fold
   into the Custom Format `title_regex` matcher so a user can prefer an Extended cut or reject HC. Small
