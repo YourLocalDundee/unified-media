@@ -1,6 +1,7 @@
 // EZTV adapter — TV-only public indexer with a JSON API.
 // Searches by IMDB ID (strips "tt" prefix). Title search is unreliable — skip it.
 import type { TorznabResult } from '../types'
+import { fetchWithTimeout } from './_shared'
 
 const EZTV_API = 'https://eztv.re/api/get-torrents'
 
@@ -28,7 +29,7 @@ export async function searchEztv(imdbId: string): Promise<TorznabResult[]> {
     // Strip the "tt" prefix for the EZTV API
     const numericId = imdbId.replace(/^tt/i, '')
     const url = `${EZTV_API}?imdb_id=${encodeURIComponent(numericId)}&limit=30&page=1`
-    const res = await fetch(url)
+    const res = await fetchWithTimeout(url)
     // Throw on a hard HTTP failure so the fan-out feeds it to indexer backoff; a 200 with no torrents
     // below is a healthy empty result (returns []), not a failure.
     if (!res.ok) throw new Error(`HTTP ${res.status}`)

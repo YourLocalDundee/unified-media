@@ -10,6 +10,74 @@ import type { Indexer, TorznabResult, TorznabSearchParams, IndexerHealth, Indexe
 import { searchYts } from './adapters/yts'
 import { searchEztv } from './adapters/eztv'
 import { searchNyaa } from './adapters/nyaa'
+import { searchThePirateBay } from './adapters/thepiratebay'
+import { searchBangumiMoe } from './adapters/bangumimoe'
+import { searchInternetArchive } from './adapters/internetarchive'
+import { searchSubsPlease } from './adapters/subsplease'
+import { searchTorrentsCsv } from './adapters/torrentscsv'
+import { searchLimeTorrents } from './adapters/limetorrents'
+import { searchBtEtree } from './adapters/btetree'
+import { searchShanaProject } from './adapters/shanaproject'
+import { searchTorrentDownload } from './adapters/torrentdownload'
+import { searchMikan } from './adapters/mikan'
+import { searchDmhy } from './adapters/dmhy'
+import { searchUindex } from './adapters/uindex'
+
+// ---------------------------------------------------------------------------
+// Native adapter registry
+// ---------------------------------------------------------------------------
+// Every non-Torznab search_type resolves here instead of a hardcoded switch case. 'torznab'
+// deliberately has no entry — it stays on the searchIndexer() path below, which already
+// self-records health and never throws; folding it into this registry's try/catch would
+// double-record. Add one entry per new native adapter (see docs on the independence build).
+export type AdapterFn = (indexer: Indexer, params: TorznabSearchParams) => Promise<TorznabResult[]>
+
+// Exported read-only so compare.ts's probeIndexer can dispatch the same way testIndexer does,
+// without duplicating the registry.
+export const adapterRegistry: Record<string, AdapterFn> = {
+  yts: (_indexer, params) => (params.q ? searchYts(params.q) : Promise.resolve([])),
+  eztv: (_indexer, params) => (params.imdbid ? searchEztv(params.imdbid) : Promise.resolve([])),
+  nyaa: (_indexer, params) => (params.q ? searchNyaa(params.q, 'https://nyaa.si/?page=rss', 'Nyaa') : Promise.resolve([])),
+  sukebei: (_indexer, params) => (params.q ? searchNyaa(params.q, 'https://sukebei.nyaa.si/?page=rss', 'sukebei.nyaa.si') : Promise.resolve([])),
+  thepiratebay: (_indexer, params) => (params.q ? searchThePirateBay(params.q) : Promise.resolve([])),
+  bangumimoe: (_indexer, params) => (params.q ? searchBangumiMoe(params.q) : Promise.resolve([])),
+  internetarchive: (_indexer, params) => (params.q ? searchInternetArchive(params.q) : Promise.resolve([])),
+  subsplease: (_indexer, params) => (params.q ? searchSubsPlease(params.q) : Promise.resolve([])),
+  torrentscsv: (_indexer, params) => (params.q ? searchTorrentsCsv(params.q) : Promise.resolve([])),
+  limetorrents: (_indexer, params) => (params.q ? searchLimeTorrents(params.q) : Promise.resolve([])),
+  btetree: (_indexer, params) => (params.q ? searchBtEtree(params.q) : Promise.resolve([])),
+  shanaproject: (_indexer, params) => (params.q ? searchShanaProject(params.q) : Promise.resolve([])),
+  torrentdownload: (_indexer, params) => (params.q ? searchTorrentDownload(params.q) : Promise.resolve([])),
+  mikan: (_indexer, params) => (params.q ? searchMikan(params.q) : Promise.resolve([])),
+  dmhy: (_indexer, params) => (params.q ? searchDmhy(params.q) : Promise.resolve([])),
+  uindex: (_indexer, params) => (params.q ? searchUindex(params.q) : Promise.resolve([])),
+}
+
+// Tier A/B (plain fetch or HTML scrape) get a moderate cap; Tier C (FlareSolverr-backed) needs to
+// outlast its own internal solve timeout (~35s, see adapters/_shared.ts fetchSolvedHtml) so that
+// inner timeout is what actually fires, not a race against this outer one. The 5s margin between
+// the two isn't padding for its own sake — uindex measured a real 27.7s solve on one run and
+// 34s+ on another live-testing this session, so a tight outer cap turns ordinary FlareSolverr
+// variance into spurious failures.
+// Only dmhy and uindex are here — of the 8 Cloudflare-gated candidates checked live against
+// FlareSolverr on 2026-07-12, those were the only 2 that actually solved. The rest (1337x,
+// extratorrent.st: Turnstile timeout; kickasstorrents.to/.ws: connection timeout; torrentkitty:
+// connection refused; magnetcat: explicit "IP banned" from Cloudflare) have no adapter — building
+// one would just wrap a request that can never succeed.
+const CLOUDFLARE_GATED_TYPES = new Set(['dmhy', 'uindex'])
+
+export function timeoutForSearchType(searchType: string): number {
+  return CLOUDFLARE_GATED_TYPES.has(searchType) ? 40_000 : 10_000
+}
+
+export function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs)
+    promise
+      .then(v => { clearTimeout(timer); resolve(v) })
+      .catch(err => { clearTimeout(timer); reject(err) })
+  })
+}
 
 // ---------------------------------------------------------------------------
 // Simple concurrency limiter (semaphore) — p-limit v6+ is ESM-only and this
@@ -160,12 +228,15 @@ export async function parseXml(xml: string, indexerName: string): Promise<Torzna
 // ---------------------------------------------------------------------------
 
 /**
- * Search a single Torznab indexer. Returns an empty array on any error or
- * timeout — never throws.
+ * Build the request URL and perform a single timed Torznab `t=search` fetch + XML parse. Throws
+ * on a non-2xx response, a network error, or a timeout — never records health/backoff itself, so
+ * it's safe to call directly for a side-effect-free probe (see compare.ts). `searchIndexer` below
+ * is the health-recording wrapper used by the live search fan-out.
  */
-export async function searchIndexer(
+export async function fetchTorznabResults(
   indexer: Indexer,
   params: TorznabSearchParams,
+  timeoutMs = 10_000,
 ): Promise<TorznabResult[]> {
   const url = new URL(indexer.torznab_url)
 
@@ -178,24 +249,33 @@ export async function searchIndexer(
   if (params.season) url.searchParams.set('season', params.season)
   if (params.ep) url.searchParams.set('ep', params.ep)
 
-  // 10-second timeout prevents a slow indexer from blocking the entire
-  // fan-out. AbortController is the only cross-runtime cancellation mechanism.
+  // AbortController is the only cross-runtime cancellation mechanism; prevents a slow indexer
+  // from blocking the entire fan-out.
   const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), 10_000)
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
 
   try {
     const res = await fetch(url.toString(), { signal: controller.signal })
     if (!res.ok) {
-      process.stderr.write(
-        `[indexer] ${indexer.name} returned HTTP ${res.status}\n`,
-      )
-      // A non-2xx response is a real failure (auth/ratelimit/down) — feed it to backoff. An empty
-      // result set from a 200 below is NOT a failure (a healthy "no matches"), so it records success.
-      recordIndexerResult(indexer.id, false)
-      return []
+      throw new Error(`HTTP ${res.status}`)
     }
     const xml = await res.text()
-    const results = await parseXml(xml, indexer.name)
+    return await parseXml(xml, indexer.name)
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+/**
+ * Search a single Torznab indexer. Returns an empty array on any error or
+ * timeout — never throws.
+ */
+export async function searchIndexer(
+  indexer: Indexer,
+  params: TorznabSearchParams,
+): Promise<TorznabResult[]> {
+  try {
+    const results = await fetchTorznabResults(indexer, params)
     recordIndexerResult(indexer.id, true)
     return results
   } catch (err) {
@@ -203,10 +283,11 @@ export async function searchIndexer(
     process.stderr.write(
       `[indexer] ${indexer.name} ${isTimeout ? 'timed out' : `error: ${err}`}\n`,
     )
+    // A non-2xx response, network error, or timeout is a real failure (auth/ratelimit/down) —
+    // feed it to backoff. An empty result set from a 200 is NOT a failure (a healthy "no
+    // matches"), so it records success (see the try branch above).
     recordIndexerResult(indexer.id, false)
     return []
-  } finally {
-    clearTimeout(timer)
   }
 }
 
@@ -241,26 +322,14 @@ export async function searchAllIndexers(
       // a thrown error here records a failure; a completed call (even with 0 results) records success.
       // searchIndexer records its own health and never throws, so it bypasses this try/catch's recording.
       try {
-        switch (indexer.search_type) {
-          case 'yts': {
-            const r = params.q ? await searchYts(params.q) : []
-            recordIndexerResult(indexer.id, true)
-            return r
-          }
-          case 'eztv': {
-            const r = params.imdbid ? await searchEztv(params.imdbid) : []
-            recordIndexerResult(indexer.id, true)
-            return r
-          }
-          case 'nyaa': {
-            const r = params.q ? await searchNyaa(params.q) : []
-            recordIndexerResult(indexer.id, true)
-            return r
-          }
-          default:
-            // 'torznab' or any unrecognized type — Torznab path (records its own health, never throws)
-            return await searchIndexer(indexer, params)
+        const adapter = adapterRegistry[indexer.search_type]
+        if (adapter) {
+          const r = await withTimeout(adapter(indexer, params), timeoutForSearchType(indexer.search_type), indexer.name)
+          recordIndexerResult(indexer.id, true)
+          return r
         }
+        // 'torznab' or any unrecognized type — Torznab path (records its own health, never throws)
+        return await searchIndexer(indexer, params)
       } catch {
         recordIndexerResult(indexer.id, false)
         return []
@@ -353,8 +422,25 @@ export async function parseCapsXml(xml: string): Promise<IndexerCategory[]> {
  * the categories it advertises, for torznab indexers). Never throws.
  */
 export async function testIndexer(indexer: Indexer): Promise<IndexerHealth> {
-  // Only Torznab exposes a caps endpoint. The built-in yts/eztv/nyaa adapters are
-  // fixed-purpose trackers with no torznab_url — nothing to probe over HTTP.
+  // Native adapters have no caps endpoint — actually run a probe search instead so the admin
+  // "live test" button is a real check, not an automatic green light. 'the' is a near-universal
+  // title-search hit; the stub imdbid covers eztv-shaped adapters that ignore q.
+  const adapter = adapterRegistry[indexer.search_type]
+  if (adapter) {
+    const start = Date.now()
+    try {
+      const results = await withTimeout(
+        adapter(indexer, { q: 'the', imdbid: 'tt0111161' }),
+        timeoutForSearchType(indexer.search_type),
+        indexer.name,
+      )
+      return { status: 'ok', responseTimeMs: Date.now() - start, resultCount: results.length }
+    } catch (err) {
+      return { status: 'error', responseTimeMs: Date.now() - start, errorMessage: err instanceof Error ? err.message : String(err) }
+    }
+  }
+
+  // Only Torznab exposes a caps endpoint. Any other unrecognized search_type has nothing to probe.
   if (indexer.search_type !== 'torznab') {
     return { status: 'ok', responseTimeMs: 0 }
   }

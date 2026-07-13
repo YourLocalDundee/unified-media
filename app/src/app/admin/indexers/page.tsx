@@ -255,6 +255,8 @@ export default function AdminIndexersPage() {
 
   // Keyed by indexer ID so each row can show its own loading/result state independently.
   const [testState, setTestState] = useState<Record<number, 'testing' | TestResult>>({})
+  const [testingAll, setTestingAll] = useState(false)
+  const [testAllSummary, setTestAllSummary] = useState<{ ok: number; error: number } | null>(null)
 
   // Separate from testState because toggling replaces the health badge; testing doesn't.
   const [toggling, setToggling] = useState<Set<number>>(new Set())
@@ -396,12 +398,63 @@ export default function AdminIndexersPage() {
     }
   }
 
+  // Runs the existing single-indexer test route (POST /api/indexer/[id]/test — same one the
+  // per-row "Test" button uses, so results persist to health_status exactly the same way) across
+  // every configured indexer, concurrency-limited client-side so ~27 rows (some up to 40s each for
+  // the Cloudflare-gated ones) don't serialize into a multi-minute wait. Pending (auth-required,
+  // not yet configured) rows are skipped — they have no torznab_url to test yet and already have
+  // their own "Test & Enable" flow in the Pending Indexers section below.
+  async function handleTestAll() {
+    const targets = indexers.filter(i => !(i.requires_auth === 1 && i.enabled === 0))
+    if (targets.length === 0) return
+    setTestingAll(true)
+    setTestAllSummary(null)
+    setError(null)
+
+    const results: TestResult[] = []
+    const concurrency = 4
+    let next = 0
+    async function worker() {
+      while (next < targets.length) {
+        const row = targets[next++]
+        setTestState(prev => ({ ...prev, [row.id]: 'testing' }))
+        try {
+          const res = await fetch(`/api/indexer/${row.id}/test`, { method: 'POST' })
+          const data = await res.json() as TestResult
+          setTestState(prev => ({ ...prev, [row.id]: data }))
+          results.push(data)
+        } catch (e) {
+          const data: TestResult = { status: 'error', responseTimeMs: 0, errorMessage: e instanceof Error ? e.message : 'Network error' }
+          setTestState(prev => ({ ...prev, [row.id]: data }))
+          results.push(data)
+        }
+      }
+    }
+    await Promise.all(Array.from({ length: Math.min(concurrency, targets.length) }, () => worker()))
+
+    setTestAllSummary({
+      ok: results.filter(r => r.status === 'ok').length,
+      error: results.filter(r => r.status === 'error').length,
+    })
+    setTestingAll(false)
+    // Refresh once at the end (not per-row) so persisted health_status/caps reflect the run
+    // without 27 redundant list refetches.
+    void fetchIndexers()
+  }
+
   return (
     <div className="space-y-8">
       {/* Global error banner */}
       {error && (
         <div className="rounded-lg bg-red-500/15 border border-red-500/30 px-4 py-3 text-sm text-red-400">
           {error}
+        </div>
+      )}
+      {testAllSummary && (
+        <div className={`rounded-lg border px-4 py-3 text-sm ${testAllSummary.error > 0 ? 'bg-yellow-500/10 border-yellow-500/30 text-yellow-400' : 'bg-green-500/10 border-green-500/30 text-green-500'}`}>
+          Test All finished: <span className="font-semibold">{testAllSummary.ok} ok</span>
+          {testAllSummary.error > 0 && <span className="font-semibold">, {testAllSummary.error} error{testAllSummary.error === 1 ? '' : 's'}</span>}
+          {testAllSummary.error > 0 && ' — scroll the table for which ones.'}
         </div>
       )}
 
@@ -415,6 +468,20 @@ export default function AdminIndexersPage() {
           >
             Manual Search
           </Link>
+          <Link
+            href="/admin/indexers/compare"
+            className="rounded-lg border border-border px-4 py-2 text-sm font-semibold text-foreground hover:bg-muted"
+          >
+            Compare vs Prowlarr
+          </Link>
+          <button
+            onClick={() => void handleTestAll()}
+            disabled={testingAll || loading}
+            className="flex items-center gap-2 rounded-lg border border-border px-4 py-2 text-sm font-semibold text-foreground hover:bg-muted disabled:opacity-50"
+          >
+            {testingAll && <Loader2 className="h-4 w-4 animate-spin" />}
+            {testingAll ? 'Testing All…' : 'Test All'}
+          </button>
           <button
             onClick={openAddModal}
             className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground hover:bg-primary/90"

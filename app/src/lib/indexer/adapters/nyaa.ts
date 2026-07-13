@@ -1,7 +1,10 @@
-// Nyaa adapter — anime-focused public indexer with an RSS feed.
+// Nyaa adapter — anime-focused public indexer with an RSS feed. Also backs sukebei.nyaa.si (same
+// engine, adult-content sister site) via the feedUrl/indexerName params — see the `sukebei` entry
+// in the adapterRegistry (index.ts).
 // Parses the nyaa: namespace extensions for seeder/leecher/hash data.
 import { parseStringPromise } from 'xml2js'
 import type { TorznabResult } from '../types'
+import { fetchWithTimeout } from './_shared'
 
 const NYAA_RSS = 'https://nyaa.si/?page=rss'
 
@@ -23,10 +26,14 @@ interface NyaaFeed {
   }
 }
 
-export async function searchNyaa(q: string): Promise<TorznabResult[]> {
+export async function searchNyaa(
+  q: string,
+  feedUrl = NYAA_RSS,
+  indexerName = 'Nyaa',
+): Promise<TorznabResult[]> {
   try {
-    const url = `${NYAA_RSS}&q=${encodeURIComponent(q)}&c=0_0&f=0`
-    const res = await fetch(url)
+    const url = `${feedUrl}&q=${encodeURIComponent(q)}&c=0_0&f=0`
+    const res = await fetchWithTimeout(url)
     // Throw on a hard HTTP failure so the fan-out feeds it to indexer backoff; a 200 with no items
     // below is a healthy empty result (returns []), not a failure.
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
@@ -68,7 +75,7 @@ export async function searchNyaa(q: string): Promise<TorznabResult[]> {
         size,
         seeders,
         leechers,
-        indexerName: 'Nyaa',
+        indexerName,
         publishDate: '',
         categories: ['5070'],
       })

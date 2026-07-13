@@ -47,7 +47,7 @@ export interface IndexerCategory {
 export interface IndexerDefinition {
   name: string
   description: string
-  search_type: 'torznab' | 'yts' | 'eztv' | 'nyaa'
+  search_type: string   // 'torznab' or an adapterRegistry key (index.ts) — e.g. 'yts', 'eztv', 'nyaa', 'sukebei'
   base_url: string
   torznab_url: string   // empty string for non-Torznab types
   api_key: string       // empty string if not needed

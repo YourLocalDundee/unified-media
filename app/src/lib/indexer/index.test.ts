@@ -1,6 +1,15 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { parseCapsXml, testIndexer } from './index'
+import { parseCapsXml, testIndexer, searchAllIndexers } from './index'
 import type { Indexer } from './types'
+import * as config from './config'
+
+vi.mock('./config', () => ({
+  getSearchableIndexers: vi.fn(),
+  recordIndexerResult: vi.fn(),
+  tryConsumeIndexerToken: vi.fn(() => true),
+  checkQueryLimit: vi.fn(() => true),
+  incrementDailyQueryCount: vi.fn(),
+}))
 
 function mockIndexer(overrides: Partial<Indexer> = {}): Indexer {
   return {
@@ -66,11 +75,39 @@ describe('testIndexer', () => {
     vi.unstubAllGlobals()
   })
 
-  it('skips the network call for non-torznab search types', async () => {
-    const fetchSpy = vi.fn()
+  it('actually probes a registered native adapter instead of auto-passing', async () => {
+    const fetchSpy = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        status: 'ok',
+        data: { movies: [{ id: 1, title: 'The Matrix', year: 1999, imdb_code: 'tt0133093', torrents: [
+          { quality: '1080p', type: 'bluray', seeds: 10, peers: 2, size: '2 GB', size_bytes: 2_000_000_000, hash: 'a'.repeat(40), date_uploaded_unix: 0 },
+        ] }] },
+      }),
+    })
     vi.stubGlobal('fetch', fetchSpy)
 
     const result = await testIndexer(mockIndexer({ search_type: 'yts', torznab_url: '' }))
+
+    expect(result.status).toBe('ok')
+    expect(result.resultCount).toBe(1)
+    expect(fetchSpy).toHaveBeenCalled()
+  })
+
+  it('reports an error status when a registered adapter throws', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 500 }))
+
+    const result = await testIndexer(mockIndexer({ search_type: 'yts', torznab_url: '' }))
+
+    expect(result.status).toBe('error')
+    expect(result.errorMessage).toBeTruthy()
+  })
+
+  it('skips the network call for an unrecognized, non-torznab search type', async () => {
+    const fetchSpy = vi.fn()
+    vi.stubGlobal('fetch', fetchSpy)
+
+    const result = await testIndexer(mockIndexer({ search_type: 'some-future-type', torznab_url: '' }))
 
     expect(result).toEqual({ status: 'ok', responseTimeMs: 0 })
     expect(fetchSpy).not.toHaveBeenCalled()
@@ -98,5 +135,72 @@ describe('testIndexer', () => {
 
     expect(result.status).toBe('error')
     expect(result.categories).toBeUndefined()
+  })
+})
+
+describe('searchAllIndexers — adapter registry dispatch', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.clearAllMocks()
+    vi.useRealTimers()
+  })
+
+  it('dispatches a registered search_type to its adapter and records success', async () => {
+    const indexer = mockIndexer({ id: 1, search_type: 'yts', torznab_url: '' })
+    vi.mocked(config.getSearchableIndexers).mockReturnValue([indexer])
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        status: 'ok',
+        data: { movies: [{ id: 1, title: 'X', year: 2000, imdb_code: 'tt1', torrents: [
+          { quality: '1080p', type: 'bluray', seeds: 5, peers: 1, size: '1 GB', size_bytes: 1, hash: 'b'.repeat(40), date_uploaded_unix: 0 },
+        ] }] },
+      }),
+    }))
+
+    const results = await searchAllIndexers({ q: 'x' })
+
+    expect(results).toHaveLength(1)
+    expect(config.recordIndexerResult).toHaveBeenCalledWith(1, true)
+  })
+
+  it('catches a thrown adapter error, records it as a failure, and yields no results for it', async () => {
+    const indexer = mockIndexer({ id: 2, search_type: 'yts', torznab_url: '' })
+    vi.mocked(config.getSearchableIndexers).mockReturnValue([indexer])
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 500 }))
+
+    const results = await searchAllIndexers({ q: 'x' })
+
+    expect(results).toEqual([])
+    expect(config.recordIndexerResult).toHaveBeenCalledWith(2, false)
+  })
+
+  it('times out a hung adapter and records it as a failure instead of stalling the batch', async () => {
+    vi.useFakeTimers()
+    const indexer = mockIndexer({ id: 3, search_type: 'yts', torznab_url: '' })
+    vi.mocked(config.getSearchableIndexers).mockReturnValue([indexer])
+    vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {}))) // never resolves
+
+    const promise = searchAllIndexers({ q: 'x' })
+    await vi.advanceTimersByTimeAsync(15_000)
+    const results = await promise
+
+    expect(results).toEqual([])
+    expect(config.recordIndexerResult).toHaveBeenCalledWith(3, false)
+  })
+
+  it('falls through torznab/unregistered types to searchIndexer without double-recording', async () => {
+    const indexer = mockIndexer({ id: 4, search_type: 'torznab', torznab_url: 'https://example.com/torznab' })
+    vi.mocked(config.getSearchableIndexers).mockReturnValue([indexer])
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      text: () => Promise.resolve('<rss><channel></channel></rss>'),
+    }))
+
+    await searchAllIndexers({ q: 'x' })
+
+    // searchIndexer() self-records — the registry dispatch must not record a second time on top of it.
+    expect(config.recordIndexerResult).toHaveBeenCalledTimes(1)
+    expect(config.recordIndexerResult).toHaveBeenCalledWith(4, true)
   })
 })
