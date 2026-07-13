@@ -22,6 +22,7 @@ import { searchTorrentDownload } from './adapters/torrentdownload'
 import { searchMikan } from './adapters/mikan'
 import { searchDmhy } from './adapters/dmhy'
 import { searchUindex } from './adapters/uindex'
+import { normalizeInfoHash } from './adapters/_shared'
 
 // ---------------------------------------------------------------------------
 // Native adapter registry
@@ -191,16 +192,25 @@ export async function parseXml(xml: string, indexerName: string): Promise<Torzna
     const leechers = parseInt(attrMap.get('leechers') ?? '0', 10) || 0
     const imdbId = attrMap.get('imdbid')
 
-    // Resolve infoHash: explicit attr → extract from magnet → extract from guid
-    let infoHash = attrMap.get('infohash') ?? ''
+    // Resolve infoHash: explicit attr → extract from magnet attr → extract from guid (which is
+    // sometimes a bare hash-bearing URL, sometimes a full magnet URI itself — SubsPlease's
+    // Prowlarr bridge puts the whole magnet: URI in <guid>). normalizeInfoHash both lowercases and
+    // converts a Base32 BTIH (magnet URIs may legally use either 40-char hex or 32-char Base32 for
+    // the same hash) to canonical hex — without it, two encodings of the identical torrent would
+    // never match in searchAllIndexers' dedup or the admin compare tool. Both gaps found live
+    // 2026-07-13: Prowlarr's YTS bridge emits uppercase hex (case alone broke matching); SubsPlease's
+    // Prowlarr-bridged guid carries a Base32 magnet that the old hex-only guid regex missed entirely.
+    let infoHash = normalizeInfoHash(attrMap.get('infohash') ?? '')
     if (!infoHash && magnetUrl) {
       const match = magnetUrl.match(/urn:btih:([0-9a-fA-F]{40}|[2-7A-Z]{32})/i)
-      if (match) infoHash = match[1].toLowerCase()
+      if (match) infoHash = normalizeInfoHash(match[1])
     }
     if (!infoHash) {
-      // Some indexers put the hash in the guid URL
-      const match = guid.match(/([0-9a-fA-F]{40})/i)
-      if (match) infoHash = match[1].toLowerCase()
+      // The guid may be a full magnet URI (try urn:btih: first, hex or Base32) or a bare URL with
+      // a hex hash somewhere in the path (fall back to a plain 40-hex-char scan).
+      const magnetMatch = guid.match(/urn:btih:([0-9a-fA-F]{40}|[2-7A-Z]{32})/i)
+      const match = magnetMatch ?? guid.match(/([0-9a-fA-F]{40})/i)
+      if (match) infoHash = normalizeInfoHash(match[1])
     }
 
     const result: TorznabResult = {
@@ -241,6 +251,12 @@ export async function fetchTorznabResults(
   const url = new URL(indexer.torznab_url)
 
   url.searchParams.set('t', 'search')
+  // Torznab's standard result-count param. Without it, an upstream server picks its own default
+  // page size — found live 2026-07-13 comparing nekoBT's native (plain-torznab) row against its
+  // Prowlarr bridge: identical query, but the native side silently got 50 results to Prowlarr's
+  // 100, because Prowlarr's own Cardigann request sends an explicit limit and ours never did.
+  // 100 matches the cap every native JSON-API adapter in this app already uses.
+  url.searchParams.set('limit', '100')
   if (indexer.api_key) url.searchParams.set('apikey', indexer.api_key)
   if (params.q) url.searchParams.set('q', params.q)
   // Additive-only: never sends fewer categories than requested (see categories.ts).

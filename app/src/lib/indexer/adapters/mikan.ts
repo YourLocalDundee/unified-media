@@ -4,7 +4,7 @@
 // hardcodes 1/1 too) — same "known seeded, not a literal count" caveat as internetarchive.ts.
 // Confirmed live 2026-07-12.
 import type { TorznabResult } from '../types'
-import { fetchHtml } from './_shared'
+import { fetchHtml, normalizeInfoHash } from './_shared'
 
 const SEARCH_URL = 'https://mikanani.me/Home/Search'
 
@@ -36,7 +36,7 @@ export async function searchMikan(q: string): Promise<TorznabResult[]> {
 
       results.push({
         title: title || 'Untitled',
-        infoHash: infoHashMatch[1].toLowerCase(),
+        infoHash: normalizeInfoHash(infoHashMatch[1]),
         magnetUrl,
         downloadUrl: '',
         size,

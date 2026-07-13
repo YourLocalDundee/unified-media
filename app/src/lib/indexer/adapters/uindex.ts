@@ -4,7 +4,7 @@
 // live markup has drifted from Prowlarr's own Cardigann definition (newer UI, different classes)
 // — selectors below match the live page, not the YAML.
 import type { TorznabResult } from '../types'
-import { fetchSolvedHtml } from './_shared'
+import { fetchSolvedHtml, normalizeInfoHash } from './_shared'
 
 const SEARCH_URL = 'https://uindex.org/search.php'
 
@@ -46,7 +46,7 @@ export async function searchUindex(q: string): Promise<TorznabResult[]> {
 
       results.push({
         title,
-        infoHash: infoHashMatch[1].toLowerCase(),
+        infoHash: normalizeInfoHash(infoHashMatch[1]),
         magnetUrl,
         downloadUrl: '',
         size: parseSize(row.find('td.sr-col-size').text()),

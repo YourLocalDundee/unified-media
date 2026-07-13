@@ -3,7 +3,7 @@
 // Tier C candidates that were dropped: FlareSolverr actually clears dmhy's challenge). Magnet
 // links are inline on the search results page once solved — no detail-page hop needed.
 import type { TorznabResult } from '../types'
-import { fetchSolvedHtml } from './_shared'
+import { fetchSolvedHtml, normalizeInfoHash } from './_shared'
 
 const SEARCH_URL = 'https://share.dmhy.org/topics/list'
 
@@ -39,7 +39,7 @@ export async function searchDmhy(q: string): Promise<TorznabResult[]> {
 
       results.push({
         title,
-        infoHash: infoHashMatch[1].toLowerCase(),
+        infoHash: normalizeInfoHash(infoHashMatch[1]),
         magnetUrl: magnetUrl.replace(/dn=(&|$)/, `dn=${encodeURIComponent(title)}$1`),
         downloadUrl: '',
         size: parseSizeToBytes(size),

@@ -4,7 +4,7 @@
 // zero, mirroring the internetarchive.ts precedent of documenting the API's own limitation rather
 // than fabricating a number.
 import type { TorznabResult } from '../types'
-import { fetchWithTimeout } from './_shared'
+import { fetchWithTimeout, normalizeInfoHash } from './_shared'
 
 const SEARCH_URL = 'https://subsplease.org/api/'
 
@@ -24,7 +24,9 @@ type SubsPleaseResponse = Record<string, SubsPleaseEntry>
 
 function extractInfoHash(magnet: string): string {
   const match = magnet.match(/urn:btih:([0-9a-fA-F]{40}|[2-7A-Z]{32})/i)
-  return match ? match[1].toLowerCase() : ''
+  // SubsPlease's own magnets use Base32 BTIH (confirmed live 2026-07-13) — normalizeInfoHash
+  // converts to canonical hex so this matches the same release's hash from any hex-encoded source.
+  return match ? normalizeInfoHash(match[1]) : ''
 }
 
 function extractSize(magnet: string): number {

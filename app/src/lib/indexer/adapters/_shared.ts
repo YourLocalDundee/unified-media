@@ -3,6 +3,36 @@
 import * as cheerio from 'cheerio'
 import { flareSolve } from '../flaresolverr'
 
+const BASE32_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'
+
+/**
+ * BitTorrent info hashes (BTIH) legally appear in magnet URIs as either 40-char hex or 32-char
+ * Base32 (RFC 4648) — both encode the same 20-byte hash. Every hash-comparison in this app
+ * (searchAllIndexers' dedup-by-infoHash, and the admin compare tool) treats infoHash as an opaque
+ * string key, so two encodings of the identical hash would never match unless normalized to one
+ * canonical form here. Found live 2026-07-13: SubsPlease's Prowlarr-bridged guid carries a Base32
+ * magnet, which silently failed to compare-match against the native adapter's own (already-hex)
+ * hash before this normalization existed.
+ */
+export function normalizeInfoHash(raw: string): string {
+  const clean = raw.trim()
+  if (/^[0-9a-fA-F]{40}$/.test(clean)) return clean.toLowerCase()
+  if (/^[2-7A-Za-z]{32}$/.test(clean)) {
+    let bits = ''
+    for (const char of clean.toUpperCase()) {
+      const val = BASE32_ALPHABET.indexOf(char)
+      if (val === -1) return clean.toLowerCase()
+      bits += val.toString(2).padStart(5, '0')
+    }
+    let hex = ''
+    for (let i = 0; i + 4 <= bits.length; i += 4) {
+      hex += parseInt(bits.slice(i, i + 4), 2).toString(16)
+    }
+    return hex.length === 40 ? hex : clean.toLowerCase()
+  }
+  return clean.toLowerCase()
+}
+
 /**
  * fetch() with a hard AbortController timeout. Every adapter should use this instead of bare
  * fetch() — Promise.allSettled in searchAllIndexers() waits on the slowest adapter in a batch, so
