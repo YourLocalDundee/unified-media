@@ -4,7 +4,8 @@
 // Intended to run nightly via the scheduler; calling it more often is safe
 // because upsertSubtitleWant uses INSERT OR IGNORE.
 import { getDb } from '@/lib/db/index'
-import { upsertSubtitleWant } from './monitor'
+import { upsertSubtitleWant, pruneOrphanedWants } from './monitor'
+import { computeAbsoluteEpisodeNumbers } from './numbering'
 import type { MediaItem } from '@/lib/media-server/types'
 
 interface SubtitleWantRow {
@@ -33,9 +34,20 @@ function hasExistingSubtitle(mediaId: string, language: string): boolean {
   return row !== undefined
 }
 
-export async function scanLibrary(): Promise<{ scanned: number; created: number }> {
+export async function scanLibrary(): Promise<{ scanned: number; created: number; pruned: number }> {
   const db = getDb()
   const languages = getTargetLanguages()
+
+  // Drop wants left behind by media_items rows that no longer exist (renamed/reorganized
+  // files get a fresh row+id on rescan rather than updating in place).
+  const pruned = pruneOrphanedWants()
+
+  // Keep absolute_episode_number current for every series — cheap (one ORDER BY per series)
+  // and needs to run before the download pass can use it for the numbering-scheme fallback.
+  const seriesIds = db.prepare("SELECT id FROM media_items WHERE type = 'series'").all() as { id: string }[]
+  for (const { id } of seriesIds) {
+    computeAbsoluteEpisodeNumbers(id)
+  }
 
   const items = db
     .prepare(
@@ -89,5 +101,5 @@ export async function scanLibrary(): Promise<{ scanned: number; created: number 
     scanned++
   }
 
-  return { scanned, created }
+  return { scanned, created, pruned }
 }

@@ -24,6 +24,13 @@ export interface MediaItem {
   season_number: number | null
   episode_number: number | null
   episode_title: string | null
+  // Cross-season episode index within the series (1..N ordered by season+episode), used as a
+  // fallback numbering scheme for OpenSubtitles search — see src/lib/subtitle/numbering.ts.
+  // Only populated for episode rows; null until the subtitle scanner computes it.
+  absolute_episode_number: number | null
+  // Series rows only: which numbering scheme matches this show on OpenSubtitles ('season' |
+  // 'absolute' | null = undetermined). See src/lib/subtitle/numbering.ts.
+  subtitle_numbering: string | null
   // Null for series/season stubs — only episodes and movies have an actual file on disk
   file_path: string | null
   poster_path: string | null

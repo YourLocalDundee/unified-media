@@ -23,6 +23,15 @@ interface SubtitleWant {
   updated_at: number
 }
 
+interface SeriesNumberingRow {
+  id: string
+  title: string
+  tmdb_id: number | null
+  subtitle_numbering: 'season' | 'absolute' | null
+  skipped_count: number
+  total_count: number
+}
+
 const STATUS_COLORS: Record<string, string> = {
   wanted: 'bg-yellow-600 text-white',
   downloaded: 'bg-green-600 text-white',
@@ -46,9 +55,13 @@ export default function AdminSubtitlesPage() {
   const [filter, setFilter] = useState('all')
   const [scanning, setScanning] = useState(false)
   const [downloading, setDownloading] = useState(false)
+  const [rechecking, setRechecking] = useState(false)
   const [scanResult, setScanResult] = useState<string | null>(null)
   const [dlResult, setDlResult] = useState<string | null>(null)
+  const [recheckResult, setRecheckResult] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [seriesNumbering, setSeriesNumbering] = useState<SeriesNumberingRow[]>([])
+  const [numberingSaving, setNumberingSaving] = useState<string | null>(null)
 
   const fetchItems = useCallback(async () => {
     setLoading(true)
@@ -61,12 +74,33 @@ export default function AdminSubtitlesPage() {
     finally { setLoading(false) }
   }, [filter])
 
+  const fetchSeriesNumbering = useCallback(async () => {
+    try {
+      const res = await fetch('/api/media/series/subtitle-numbering')
+      if (res.ok) setSeriesNumbering(await res.json() as SeriesNumberingRow[])
+    } catch { /* non-critical panel — leave list empty on failure */ }
+  }, [])
+
   // Deferred a tick so fetchItems' loading setState runs outside the effect's
   // synchronous commit path (react-hooks/set-state-in-effect).
   useEffect(() => {
-    const id = setTimeout(() => void fetchItems(), 0)
+    const id = setTimeout(() => { void fetchItems(); void fetchSeriesNumbering() }, 0)
     return () => clearTimeout(id)
-  }, [fetchItems])
+  }, [fetchItems, fetchSeriesNumbering])
+
+  async function setNumberingMode(seriesId: string, mode: 'season' | 'absolute' | null) {
+    setNumberingSaving(seriesId)
+    try {
+      const res = await fetch(`/api/media/series/${seriesId}/subtitle-numbering`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode }),
+      })
+      if (res.ok) void fetchSeriesNumbering()
+      else setError('Failed to update numbering mode')
+    } catch { setError('Network error') }
+    finally { setNumberingSaving(null) }
+  }
 
   const counts = {
     wanted: items.filter(i => i.status === 'wanted').length,
@@ -81,12 +115,27 @@ export default function AdminSubtitlesPage() {
     try {
       const res = await fetch('/api/subtitle/scan', { method: 'POST' })
       if (res.ok) {
-        const d = await res.json() as { scanned: number; created: number }
-        setScanResult(`Scanned ${d.scanned} items, ${d.created} new wanted`)
+        const d = await res.json() as { scanned: number; created: number; pruned: number }
+        setScanResult(`Scanned ${d.scanned} items, ${d.created} new wanted, ${d.pruned} orphaned pruned`)
         void fetchItems()
+        void fetchSeriesNumbering()
       } else setError('Scan failed')
     } catch { setError('Scan error') }
     finally { setScanning(false) }
+  }
+
+  async function recheckSkipped() {
+    setRechecking(true)
+    setRecheckResult(null)
+    try {
+      const res = await fetch('/api/subtitle/recheck', { method: 'POST' })
+      if (res.ok) {
+        const d = await res.json() as { reset: number }
+        setRecheckResult(`${d.reset} skipped items reset to wanted — run "Download Pending" to re-search them`)
+        void fetchItems()
+      } else setError('Recheck failed')
+    } catch { setError('Recheck error') }
+    finally { setRechecking(false) }
   }
 
   async function downloadPending() {
@@ -104,13 +153,19 @@ export default function AdminSubtitlesPage() {
         if (!statusRes.ok) break
         const job = await statusRes.json() as {
           status: string
-          result?: { downloaded: number; skipped: number; failed: number }
+          result?: { downloaded: number; skipped: number; failed: number; quotaExhausted?: boolean }
           error?: string
         }
         if (job.status === 'done') {
           const d = job.result
-          setDlResult(d ? `${d.downloaded} downloaded, ${d.skipped} skipped, ${d.failed} failed` : 'Done')
+          setDlResult(
+            d
+              ? `${d.downloaded} downloaded, ${d.skipped} skipped, ${d.failed} failed` +
+                  (d.quotaExhausted ? ' — daily quota exhausted, rest left for tomorrow' : '')
+              : 'Done'
+          )
           void fetchItems()
+          void fetchSeriesNumbering()
           setDownloading(false)
           return
         }
@@ -156,6 +211,15 @@ export default function AdminSubtitlesPage() {
             {downloading && <Loader2 className="w-4 h-4 animate-spin" />}
             Download Pending
           </button>
+          <button
+            onClick={() => void recheckSkipped()}
+            disabled={rechecking}
+            title="Reset 'skipped' items to 'wanted' so the next download pass re-searches them — OpenSubtitles' catalog grows over time. Also runs automatically every Sunday 2:30 AM."
+            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-zinc-700 text-white text-sm font-medium hover:bg-zinc-600 disabled:opacity-50"
+          >
+            {rechecking && <Loader2 className="w-4 h-4 animate-spin" />}
+            Recheck Skipped
+          </button>
         </div>
       </div>
 
@@ -177,6 +241,12 @@ export default function AdminSubtitlesPage() {
           <button onClick={() => setDlResult(null)} className="text-blue-400 hover:text-blue-200">✕</button>
         </div>
       )}
+      {recheckResult && (
+        <div className="rounded-lg bg-zinc-800/60 border border-zinc-600 px-4 py-3 text-sm text-zinc-300 flex justify-between">
+          {recheckResult}
+          <button onClick={() => setRecheckResult(null)} className="text-zinc-400 hover:text-zinc-200">✕</button>
+        </div>
+      )}
 
       {/* Stats */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
@@ -192,6 +262,57 @@ export default function AdminSubtitlesPage() {
           </div>
         ))}
       </div>
+
+      {/* Episode numbering — some long-running anime file "seasons" by story arc, which
+          OpenSubtitles' own catalog doesn't follow (it uses a single season with absolute,
+          cross-season episode numbers). Auto-detected per series on first search and cached
+          here; override manually for shows the auto-probe hasn't reached or got wrong. */}
+      {seriesNumbering.length > 0 && (
+        <div className="rounded-xl border border-border bg-card overflow-hidden">
+          <div className="px-4 py-3 border-b border-border">
+            <h2 className="text-sm font-semibold text-foreground">Episode Numbering</h2>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Shows with skipped subtitles, or a numbering scheme already detected/overridden.
+              &quot;Absolute&quot; means OpenSubtitles files this show under one season with
+              flat episode numbers instead of our arc-based seasons.
+            </p>
+          </div>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-border text-left text-xs text-muted-foreground uppercase tracking-wider">
+                <th className="px-4 py-3 font-medium">Series</th>
+                <th className="px-4 py-3 font-medium">Skipped</th>
+                <th className="px-4 py-3 font-medium">Numbering</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {seriesNumbering.map(s => (
+                <tr key={s.id} className="hover:bg-muted/30 transition-colors">
+                  <td className="px-4 py-3 font-medium text-foreground">{s.title}</td>
+                  <td className="px-4 py-3 text-muted-foreground">
+                    {s.skipped_count} / {s.total_count}
+                  </td>
+                  <td className="px-4 py-3">
+                    <select
+                      value={s.subtitle_numbering ?? 'auto'}
+                      disabled={numberingSaving === s.id}
+                      onChange={(e) => {
+                        const v = e.target.value
+                        void setNumberingMode(s.id, v === 'auto' ? null : (v as 'season' | 'absolute'))
+                      }}
+                      className="text-xs px-2 py-1 rounded bg-muted border border-border text-foreground disabled:opacity-50"
+                    >
+                      <option value="auto">Auto{s.subtitle_numbering ? '' : ' (undetermined)'}</option>
+                      <option value="season">Season-based</option>
+                      <option value="absolute">Absolute</option>
+                    </select>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       {/* Filter tabs */}
       <div className="flex gap-1 border-b border-border">

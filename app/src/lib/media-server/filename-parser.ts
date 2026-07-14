@@ -16,8 +16,10 @@ export function parseFilename(filename: string): ParsedFilename {
   const safeFilename = filename.length > 512 ? filename.slice(0, 512) : filename
   const base = safeFilename.replace(/\.[^.]+$/, '')
 
-  // S01E02 pattern
-  const tvMatch = base.match(/^(.+?)[.\s_-]+[Ss](\d{1,2})[Ee](\d{1,2})/i)
+  // S01E02 pattern. Episode capture must allow 3 digits — some long-running shows
+  // zero-pad within-season episode numbers to 3 digits (e.g. "S01E010"); a 2-digit-max
+  // capture truncates that to "01", colliding every E01x episode onto episode 1.
+  const tvMatch = base.match(/^(.+?)[.\s_-]+[Ss](\d{1,2})[Ee](\d{1,3})/i)
   if (tvMatch) {
     const rawTitle = tvMatch[1].replace(/[._]/g, ' ').trim()
     const season = parseInt(tvMatch[2], 10)

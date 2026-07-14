@@ -128,6 +128,37 @@ export function markSkipped(media_item_id: string, language: string): void {
   ).run(Date.now(), media_item_id, language)
 }
 
+// media_items rows are not stable across a rename/reorganize — a rescan of a moved file
+// creates a fresh row with a new id rather than updating the old one in place, orphaning
+// any subtitle_wants row still pointing at the old id. Left alone these silently burn
+// OpenSubtitles download quota (search can still "succeed" via a title-query fallback,
+// but the write always fails since the stale media_path no longer resolves). Run from
+// the scanner so the table self-heals on every nightly pass.
+export function pruneOrphanedWants(): number {
+  const db = getDb()
+  const result = db
+    .prepare(
+      `DELETE FROM subtitle_wants
+       WHERE NOT EXISTS (SELECT 1 FROM media_items WHERE media_items.id = subtitle_wants.media_item_id)`
+    )
+    .run()
+  return result.changes
+}
+
+// 'skipped' means "no OpenSubtitles match at the time we searched", not "never will be" —
+// the catalog grows as fans upload more over time. hasExistingSubtitle() treats any non-
+// 'failed' row (including 'skipped') as already handled, so nothing ever retries these on
+// its own. Called periodically (see scheduler.ts) so the next download pass re-searches
+// them; a plain status reset is enough since the search itself is re-derived fresh from
+// media_items each time, not cached on the want row.
+export function resetSkippedToWanted(): number {
+  const db = getDb()
+  const result = db
+    .prepare("UPDATE subtitle_wants SET status = 'wanted', updated_at = ? WHERE status = 'skipped'")
+    .run(Date.now())
+  return result.changes
+}
+
 export function deleteSubtitleWant(id: number): boolean {
   const db = getDb()
   const result = db

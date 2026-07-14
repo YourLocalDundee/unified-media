@@ -790,6 +790,21 @@ export function runMigrations(db: Database.Database): void {
     // caps_categories is JSON (IndexerCategory[]); NULL = never probed successfully.
     'ALTER TABLE indexers ADD COLUMN caps_categories TEXT',
     'ALTER TABLE indexers ADD COLUMN caps_checked_at INTEGER',
+    // media_items (episode rows) — flat cross-season episode index, derived by ordering a
+    // series' episodes by (season_number, episode_number) and numbering them 1..N. Long-running
+    // anime (Naruto Shippuden, Hunter x Hunter, Dragon Ball Kai, ...) get "seasons" from
+    // arc-boundary splits that OpenSubtitles' own catalog does not follow — it files the whole
+    // show under season 1 with absolute episode numbers. Recomputed by pruneOrphanedWants's
+    // sibling in scanner.ts on every scan; see subtitle_numbering below for how it's used.
+    'ALTER TABLE media_items ADD COLUMN absolute_episode_number INTEGER',
+    // media_items (series rows) — which numbering scheme actually matches this show on
+    // OpenSubtitles: NULL = not yet determined (auto-probe on next search), 'season' = the
+    // parsed season/episode numbers match, 'absolute' = use season=1 + absolute_episode_number
+    // instead. Auto-detected the first time a search for the series is attempted (see
+    // resolveSubtitleNumbering in downloader.ts) and cached here so later episodes of the same
+    // series skip straight to the working mode; also directly admin-editable as an override via
+    // PATCH /api/media/series/[id]/subtitle-numbering (/admin/subtitles).
+    'ALTER TABLE media_items ADD COLUMN subtitle_numbering TEXT',
   ]
   for (const sql of addCols) {
     try { db.exec(sql) } catch { /* column already exists — safe to ignore */ }

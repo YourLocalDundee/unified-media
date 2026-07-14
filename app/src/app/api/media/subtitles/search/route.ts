@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth } from '@/lib/dal'
 import { getItemById } from '@/lib/media-server/library'
 import { searchSubtitles } from '@/lib/subtitle/opensubtitles'
+import { searchEpisodeSubtitles, type EpisodeSearchBase } from '@/lib/subtitle/numbering'
+import type { OSSubtitle } from '@/lib/subtitle/types'
 
 export const dynamic = 'force-dynamic'
 
@@ -52,35 +54,41 @@ export async function GET(req: NextRequest) {
   // For an episode, the best OpenSubtitles match comes from the SERIES imdb id plus the
   // season/episode numbers — a per-episode imdb_id is usually missing and, even when present,
   // gives weaker results than parent + S/E. Resolve the parent series row for those fields.
-  let params: Parameters<typeof searchSubtitles>[0]
+  // searchEpisodeSubtitles additionally handles shows whose "seasons" don't match
+  // OpenSubtitles' own catalog (arc-based vs. absolute episode numbering) — see numbering.ts.
+  let results: OSSubtitle[]
+  let hasImdb: boolean
   if (item.type === 'episode') {
     const series = item.series_id ? getItemById(item.series_id) : undefined
     const parentImdb = series?.imdb_id ? strip(series.imdb_id) : undefined
     const ownImdb = item.imdb_id ? strip(item.imdb_id) : undefined
-    params = {
-      parent_imdb_id: parentImdb,
-      // Only fall back to the episode's own imdb when there's no series imdb.
-      imdb_id: parentImdb ? undefined : ownImdb,
-      // Title fallback (series title preferred) when neither imdb id is available.
-      query: parentImdb || ownImdb ? undefined : (series?.title ?? item.title),
-      season_number: item.season_number ?? undefined,
-      episode_number: item.episode_number ?? undefined,
+    const base: EpisodeSearchBase = parentImdb
+      ? { parent_imdb_id: parentImdb }
+      : ownImdb
+        ? { imdb_id: ownImdb }
+        : { query: series?.title ?? item.title }
+
+    hasImdb = !!(parentImdb || ownImdb)
+    results = await searchEpisodeSubtitles({
+      base,
+      seriesId: item.series_id,
+      seasonNumber: item.season_number,
+      episodeNumber: item.episode_number,
+      absoluteEpisodeNumber: item.absolute_episode_number,
       languages: language,
-      type: 'episode',
-      hearing_impaired: hi ? 'only' : 'include',
-    }
+      hearingImpaired: hi ? 'only' : 'include',
+    })
   } else {
     const imdb_id = item.imdb_id ? strip(item.imdb_id) : undefined
-    params = {
+    hasImdb = !!imdb_id
+    results = await searchSubtitles({
       imdb_id,
       query: imdb_id ? undefined : item.title,
       languages: language,
       type: 'movie',
       hearing_impaired: hi ? 'only' : 'include',
-    }
+    })
   }
-
-  const results = await searchSubtitles(params)
 
   const candidates: SubtitleCandidate[] = results
     .map((sub) => {
@@ -101,8 +109,5 @@ export async function GET(req: NextRequest) {
     })
     .filter((c): c is SubtitleCandidate => c !== null)
 
-  // hasImdb stays true whenever we searched by any imdb identifier (episode parent or own,
-  // or movie imdb) rather than the title-query fallback.
-  const hasImdb = !!(params.imdb_id || params.parent_imdb_id)
   return NextResponse.json({ candidates, hasImdb })
 }
