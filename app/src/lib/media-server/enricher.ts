@@ -1,5 +1,5 @@
 import { getDb } from '@/lib/db/index'
-import { searchMovie, searchTV, tmdbImageUrl } from './tmdb'
+import { searchMovie, searchTV, getSeasonEpisodeDetails } from './tmdb'
 import type { MediaItem } from './types'
 
 export async function enrichItem(item: MediaItem): Promise<void> {
@@ -37,8 +37,11 @@ export async function enrichItem(item: MediaItem): Promise<void> {
         overview: movie.overview ?? null,
         year: releaseYear,
         runtime_ticks: movie.runtime ? movie.runtime * 600_000_000 : null,
-        poster_path: tmdbImageUrl(movie.poster_path, 'w342'),
-        backdrop_path: tmdbImageUrl(movie.backdrop_path, 'w780'),
+        // Bare TMDB path fragment (e.g. "/abc.jpg") — every consumer (dashboard, browse/[id],
+        // library/[id], RequestsTable) prepends its own size-specific base URL via
+        // tmdbImageUrl()/inline template. Storing a full URL here double-prefixes it downstream.
+        poster_path: movie.poster_path ?? null,
+        backdrop_path: movie.backdrop_path ?? null,
         genres: JSON.stringify(movie.genres?.map(g => g.name) ?? []),
         popularity: movie.popularity ?? null,
         vote_average: movie.vote_average ?? null,
@@ -75,7 +78,7 @@ export async function enrichItem(item: MediaItem): Promise<void> {
         tvdb_id: show.external_ids?.tvdb_id ?? null,
         overview: show.overview ?? null,
         year: airYear,
-        poster_path: tmdbImageUrl(show.poster_path, 'w342'),
+        poster_path: show.poster_path ?? null,
         genres: JSON.stringify((show as unknown as { genres?: { id: number; name: string }[] }).genres?.map(g => g.name) ?? []),
         popularity: show.popularity ?? null,
         vote_average: show.vote_average ?? null,
@@ -88,12 +91,75 @@ export async function enrichItem(item: MediaItem): Promise<void> {
   }
 }
 
+// Per-episode still images/titles/overviews for library episodes whose parent series has a
+// resolved tmdb_id. Batched by season (one TMDB call covers every episode in that season)
+// rather than one call per episode. Never overwrites an existing episode_title — some shows
+// (e.g. old dubs the filename parser already extracted a title for) may have a more accurate
+// title than TMDB's own entry; COALESCE only fills genuinely missing fields.
+export async function enrichEpisodeStills(): Promise<{ enriched: number; failed: number }> {
+  const db = getDb()
+  const seriesRows = db
+    .prepare(`SELECT id, tmdb_id FROM media_items WHERE type = 'series' AND tmdb_id IS NOT NULL`)
+    .all() as { id: string; tmdb_id: number }[]
+
+  let enriched = 0
+  let failed = 0
+
+  for (const series of seriesRows) {
+    const episodes = db
+      .prepare(
+        `SELECT id, season_number, episode_number FROM media_items
+         WHERE series_id = ? AND type = 'episode' AND season_number IS NOT NULL AND episode_number IS NOT NULL
+           AND (poster_path IS NULL OR episode_title IS NULL OR overview IS NULL)`,
+      )
+      .all(series.id) as { id: string; season_number: number; episode_number: number }[]
+    if (episodes.length === 0) continue
+
+    const seasonNumbers = [...new Set(episodes.map((e) => e.season_number))]
+    const update = db.prepare(
+      `UPDATE media_items SET
+         poster_path   = COALESCE(poster_path, @poster_path),
+         episode_title = COALESCE(episode_title, @episode_title),
+         overview      = COALESCE(overview, @overview),
+         updated_at    = @updated_at
+       WHERE id = @id`,
+    )
+
+    for (const seasonNumber of seasonNumbers) {
+      const seasonEpisodes = episodes.filter((e) => e.season_number === seasonNumber)
+      try {
+        const details = await getSeasonEpisodeDetails(series.tmdb_id, seasonNumber)
+        const byEpNum = new Map(details.map((d) => [d.episodeNumber, d]))
+        for (const ep of seasonEpisodes) {
+          const match = byEpNum.get(ep.episode_number)
+          if (!match) { failed++; continue }
+          update.run({
+            id: ep.id,
+            poster_path: match.stillPath,
+            episode_title: match.name,
+            overview: match.overview,
+            updated_at: Date.now(),
+          })
+          enriched++
+        }
+      } catch (err) {
+        console.error(`[enricher] enrichEpisodeStills failed for series ${series.id} season ${seasonNumber}:`, err)
+        failed += seasonEpisodes.length
+      }
+      // One call per season already — 250ms is plenty conservative against TMDB's rate limits.
+      await new Promise((resolve) => setTimeout(resolve, 250))
+    }
+  }
+
+  return { enriched, failed }
+}
+
 export async function enrichAll(): Promise<{ enriched: number; failed: number }> {
   const db = getDb()
   const items = db
     .prepare(
       `SELECT * FROM media_items
-       WHERE tmdb_id IS NULL
+       WHERE (tmdb_id IS NULL OR poster_path IS NULL)
          AND type IN ('movie','series')`,
     )
     .all() as MediaItem[]

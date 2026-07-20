@@ -637,6 +637,29 @@ export async function getSeasonEpisodeNumbers(tmdbId: number, seasonNumber: numb
     .filter((n) => typeof n === 'number' && n > 0)
 }
 
+export interface SeasonEpisodeDetail {
+  episodeNumber: number
+  name: string | null
+  stillPath: string | null
+  overview: string | null
+}
+
+// One call covers every episode in the season — used to backfill per-episode still images,
+// titles, and overviews for library items instead of one TMDB request per episode.
+export async function getSeasonEpisodeDetails(tmdbId: number, seasonNumber: number): Promise<SeasonEpisodeDetail[]> {
+  const data = await tmdbFetch<{
+    episodes?: Array<{ episode_number: number; name?: string | null; still_path?: string | null; overview?: string | null }>
+  }>(`/tv/${tmdbId}/season/${seasonNumber}?language=en-US`)
+  return (data.episodes ?? [])
+    .filter((e) => typeof e.episode_number === 'number' && e.episode_number > 0)
+    .map((e) => ({
+      episodeNumber: e.episode_number,
+      name: e.name ?? null,
+      stillPath: e.still_path ?? null,
+      overview: e.overview ?? null,
+    }))
+}
+
 // ---------------------------------------------------------------------------
 // Story arcs (Bug 7): TMDB groups long-running anime into "seasons" that bundle
 // multiple story arcs (e.g. One Piece S13 = "Impel Down & Marineford", 422–522).

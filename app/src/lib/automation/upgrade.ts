@@ -4,10 +4,10 @@
  * Once an item is imported, if its quality profile has `upgrade_allowed=1` and the grabbed release is
  * still BELOW the profile cutoff, the upgrade scan keeps looking for a better release and replaces the
  * file when one is found. Once a release meets/exceeds the cutoff the item is "good enough" and left
- * alone — EXCEPT for a PROPER/REPACK, which replaces an at-cutoff copy too (Sonarr's "prefer and
- * upgrade propers"), bounded to PROPER_WINDOW_MS after the grab. "Better" and "cutoff" use the same
- * two-key ordering as Sonarr: quality-tier weight first, then custom-format score (so proper/repack/
- * HDR/etc. format bumps drive same-tier upgrades); proper/repack revision is also matched directly.
+ * alone — EXCEPT for a PROPER/REPACK, which replaces an at-cutoff copy too ("prefer and upgrade
+ * propers"), bounded to PROPER_WINDOW_MS after the grab. "Better" and "cutoff" use a two-key
+ * ordering: quality-tier weight first, then custom-format score (so proper/repack/HDR/etc. format
+ * bumps drive same-tier upgrades); proper/repack revision is also matched directly.
  *
  * v1 scope: MOVIES only. A movie is a single file, so replacement is a clean swap — `media_items` is
  * keyed by `file_path`, so the upgrade's new path is a DISTINCT row and the old row/file can be deleted
@@ -40,7 +40,7 @@ const PENDING_UPGRADE_TTL_MS = 7 * 24 * 60 * 60 * 1000 // 7 days
 // Cap items scanned per run so a large library doesn't hammer indexers in one tick.
 const DEFAULT_SCAN_LIMIT = 25
 // PROPER/REPACK window: an item that already MEETS cutoff is normally left alone, but a PROPER or
-// REPACK (a re-release fixing a broken encode) should still replace it — Sonarr's "prefer and upgrade
+// REPACK (a re-release fixing a broken encode) should still replace it — "prefer and upgrade
 // propers". Bounded in time because propers surface within days of the original release, so we only
 // keep searching at-cutoff items for this long after the grab; otherwise every at-cutoff movie would
 // hit the indexers on every scan forever. Below-cutoff quality upgrades are NOT time-bounded.

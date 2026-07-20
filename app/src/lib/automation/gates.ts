@@ -1,7 +1,7 @@
 /**
  * Decision gate-chain (feature 1).
  *
- * A release is evaluated in two stages now, mirroring Sonarr/Radarr's design:
+ * A release is evaluated in two stages:
  *
  *   1. HARD GATES (this module) — pass/fail conditions that make a release ungrabbable
  *      regardless of quality: it's blocklisted, dead (below the seed floor), a "sample",

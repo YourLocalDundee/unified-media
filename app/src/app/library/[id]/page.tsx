@@ -8,6 +8,7 @@ import { formatDuration } from '@/lib/utils'
 import { Button } from '@/components/ui/Button'
 import MediaCard from '@/components/media/MediaCard'
 import { LibraryItemAdminMenu } from '@/components/media/LibraryItemAdminMenu'
+import { SeasonEpisodeList } from '@/components/media/SeasonEpisodeList'
 import { requireAuth } from '@/lib/dal'
 
 interface Props {
@@ -45,14 +46,6 @@ export default async function LibraryDetailPage({ params }: Props) {
 
   const episodes: MediaItem[] = item.type === 'series' ? getEpisodesForSeries(id) : []
   const similar: MediaItem[] = item.type !== 'episode' ? getSimilarItems(id, 12) : []
-
-  const seasonMap = new Map<number, MediaItem[]>()
-  for (const ep of episodes) {
-    const s = ep.season_number ?? 0
-    if (!seasonMap.has(s)) seasonMap.set(s, [])
-    seasonMap.get(s)!.push(ep)
-  }
-  const seasons = [...seasonMap.entries()].sort((a, b) => a[0] - b[0])
 
   let watchNowHref: string | null = null
   if (item.type === 'series') {
@@ -138,34 +131,10 @@ export default async function LibraryDetailPage({ params }: Props) {
           </div>
         </div>
 
-        {item.type === 'series' && seasons.length > 0 && (
+        {item.type === 'series' && episodes.length > 0 && (
           <section className="mt-12">
             <h2 className="text-xl font-semibold text-white mb-4">Episodes</h2>
-            {seasons.map(([seasonNumber, eps]) => (
-              <div key={seasonNumber} className="mb-8">
-                <h3 className="text-lg font-medium text-zinc-300 mb-3">
-                  {seasonNumber === 0 ? 'Specials' : `Season ${seasonNumber}`}
-                </h3>
-                <div className="flex flex-col gap-2">
-                  {eps.map((ep) => (
-                    <Link
-                      key={ep.id}
-                      href={`/play/${ep.id}`}
-                      className="flex flex-col rounded-lg bg-zinc-900 hover:bg-zinc-800 px-4 py-3 transition-colors"
-                    >
-                      <span className="text-white text-sm font-medium">
-                        S{String(ep.season_number ?? 0).padStart(2, '0')} E{String(ep.episode_number ?? 0).padStart(2, '0')} &mdash; {ep.title}
-                      </span>
-                      {ep.overview && (
-                        <span className="text-zinc-500 text-xs mt-1 line-clamp-2">
-                          {ep.overview}
-                        </span>
-                      )}
-                    </Link>
-                  ))}
-                </div>
-              </div>
-            ))}
+            <SeasonEpisodeList episodes={episodes} />
           </section>
         )}
 

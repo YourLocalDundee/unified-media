@@ -8,12 +8,12 @@
  * score (higher = better) or null if the release fails a required condition.
  *
  * The scorer is intentionally simple — it rewards known high-quality sources and resolutions
- * without trying to replicate Sonarr/Radarr's full custom format system.
+ * without trying to replicate a full custom-format system.
  */
 
 import type { ReleaseMeta, QualityCondition } from './types'
 
-// ── language patterns (ported from Sonarr LanguageParser.cs) ─────────────────
+// ── language patterns ─────────────────────────────────────────────────────
 //
 // Each entry maps a regex to an ISO 639-1 code. The regex is tested against the
 // full release name (case-insensitive). First match wins — order matters for

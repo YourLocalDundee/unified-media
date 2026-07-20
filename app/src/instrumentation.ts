@@ -20,6 +20,9 @@ export async function register() {
     const { initWatcher } = await import('@/lib/media-server/scanner')
     initWatcher()
 
+    const { initMediaEnrichScheduler } = await import('@/lib/media-server/scheduler')
+    initMediaEnrichScheduler()
+
     const { initIndexerDiscovery } = await import('@/lib/indexer/discovery')
     initIndexerDiscovery().catch(err => {
       console.warn('[indexer] Discovery error (non-fatal):', err)

@@ -187,7 +187,7 @@ function specMatches(
   return spec.negate ? !matched : matched
 }
 
-// Returns true if all specs in the format match (AND logic, same as Sonarr)
+// Returns true if all specs in the format match (AND logic)
 function formatMatches(
   specs: CustomFormatSpec[],
   meta: ReleaseMeta,

@@ -44,6 +44,21 @@ export function parseFilename(filename: string): ParsedFilename {
     return { title, episodeTitle, year, season: 1, episode, isEpisode: true }
   }
 
+  // "NxNN" pattern (e.g. "1x02"), optionally prefixed by a redundant absolute-episode
+  // number: "Show - 002-1x02 - Title" or "Show - 1x02 - Title". Distinct from the S01E02
+  // case above (no literal S/E letters) — common on older dub releases (e.g. Pokémon).
+  const nxnMatch = base.match(/^(.+?)\s+-\s+(?:\d{2,4}-)?(\d{1,2})x(\d{1,3})(?:\s+-\s+(.+))?$/i)
+  if (nxnMatch) {
+    const rawTitle = nxnMatch[1].replace(/[._]/g, ' ').trim()
+    const season = parseInt(nxnMatch[2], 10)
+    const episode = parseInt(nxnMatch[3], 10)
+    const yearMatch = rawTitle.match(/\b(19\d{2}|20[012]\d)\b/)
+    const year = yearMatch ? parseInt(yearMatch[1], 10) : null
+    const title = rawTitle.replace(/\s*\(?\d{4}\)?\s*$/, '').trim()
+    const episodeTitle = nxnMatch[4] ? cleanEpisodeTitle(nxnMatch[4]) : null
+    return { title, episodeTitle, year, season, episode, isEpisode: true }
+  }
+
   // Anime: "[Group] Show - 416 - Episode Title" or "Show - NNN - Title"
   const animeMatch = base.match(/^(?:\[.+?\]\s*)?(.+?)\s+-\s+(\d{2,4})\s+-\s+(.+)$/)
   if (animeMatch) {

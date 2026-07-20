@@ -1,4 +1,4 @@
-// Admin subtitle management — wraps the native subtitle system (Bazarr replacement).
+// Admin subtitle management — wraps the native subtitle system.
 // "Scan Library" discovers media without subtitles and creates wanted entries.
 // "Download Pending" triggers an OpenSubtitles lookup and writes .srt files to disk.
 'use client'
