@@ -23,7 +23,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
     <div className="flex h-screen overflow-hidden bg-background">
       <Sidebar />
       <div className="flex flex-1 flex-col overflow-hidden">
-        <Header username={user?.username} />
+        <Header username={user?.username} displayName={user?.displayName} />
         {/* pb-16 on mobile clears the fixed MobileNav bar; md:pb-6 reverts to standard padding */}
         <main className="flex-1 overflow-y-auto p-6 pb-16 md:pb-6">{children}</main>
       </div>

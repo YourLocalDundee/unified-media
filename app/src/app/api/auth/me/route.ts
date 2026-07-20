@@ -5,7 +5,7 @@
  *
  * force-dynamic prevents Next.js from caching this route at the edge or in
  * the full-route cache — it must always hit the DB to validate the session.
- * Returns only the fields needed by the client (userId, username, role);
+ * Returns only the fields needed by the client (userId, username, displayName, role);
  * the full session object (IP, UA, expiry) stays server-side only.
  */
 
@@ -17,5 +17,10 @@ export const dynamic = 'force-dynamic'
 export async function GET() {
   const session = await getSession()
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  return NextResponse.json({ userId: session.userId, username: session.username, role: session.role })
+  return NextResponse.json({
+    userId: session.userId,
+    username: session.username,
+    displayName: session.displayName,
+    role: session.role,
+  })
 }

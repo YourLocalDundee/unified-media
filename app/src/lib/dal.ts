@@ -25,6 +25,7 @@ import { getCountryFromIP } from './geo'
 export interface SessionData {
   userId: string
   username: string
+  displayName: string | null
   role: string
   sessionId: string
   // True when the account is flagged for a forced password change (admin reset or
@@ -53,6 +54,7 @@ interface SessionRow {
   id: string
   user_id: string
   username: string
+  display_name: string | null
   role: string
   force_pw_change: number
   created_at: number
@@ -72,7 +74,7 @@ export async function getSession(): Promise<SessionData | null> {
   // round-trip and preventing suspended accounts from slipping through on cached sessions.
   const session = db.prepare(
     `SELECT s.id, s.user_id, s.created_at, s.expires_at, s.last_seen,
-            u.username, u.role, u.force_pw_change
+            u.username, u.display_name, u.role, u.force_pw_change
      FROM sessions s
      JOIN users u ON s.user_id = u.id
      WHERE s.id = ? AND s.expires_at > ? AND u.is_active = 1`
@@ -112,18 +114,18 @@ export async function getSession(): Promise<SessionData | null> {
       db.prepare(
         'UPDATE sessions SET id = ?, expires_at = ?, last_seen = ?, created_at = ? WHERE id = ?'
       ).run(newId, now + SESSION_TTL_MS, now, now, sessionId)
-      return { userId: session.user_id, username: session.username, role: session.role, sessionId: newId, forcePwChange: session.force_pw_change === 1 }
+      return { userId: session.user_id, username: session.username, displayName: session.display_name, role: session.role, sessionId: newId, forcePwChange: session.force_pw_change === 1 }
     } catch {
       // Cookie set failed (Server Component context) — skip rotation this request
       // and keep the existing session row valid. Rotation will succeed on the next
       // Route Handler request where cookie mutations are permitted.
       db.prepare('UPDATE sessions SET last_seen = ? WHERE id = ?').run(now, sessionId)
-      return { userId: session.user_id, username: session.username, role: session.role, sessionId, forcePwChange: session.force_pw_change === 1 }
+      return { userId: session.user_id, username: session.username, displayName: session.display_name, role: session.role, sessionId, forcePwChange: session.force_pw_change === 1 }
     }
   }
 
   db.prepare('UPDATE sessions SET last_seen = ? WHERE id = ?').run(now, sessionId)
-  return { userId: session.user_id, username: session.username, role: session.role, sessionId, forcePwChange: session.force_pw_change === 1 }
+  return { userId: session.user_id, username: session.username, displayName: session.display_name, role: session.role, sessionId, forcePwChange: session.force_pw_change === 1 }
 }
 
 // redirect() throws a special Next.js error — TypeScript doesn't narrow the return

@@ -21,6 +21,7 @@ import { useRouter } from 'next/navigation'
 export interface AuthUser {
   userId: string
   username: string
+  displayName: string | null
   role: string
 }
 

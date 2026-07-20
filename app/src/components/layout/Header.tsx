@@ -10,12 +10,14 @@ import { useAuth } from '@/context/AuthContext'
 
 interface HeaderProps {
   username?: string
+  displayName?: string | null
 }
 
-export function Header({ username }: HeaderProps) {
+export function Header({ username, displayName }: HeaderProps) {
   const [menuOpen, setMenuOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
   const { logout } = useAuth()
+  const shownName = displayName || username
 
   // Close the dropdown when the user clicks outside the menu ref boundary.
   // mousedown (not click) is used so it fires before the browser's focus event.
@@ -47,13 +49,13 @@ export function Header({ username }: HeaderProps) {
             className="flex items-center gap-2 rounded-md border border-border px-3 py-1.5 text-sm hover:bg-accent transition-colors"
           >
             <User className="h-4 w-4 text-muted-foreground" />
-            <span className="hidden sm:inline">{username ?? 'Guest'}</span>
+            <span className="hidden sm:inline">{shownName ?? 'Guest'}</span>
           </button>
 
           {menuOpen && (
             <div className="absolute right-0 top-10 z-50 w-52 rounded-lg border border-border bg-card shadow-xl py-1">
               <div className="px-3 py-2 text-xs text-muted-foreground font-medium">
-                {username ?? 'Guest'}
+                {shownName ?? 'Guest'}
               </div>
               <div className="border-t border-border my-1" />
               <Link
