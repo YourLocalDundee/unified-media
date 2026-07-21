@@ -37,6 +37,7 @@ automation, and subtitle management — zero Jellyfin dependency.
 | Independence build (native media stack) | pointer §14 | `docs/complete/FEATURES.md` |
 | Grab confirmation flow | pointer §18 | `docs/features/grab-confirmation.md` |
 | Mobile PWA + Web Push notifications | pointer §19 | `docs/features/pwa-notifications.md` |
+| Native phone/TV apps (Capacitor) | pointer §20 | `docs/features/native-apps.md` |
 
 ---
 
@@ -527,3 +528,17 @@ boundary is load-bearing: it caches **only** static assets + `/offline`, **never
 personalized HTML — this app has no external auth gateway and Cache Storage isn't user-scoped, so
 caching an authenticated response could leak across accounts on a shared device. VAPID env vars are
 in §8. Full detail: `docs/features/pwa-notifications.md`.
+
+---
+
+## 20. Native Phone/TV Apps (Capacitor) → see `docs/features/native-apps.md`
+
+6-phase plan to turn the app into a phone app (Android + iOS) and an Android TV/Fire TV/Google TV
+app plus Chromecast casting. **Phase 1 (Android phone wrapper) shipped and emulator-verified
+2026-07-14; phases 2-5 not started.** New `native/` directory (sibling to `app/`, outside the
+Docker build context) holds the Capacitor project — `capacitor.config.ts` points its WebView at the
+live `https://unified.minijoe.dev` instead of a bundled build, so the existing cookie-session auth
+and CSRF check work completely unmodified for the phone/TV wrappers themselves. Testing workflow is
+`.claude/skills/test-unified-android/SKILL.md` (headless emulator, driven via adb). Full detail,
+including the not-yet-started phases (`/tv` route, Android TV APK, Chromecast's signed-token
+requirement): `docs/features/native-apps.md`.

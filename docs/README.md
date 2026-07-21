@@ -31,6 +31,7 @@ Documentation for the unified-frontend / unified-media project. `CLAUDE.md` at t
 | `features/request-system.md` | Two-mode (Quick / Long-term) request system |
 | `features/grab-confirmation.md` | User-facing grab confirmation flow + tiered candidate API |
 | `features/pwa-notifications.md` | Mobile PWA shell + Web Push (VAPID) notifications |
+| `features/native-apps.md` | Phone/TV apps (Capacitor) — Phase 1 (Android wrapper) shipped, phases 2-5 (iOS/tv route/Android TV/Chromecast) planned |
 
 The original full-text per-section content also lives in git history if a condensed pointer ever loses
 a detail you need.

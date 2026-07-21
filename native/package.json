@@ -1,0 +1,26 @@
+{
+  "name": "unified-media-native",
+  "version": "1.0.0",
+  "description": "Capacitor phone/TV shells for Unified Media (loads https://unified.minijoe.dev directly, see capacitor.config.ts)",
+  "private": true,
+  "scripts": {
+    "sync": "cap sync android",
+    "assets": "capacitor-assets generate --android",
+    "open:android": "cap open android"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@capacitor/android": "^8.4.1",
+    "@capacitor/app": "^8.1.0",
+    "@capacitor/core": "^8.4.1",
+    "@capacitor/splash-screen": "^8.0.1",
+    "@capacitor/status-bar": "^8.0.2"
+  },
+  "devDependencies": {
+    "@capacitor/assets": "^3.0.5",
+    "@capacitor/cli": "^8.4.1",
+    "typescript": "^6.0.3"
+  }
+}

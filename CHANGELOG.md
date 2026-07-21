@@ -8,6 +8,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- **Native phone/TV apps (Capacitor), Phase 1 of 6 — Android phone wrapper.** New `native/`
+  directory (sibling to `app/`, outside the Docker build context) holding a Capacitor project whose
+  WebView loads the live `https://unified.minijoe.dev` directly (`server.url` mode) instead of a
+  bundled build, so the existing cookie-session auth and CSRF check work unmodified. New
+  `app/src/components/native/NativeAppBridge.tsx` (+ `@capacitor/core`/`@capacitor/app` added to
+  `app/package.json`) wires the Android hardware back button; no-ops in a normal browser tab.
+  Emulator-verified end-to-end: login, library data, real H.264-decoded video + audio playback,
+  back-button navigation, and the party-play join dialog all work correctly inside the WebView.
+  Phases 2-5 (iOS wrapper, `/tv` D-pad route, Android TV APK, Chromecast) not started. New skill
+  `.claude/skills/test-unified-android/SKILL.md` for the build/emulator/adb testing workflow. Full
+  detail: `docs/features/native-apps.md`.
 - **Standard category widening + manual search (category management, part 2).** New
   `src/lib/indexer/categories.ts`: a fixed Newznab-standard category subset
   (`NEWZNAB_STANDARD_CATEGORIES`) and `resolveCategoriesForIndexer`, wired into `searchIndexer`.

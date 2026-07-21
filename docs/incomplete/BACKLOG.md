@@ -18,6 +18,14 @@ map — are in `docs/complete/FEATURES.md`, not here.)
 
 ## Needs a decision
 
+- **Native apps, phases 2-5** (`docs/features/native-apps.md`, plan at
+  `~/.claude/plans/sorted-riding-popcorn.md`) — Phase 1 (Android phone wrapper) shipped 2026-07-14;
+  remaining phases each have their own gate: Phase 2 (iOS wrapper) needs the user to accept a
+  $99/yr Apple Developer cost plus a spike on whether WKWebView forwards the session cookie to HLS
+  segment requests; Phase 3 (`/tv` D-pad route) is buildable headless but is the single largest
+  remaining lift (spatial nav + reworking `VideoPlayer.tsx`'s keydown handler); Phase 4 (Android TV
+  APK) is thin once Phase 3 exists; Phase 5 (Chromecast) needs a new signed-stream-token backend
+  path plus a $5 Cast SDK developer registration.
 - **Voice chat in Party Play** — requires WebRTC + a coturn STUN/TURN server; can't be built/verified
   headless. Decide stand-up-coturn vs defer.
 - **Bandwidth quota** — cumulative downloads per session user, shown on the profile page with a soft

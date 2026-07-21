@@ -6,6 +6,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools'
 import { useState } from 'react'
 import { AuthProvider } from '@/context/AuthContext'
+import NativeAppBridge from '@/components/native/NativeAppBridge'
 
 export function Providers({ children }: { children: React.ReactNode }) {
   // useState with a factory function ensures the QueryClient is created once per
@@ -29,6 +30,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
     <QueryClientProvider client={queryClient}>
       {/* AuthProvider must be inside QueryClientProvider so it can use React Query internally. */}
       <AuthProvider>
+        <NativeAppBridge />
         {children}
         {/* DevTools only ship in dev builds (tree-shaken in production by the package). */}
         <ReactQueryDevtools initialIsOpen={false} />
