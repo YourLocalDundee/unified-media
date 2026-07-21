@@ -575,6 +575,14 @@ export function TorrentPickModal({
                               {ql}
                             </span>
                           )}
+                          {r.upscaleWarning && (
+                            <span
+                              className="shrink-0 mt-0.5 rounded bg-orange-900/50 px-1 py-0 text-[10px] font-semibold text-orange-300"
+                              title={r.upscaleWarning}
+                            >
+                              ⚠ fake 4K?
+                            </span>
+                          )}
                           <span className={`leading-tight text-xs line-clamp-2 ${isSelected ? 'text-white' : 'text-zinc-300'}`}>
                             {r.title}
                           </span>

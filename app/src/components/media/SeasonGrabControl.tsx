@@ -61,6 +61,8 @@ interface Candidate {
   gates?: string[]
   // Detected dub/sub tag (null/undefined = untagged) — server-computed, see torrent-search/route.ts.
   audioMode?: 'dub' | 'sub' | null
+  // Fake-2160p-upscale suspicion (fake-upscale.ts) — informational only, never affects grabability.
+  upscaleWarning?: string | null
 }
 
 // Client-side labels for gate reasons (mirrors GATE_REASON_LABELS in lib/automation/gates.ts;
@@ -309,6 +311,14 @@ export function SeasonGrabControl({ tmdbId, title, year, seasonNumber, seasonNam
                         className={`ml-1 align-middle rounded px-1 py-0.5 text-[10px] ${c.audioMode === 'dub' ? 'bg-sky-900/60 text-sky-300' : 'bg-amber-900/50 text-amber-300'}`}
                       >
                         {c.audioMode === 'dub' ? 'Dub' : 'Sub'}
+                      </span>
+                    )}
+                    {c.upscaleWarning && (
+                      <span
+                        className="ml-1 align-middle rounded bg-orange-900/50 px-1 py-0.5 text-[10px] text-orange-300"
+                        title={c.upscaleWarning}
+                      >
+                        ⚠ fake 4K?
                       </span>
                     )}
                   </td>

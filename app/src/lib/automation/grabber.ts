@@ -16,6 +16,7 @@ import { getClient } from '@/lib/download-client/registry'
 import { searchAllIndexers } from '@/lib/indexer/index'
 import { parseReleaseName, parseLanguage, parseAudioMode, scoreReleaseSoft } from './parser'
 import { scoreWithProfile } from './quality'
+import { detectSuspiciousUpscale } from './fake-upscale'
 import { getProfileById, recordGrab, updateItem } from './monitor'
 import { recordGrabResults, type ScoredCandidate, type SkipReason } from './grab-results'
 import { partitionByGates, gateKey, loadBlocklist, getGateConfig, evaluateGates } from './gates'
@@ -194,6 +195,10 @@ const SEED_DEAD_PENALTY = -1000   // 0-seed sink; dominates the entire quality r
 const SEED_CAP = 100              // cap seed contribution so seeds never out-weigh quality among live releases
 const LANG_MISS_PENALTY = -100    // language mismatch when a preference is set (soften: was a hard skip)
 const AUDIO_MISS_PENALTY = -100   // audio-mode (dub/sub) mismatch when a preference is set
+// Suspicious 2160p claim (fake-upscale.ts) — stronger than a single lang/audio miss since it's a
+// real quality-integrity concern, but well below SEED_DEAD_PENALTY so a suspicious-but-live release
+// still beats a dead legit one when nothing better is available. De-prioritize, never exclude.
+const SUSPICIOUS_UPSCALE_PENALTY = -150
 
 function seedScore(seeders: number): number {
   return seeders > 0 ? Math.min(seeders, SEED_CAP) : SEED_DEAD_PENALTY
@@ -218,6 +223,9 @@ function audioModePenalty(title: string, audioMode: string): number {
  * Full auto-pick rank for one release: soft quality + custom-format + seeds + language/audio
  * preference. NEVER hard-rejects — a release that fails a required condition or a preference is
  * de-prioritized, not removed. Exported so the grab-results display and the cron rank identically.
+ *
+ * mediaType is optional and only enables the fake-2160p-upscale penalty (fake-upscale.ts) when
+ * provided — omitted callers keep prior behavior unchanged rather than guessing at media type.
  */
 export function autoPickScore(
   result: TorznabResult,
@@ -225,12 +233,24 @@ export function autoPickScore(
   profileId: number,
   language: string,
   audioMode: string = 'any',
+  mediaType?: MediaType,
 ): number {
   const meta = parseReleaseName(result.title)
   const quality = scoreReleaseSoft(meta, conditions)
   // Pass the release size so 'size' custom formats can match (other format types ignore it).
   const fmt = scoreWithProfile(result.title, profileId, result.size).totalScore
-  return quality + fmt + seedScore(result.seeders) + languagePenalty(result.title, language) + audioModePenalty(result.title, audioMode)
+  const upscalePenalty =
+    mediaType && detectSuspiciousUpscale(meta.resolution, mediaType, result.size, result.title).suspicious
+      ? SUSPICIOUS_UPSCALE_PENALTY
+      : 0
+  return (
+    quality +
+    fmt +
+    seedScore(result.seeders) +
+    languagePenalty(result.title, language) +
+    audioModePenalty(result.title, audioMode) +
+    upscalePenalty
+  )
 }
 
 /**
@@ -250,6 +270,9 @@ export function findBestRelease(
   // from the auto-pick. Callers that have already gate-filtered their pool can omit it.
   gateOpts?: { type: MediaType; blocked?: Set<string> },
   audioMode = 'any',
+  // Decoupled from gateOpts.type so callers that already gate-filtered upstream (and pass no
+  // gateOpts, to skip a redundant blocklist reload) can still enable the fake-upscale penalty.
+  mediaType?: MediaType,
 ): TorznabResult | null {
   let conditions: QualityCondition[] = []
   try { const p = JSON.parse(profile.conditions); if (Array.isArray(p)) conditions = p } catch { conditions = [] }
@@ -263,7 +286,7 @@ export function findBestRelease(
   for (const result of results) {
     // Hard gates exclude a release from auto-pick entirely (it stays in the interactive list).
     if (gateConfig && blocked && evaluateGates(result, gateConfig, blocked).length > 0) continue
-    const s = autoPickScore(result, conditions, profile.id, language, audioMode)
+    const s = autoPickScore(result, conditions, profile.id, language, audioMode, mediaType ?? gateOpts?.type)
     if (s > bestScore) {
       bestScore = s
       bestResult = result
@@ -325,9 +348,10 @@ function scorePackPool(
   const { gatesByKey } = partitionByGates(pool, 'tv')
   const scored: ScoredCandidate[] = pool.map((r) => ({
     result: r,
-    score: autoPickScore(r, conditions, profile.id, language, audioMode),
+    score: autoPickScore(r, conditions, profile.id, language, audioMode, 'tv'),
     selected: false,
     gates: gatesByKey.get(gateKey(r)) ?? [],
+    upscaleWarning: detectSuspiciousUpscale(parseReleaseName(r.title).resolution, 'tv', r.size, r.title).reason,
   }))
 
   const best = findBestRelease(pool, profile, language, { type: 'tv' }, audioMode)
@@ -515,7 +539,7 @@ export async function findCoveringPacks(
   const candidates = passing.map((r) => ({
     title: r.title,
     seeders: r.seeders,
-    score: autoPickScore(r, conditions, profile.id, language, audioMode),
+    score: autoPickScore(r, conditions, profile.id, language, audioMode, 'tv'),
     release: r,
   }))
   return selectCoveringPacks(nums, candidates)
@@ -635,9 +659,10 @@ export async function searchAndScoreItem(
   try { const p = JSON.parse(profile.conditions); if (Array.isArray(p)) conditions = p } catch {}
   const scored: ScoredCandidate[] = results.map(r => ({
     result: r,
-    score: autoPickScore(r, conditions, profile.id, language, audioMode),
+    score: autoPickScore(r, conditions, profile.id, language, audioMode, item.type),
     selected: false,
     gates: gatesByKey.get(gateKey(r)) ?? [],
+    upscaleWarning: detectSuspiciousUpscale(parseReleaseName(r.title).resolution, item.type, r.size, r.title).reason,
   }))
 
   // 5. Pick the best release for AUTO-grab from the gate-passing pool only.
@@ -676,7 +701,7 @@ export async function searchAndScoreItem(
     return iid === undefined || checkGrabLimit(iid)
   })
 
-  const best = findBestRelease(grabbable, profile, language, undefined, audioMode)
+  const best = findBestRelease(grabbable, profile, language, undefined, audioMode, item.type)
   let skipReason: SkipReason | undefined
   if (!best) {
     if (passing.length === 0 && gatesByKey.size > 0) {

@@ -12,6 +12,10 @@ export interface ScoredCandidate {
   // A non-empty list means auto-pick skipped it; the interactive picker still lists it with
   // these reasons so the admin can see "why didn't this download" and override-grab anyway.
   gates?: GateReason[]
+  // Fake-2160p-upscale suspicion (fake-upscale.ts) — informational only, never a gate. Null/absent
+  // = not suspicious. A non-null reason still leaves the release fully grabbable; it only applies
+  // a soft ranking penalty (SUSPICIOUS_UPSCALE_PENALTY in grabber.ts) and surfaces a UI warning.
+  upscaleWarning?: string | null
 }
 
 export type SkipReason =

@@ -373,6 +373,14 @@ export function GrabConfirmModal({ target, onClose, onGrabbed }: Props) {
                       {GATE_LABELS[g] ?? g}
                     </span>
                   ))}
+                  {current.upscaleWarning && (
+                    <span
+                      className="rounded bg-orange-900/50 px-1 py-0.5 text-orange-300"
+                      title={current.upscaleWarning}
+                    >
+                      ⚠ possible fake 4K
+                    </span>
+                  )}
                   {current.result.seeders <= 0 && (
                     <span className="rounded bg-red-900/50 px-1 py-0.5 text-red-300">0 seeders</span>
                   )}

@@ -3,6 +3,7 @@ import { requireAuth } from '@/lib/dal'
 import { searchAllIndexers } from '@/lib/indexer/index'
 import { parseReleaseName, scoreRelease } from '@/lib/automation/parser'
 import { getGateConfig, evaluateGates, loadBlocklist, type GateReason } from '@/lib/automation/gates'
+import { detectSuspiciousUpscale } from '@/lib/automation/fake-upscale'
 import type { TorznabResult } from '@/lib/indexer/types'
 
 export const dynamic = 'force-dynamic'
@@ -26,6 +27,9 @@ export interface TorrentSearchResult {
   // Detected dub/sub tag (null = untagged) — display-only badge for the interactive picker, since
   // that path bypasses audioModePenalty scoring entirely (see grabber.ts).
   audioMode: 'dub' | 'sub' | null
+  // Fake-2160p-upscale suspicion (fake-upscale.ts) — informational only, never excludes the
+  // release from this manual-override picker.
+  upscaleWarning: string | null
 }
 
 export async function GET(req: NextRequest) {
@@ -48,7 +52,13 @@ export async function GET(req: NextRequest) {
       const meta = parseReleaseName(r.title)
       // Empty conditions = no hard rejects; score reflects resolution/source bonuses only
       const raw = scoreRelease(meta, [])
-      return { ...r, score: raw ?? 0, gates: evaluateGates(r, gateConfig, blocked), audioMode: meta.audioMode }
+      return {
+        ...r,
+        score: raw ?? 0,
+        gates: evaluateGates(r, gateConfig, blocked),
+        audioMode: meta.audioMode,
+        upscaleWarning: detectSuspiciousUpscale(meta.resolution, type === 'movie' ? 'movie' : 'tv', r.size, r.title).reason,
+      }
     })
     .sort((a, b) => b.seeders - a.seeders)  // default: most seeded first
 

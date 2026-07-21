@@ -199,7 +199,7 @@ export async function scanForUpgrades(
       if (upgrades.length === 0) { skipped++; continue }
 
       const profile = getProfileById(item.quality_profile_id) ?? { id: profileFull.id, name: profileFull.name, conditions: '[]', delay_minutes: 0 }
-      const best = findBestRelease(upgrades, profile, language)
+      const best = findBestRelease(upgrades, profile, language, undefined, 'any', 'movie')
       if (!best) { skipped++; continue } // all upgrade candidates dead (0 seeders)
 
       // Snapshot the old copy BEFORE grabbing, then grab the upgrade and record the pending replacement.
