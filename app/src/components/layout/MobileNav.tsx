@@ -1,0 +1,47 @@
+// Fixed bottom navigation bar shown only on mobile (hidden on md+ breakpoint).
+// Mirrors the Sidebar nav items so the same destinations are always reachable.
+'use client'
+
+import Link from 'next/link'
+import { usePathname } from 'next/navigation'
+import { Home, Film, Library, ClipboardList, Download } from 'lucide-react'
+import { cn } from '@/lib/utils'
+import { useAuth } from '@/context/AuthContext'
+
+const navItems = [
+  { href: '/', icon: Home, label: 'Dashboard' },
+  { href: '/browse', icon: Film, label: 'Browse' },
+  { href: '/library', icon: Library, label: 'Library' },
+  { href: '/requests', icon: ClipboardList, label: 'Requests' },
+  // Downloads is admin-only (see Sidebar) — hidden from regular users.
+  { href: '/downloads', icon: Download, label: 'Downloads', adminOnly: true },
+]
+
+export function MobileNav() {
+  const pathname = usePathname()
+  const { user } = useAuth()
+  const items = navItems.filter((item) => !item.adminOnly || user?.role === 'admin')
+
+  return (
+    <nav className="fixed bottom-0 left-0 right-0 z-50 flex h-16 items-center justify-around border-t border-border bg-card md:hidden">
+      {items.map(({ href, icon: Icon, label }) => {
+        const isActive = href === '/'
+          ? pathname === '/'
+          : pathname === href || pathname.startsWith(href + '/')
+        return (
+          <Link
+            key={href}
+            href={href}
+            className={cn(
+              'flex flex-col items-center gap-0.5 px-3 py-2',
+              isActive ? 'text-primary' : 'text-muted-foreground',
+            )}
+          >
+            <Icon className="h-5 w-5" />
+            <span className="text-[10px] font-medium">{label}</span>
+          </Link>
+        )
+      })}
+    </nav>
+  )
+}

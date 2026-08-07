@@ -1,0 +1,59 @@
+# Dependencies
+app/node_modules/
+
+# Next.js build output
+app/.next/
+app/out/
+
+# Local env (contains API keys + passwords)
+app/.env.local
+app/.env.*.local
+
+# Database (runtime data, not source)
+app/*.db
+app/*.db-shm
+app/*.db-wal
+
+# Backups
+app-backup-*/
+
+# OS / editor
+.DS_Store
+*.swp
+*.swo
+.vscode/
+.idea/
+
+# Claude Code local worktree scratch (git worktree metadata, not source) — narrowed to just
+# worktrees/ so .claude/skills/ (committed agent skills, e.g. run-unified-frontend) stays tracked.
+.claude/worktrees/
+.claude/settings.json
+.claude/settings.local.json
+
+# Agent-skill driver tooling: local to the skill dir, not project source
+.claude/skills/*/node_modules/
+.claude/skills/*/driver-screenshots/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Build artifacts
+app/tsconfig.tsbuildinfo
+app/.next/
+
+# Capacitor phone/TV shells (native/) — generated platform projects + build output
+native/node_modules/
+native/android/.gradle/
+native/android/build/
+native/android/app/build/
+native/android/local.properties
+native/android/.idea/
+native/android/*.iml
+native/android/captures/
+native/android/app/*.keystore
+native/android/app/release/
+native/ios/App/Pods/
+native/ios/App/build/
+native/ios/App/App.xcworkspace/xcuserdata/
+native/ios/App/App.xcodeproj/xcuserdata/

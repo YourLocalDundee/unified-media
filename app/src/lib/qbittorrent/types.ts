@@ -1,0 +1,286 @@
+// Shared types for the qBittorrent Web API v2.
+// All interfaces match the JSON shapes returned by qBittorrent directly — no
+// field renaming — so API responses can be assigned without an adapter layer.
+// These are consumed by session.ts / api.ts (server-only) and hooks.ts (client).
+
+export type TorrentState =
+  | 'error'
+  | 'missingFiles'
+  | 'uploading'
+  | 'pausedUP'
+  | 'queuedUP'
+  | 'stalledUP'
+  | 'checkingUP'
+  | 'forcedUP'
+  | 'allocating'
+  | 'downloading'
+  | 'metaDL'
+  | 'forcedMetaDL'
+  | 'pausedDL'
+  | 'queuedDL'
+  | 'stalledDL'
+  | 'checkingDL'
+  | 'forcedDL'
+  | 'checkingResumeData'
+  | 'moving'
+  | 'unknown'
+  | 'stoppedDL'
+  | 'stoppedUP'
+
+export interface Torrent {
+  hash: string
+  name: string
+  size: number
+  progress: number        // 0.0 - 1.0
+  dlspeed: number         // bytes/s
+  upspeed: number         // bytes/s
+  num_seeds: number
+  num_leechs: number
+  state: TorrentState
+  eta: number             // seconds (-1 = unknown)
+  category: string
+  tags: string
+  save_path: string
+  completion_on: number   // unix timestamp
+  added_on: number        // unix timestamp
+  ratio: number
+  completed: number       // bytes
+  downloaded: number      // bytes
+  uploaded: number        // bytes
+  priority: number
+  auto_tmm: boolean
+  tracker: string
+  trackers_count: number
+  amount_left: number     // bytes
+  time_active: number     // seconds
+  seeding_time: number    // seconds
+  // Extended fields (qBittorrent API v2)
+  magnet_uri: string
+  availability: number
+  super_seeding: boolean
+  force_start: boolean
+  seq_dl: boolean
+  f_l_piece_prio: boolean
+  total_size: number
+  content_path: string
+  last_activity: number
+  seen_complete: number
+  downloaded_session: number
+  uploaded_session: number
+  reannounce: number
+  infohash_v1: string
+  infohash_v2: string
+  ratio_limit: number
+  seeding_time_limit: number
+  num_complete: number
+  num_incomplete: number
+}
+
+export interface TransferInfo {
+  // NOTE: qBittorrent's /transfer/info and /sync/maindata server_state use the UP_ prefix for
+  // upload (up_info_speed / up_info_data / up_rate_limit), NOT ul_. Reading ul_* returned
+  // undefined → the header showed "NaN undefined/s" (then "—" after a ?? 0 band-aid). (Bug 6)
+  dl_info_speed: number   // bytes/s
+  up_info_speed: number   // bytes/s
+  dl_info_data: number    // total bytes downloaded this session
+  up_info_data: number    // total bytes uploaded this session
+  dl_rate_limit: number
+  up_rate_limit: number
+  dht_nodes: number
+  connection_status: 'connected' | 'firewalled' | 'disconnected'
+  free_space_on_disk?: number  // bytes free on the save path's disk
+}
+
+// Sync response from /api/v2/sync/maindata.
+// When full_update is true the caller should replace its local map entirely.
+// When false, only the keys present in `torrents` have changed — merge them.
+// The rid must be threaded back on the next call so the server returns only the delta.
+export interface MainData {
+  rid: number
+  full_update: boolean
+  torrents?: Record<string, Partial<Torrent>>
+  torrents_removed?: string[]
+  categories?: Record<string, { name: string; savePath: string }>
+  tags?: string[]
+  server_state?: Partial<TransferInfo & {
+    free_space_on_disk: number
+    global_ratio: string
+    alltime_dl: number
+    alltime_ul: number
+  }>
+}
+
+export interface TorrentFile {
+  index: number
+  name: string
+  size: number
+  progress: number
+  priority: number
+  is_seed: boolean
+  piece_range: [number, number]
+  availability: number
+}
+
+// Parameters for /api/v2/torrents/add. All fields are optional — omit any that
+// should keep the server's default. `paused` and `stopped` are different param
+// names for the same intent across qBit versions; send both when targeting v4/v5.
+export interface AddTorrentParams {
+  urls?: string           // newline-separated magnet/HTTP URLs
+  savepath?: string
+  category?: string
+  tags?: string           // comma-separated
+  rename?: string
+  paused?: boolean        // qBit v4 — stop on add
+  stopped?: boolean       // qBit v5 — stop on add
+  firstLastPiecePrio?: boolean
+  sequentialDownload?: boolean
+}
+
+// ---------------------------------------------------------------------------
+// Torrent creation (qBittorrent 5.0+, Web API v2.10.4) — async task API
+// ---------------------------------------------------------------------------
+// Creating a .torrent from a local file/folder is asynchronous: POST
+// /torrentcreator/addTask queues a task and returns only {taskID}; the actual
+// hashing happens server-side. Progress and the final result are read back via
+// GET /torrentcreator/status?taskID=..., polled until status is terminal
+// (Finished/Failed). Endpoint scope is "torrentcreator", NOT "torrents" —
+// verified against qBittorrent's TorrentCreatorController source (registered
+// as u"torrentcreator"_s in webapplication.cpp), not to be confused with the
+// unrelated /torrents/add ("add an existing torrent") endpoint above.
+export type TorrentCreationStatus = 'Queued' | 'Running' | 'Finished' | 'Failed'
+
+// Shape of one entry in the JSON array returned by GET /torrentcreator/status.
+// Field names match the controller's KEY_* constants verbatim (taskID, not
+// task_id; urlSeeds, not url_seeds) so no adapter layer is needed.
+export interface TorrentCreationTask {
+  taskID: string
+  sourcePath: string
+  pieceSize: number
+  ignoreDotfiles: boolean
+  private: boolean
+  timeAdded: number
+  status: TorrentCreationStatus
+  comment?: string
+  torrentFilePath?: string
+  source?: string
+  trackers?: string[]
+  urlSeeds?: string[]
+  timeStarted?: number
+  timeFinished?: number
+  // Present only once the task is finished AND failed.
+  errorMessage?: string
+  // Present only while the task is running (0.0 - 1.0).
+  progress?: number
+}
+
+// Parameters accepted by POST /torrentcreator/addTask. sourcePath is the only
+// required field — it must be a path qBittorrent's own process can read (this
+// runs on the qBit host, not the browser or this app's server). trackers/
+// urlSeeds are sent newline-joined on the wire. startSeeding defaults server-
+// side to true when no torrentFilePath is given (we never send one), so the
+// created torrent is added and seeded automatically unless explicitly disabled.
+export interface CreateTorrentParams {
+  sourcePath: string
+  trackers?: string[]
+  urlSeeds?: string[]
+  private?: boolean
+  comment?: string
+  source?: string
+  startSeeding?: boolean
+  pieceSize?: number      // bytes; 0/omitted = automatic
+}
+
+// ---------------------------------------------------------------------------
+// Helper functions
+// ---------------------------------------------------------------------------
+
+// stalledDL/UP are included as "active" because the peer connection still exists;
+// they just have no data moving at the moment.
+export function isTorrentActive(state: TorrentState): boolean {
+  return [
+    'downloading',
+    'forcedDL',
+    'metaDL',
+    'forcedMetaDL',
+    'uploading',
+    'forcedUP',
+    'stalledDL',
+    'stalledUP',
+  ].includes(state)
+}
+
+// Any UP-suffix state means the download is complete and the torrent is seeding
+// (or waiting to seed). checkingUP is included because the data is all present.
+export function isTorrentComplete(state: TorrentState): boolean {
+  return [
+    'uploading',
+    'stalledUP',
+    'pausedUP',
+    'queuedUP',
+    'forcedUP',
+    'stoppedUP',
+    'checkingUP',
+  ].includes(state)
+}
+
+export function getTorrentStateLabel(state: TorrentState): string {
+  const labels: Record<TorrentState, string> = {
+    error: 'Error',
+    missingFiles: 'Missing Files',
+    uploading: 'Seeding',
+    pausedUP: 'Paused',
+    queuedUP: 'Queued',
+    stalledUP: 'Stalled',
+    checkingUP: 'Checking',
+    forcedUP: 'Forced Upload',
+    allocating: 'Allocating',
+    downloading: 'Downloading',
+    metaDL: 'Fetching Metadata',
+    forcedMetaDL: 'Fetching Metadata',
+    pausedDL: 'Paused',
+    queuedDL: 'Queued',
+    stalledDL: 'Stalled',
+    checkingDL: 'Checking',
+    forcedDL: 'Forced DL',
+    checkingResumeData: 'Resuming',
+    moving: 'Moving',
+    unknown: 'Unknown',
+    stoppedDL: 'Stopped',
+    stoppedUP: 'Stopped',
+  }
+  return labels[state] ?? state
+}
+
+export function getTorrentStateColor(
+  state: TorrentState
+): 'green' | 'blue' | 'yellow' | 'red' | 'gray' {
+  if (
+    ['downloading', 'forcedDL', 'metaDL', 'forcedMetaDL'].includes(state)
+  )
+    return 'blue'
+  if (['uploading', 'forcedUP', 'stalledUP'].includes(state)) return 'green'
+  if (
+    [
+      'pausedDL',
+      'pausedUP',
+      'stoppedDL',
+      'stoppedUP',
+      'queuedDL',
+      'queuedUP',
+    ].includes(state)
+  )
+    return 'gray'
+  if (['error', 'missingFiles'].includes(state)) return 'red'
+  if (
+    [
+      'checkingDL',
+      'checkingUP',
+      'checkingResumeData',
+      'allocating',
+      'moving',
+      'stalledDL',
+    ].includes(state)
+  )
+    return 'yellow'
+  return 'gray'
+}

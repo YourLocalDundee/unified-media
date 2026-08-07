@@ -1,0 +1,16 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Unified Media">
+  <!-- Full-bleed brand ground so maskable crops (circle/squircle/rounded-square)
+       never show a transparent edge. Matches the background token in
+       src/app/globals.css. -->
+  <rect width="512" height="512" fill="#0f1729"/>
+  <!-- "U" monogram, kept inside the ~80% maskable safe zone (concentric circle
+       radius 204.8 around center) so Android's adaptive-icon mask never clips it.
+       Matches the primary token in src/app/globals.css. -->
+  <path
+    d="M186 160 L186 296 C186 336 216 360 256 360 C296 360 326 336 326 296 L326 160"
+    fill="none"
+    stroke="#3c83f6"
+    stroke-width="46"
+    stroke-linecap="round"
+  />
+</svg>
