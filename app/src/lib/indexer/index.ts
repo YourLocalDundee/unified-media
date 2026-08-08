@@ -21,6 +21,11 @@ import { searchTorrentDownload } from './adapters/torrentdownload'
 import { searchMikan } from './adapters/mikan'
 import { searchDmhy } from './adapters/dmhy'
 import { searchUindex } from './adapters/uindex'
+import { searchKnaben } from './adapters/knaben'
+import { searchSolidTorrents } from './adapters/solidtorrents'
+import { searchTheRarbg } from './adapters/therarbg'
+import { searchAnimeTosho } from './adapters/animetosho'
+import { searchAnimeRss } from './adapters/animerss'
 import { normalizeInfoHash } from './adapters/_shared'
 
 // ---------------------------------------------------------------------------
@@ -38,7 +43,6 @@ export const adapterRegistry: Record<string, AdapterFn> = {
   yts: (_indexer, params) => (params.q ? searchYts(params.q) : Promise.resolve([])),
   eztv: (_indexer, params) => (params.imdbid ? searchEztv(params.imdbid) : Promise.resolve([])),
   nyaa: (_indexer, params) => (params.q ? searchNyaa(params.q, 'https://nyaa.si/?page=rss', 'Nyaa') : Promise.resolve([])),
-  sukebei: (_indexer, params) => (params.q ? searchNyaa(params.q, 'https://sukebei.nyaa.si/?page=rss', 'sukebei.nyaa.si') : Promise.resolve([])),
   thepiratebay: (_indexer, params) => (params.q ? searchThePirateBay(params.q) : Promise.resolve([])),
   bangumimoe: (_indexer, params) => (params.q ? searchBangumiMoe(params.q) : Promise.resolve([])),
   internetarchive: (_indexer, params) => (params.q ? searchInternetArchive(params.q) : Promise.resolve([])),
@@ -51,6 +55,18 @@ export const adapterRegistry: Record<string, AdapterFn> = {
   mikan: (_indexer, params) => (params.q ? searchMikan(params.q) : Promise.resolve([])),
   dmhy: (_indexer, params) => (params.q ? searchDmhy(params.q) : Promise.resolve([])),
   uindex: (_indexer, params) => (params.q ? searchUindex(params.q) : Promise.resolve([])),
+  knaben: (_indexer, params) => (params.q ? searchKnaben(params.q) : Promise.resolve([])),
+  solidtorrents: (_indexer, params) => (params.q ? searchSolidTorrents(params.q) : Promise.resolve([])),
+  therarbg: (_indexer, params) => (params.q ? searchTheRarbg(params.q) : Promise.resolve([])),
+  animetosho: (_indexer, params) => (params.q ? searchAnimeTosho(params.q) : Promise.resolve([])),
+  // Plain-RSS anime feeds share one parser (adapters/animerss.ts); the feed URL carries a {q}
+  // placeholder because each site names its query param differently.
+  // Tokyo Toshokan returns a large unpaginated feed and measured ~7s live through the tunnel on
+  // 2026-08-07 — the default 10s inner timeout leaves no headroom, hence the explicit 20s.
+  tokyotosho: (_indexer, params) => (params.q ? searchAnimeRss(params.q, 'https://www.tokyotosho.info/rss.php?terms={q}&type=1', 'Tokyo Toshokan', 20_000) : Promise.resolve([])),
+  acgrip: (_indexer, params) => (params.q ? searchAnimeRss(params.q, 'https://acg.rip/.xml?term={q}', 'ACG.RIP') : Promise.resolve([])),
+  acgnx: (_indexer, params) => (params.q ? searchAnimeRss(params.q, 'https://share.acgnx.se/rss.xml?keyword={q}', 'ACGNX') : Promise.resolve([])),
+  kisssub: (_indexer, params) => (params.q ? searchAnimeRss(params.q, 'https://www.kisssub.org/rss.xml?keyword={q}', 'Kisssub') : Promise.resolve([])),
 }
 
 // Tier A/B (plain fetch or HTML scrape) get a moderate cap; Tier C (FlareSolverr-backed) needs to
@@ -66,8 +82,15 @@ export const adapterRegistry: Record<string, AdapterFn> = {
 // one would just wrap a request that can never succeed.
 const CLOUDFLARE_GATED_TYPES = new Set(['dmhy', 'uindex'])
 
+// Not Cloudflare-gated, just slow: these serve large unpaginated feeds and need an outer cap above
+// their own inner fetch timeout, for the same reason the Cloudflare set does — otherwise the outer
+// race fires first and the adapter's real result is discarded.
+const SLOW_TYPES = new Set(['tokyotosho'])
+
 export function timeoutForSearchType(searchType: string): number {
-  return CLOUDFLARE_GATED_TYPES.has(searchType) ? 40_000 : 10_000
+  if (CLOUDFLARE_GATED_TYPES.has(searchType)) return 40_000
+  if (SLOW_TYPES.has(searchType)) return 25_000
+  return 10_000
 }
 
 export function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {

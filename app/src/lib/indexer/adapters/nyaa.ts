@@ -1,6 +1,5 @@
-// Nyaa adapter — anime-focused public indexer with an RSS feed. Also backs sukebei.nyaa.si (same
-// engine, adult-content sister site) via the feedUrl/indexerName params — see the `sukebei` entry
-// in the adapterRegistry (index.ts).
+// Nyaa adapter — anime-focused public indexer with an RSS feed. The feedUrl/indexerName params
+// keep it reusable for any site running the same engine.
 // Parses the nyaa: namespace extensions for seeder/leecher/hash data.
 import { parseStringPromise } from 'xml2js'
 import type { TorznabResult } from '../types'
