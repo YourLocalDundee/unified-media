@@ -2,15 +2,23 @@
  * Importer: bridges completed qBittorrent downloads into the native media library.
  *
  * The gap this closes:
- *   - grabber.ts sends a torrent to qBittorrent (save path: /downloads/)
- *   - qBittorrent has /data mounted rw (same host dir as /media/movies and /media/tv rw mounts)
- *   - unified-frontend mounts /media/movies and /media/tv rw, and /media/downloads/complete ro
- *   - Primary path: use qBittorrent's setLocation API to move the completed torrent from
- *     /downloads/ into /data/movies/<Title> or /data/tv/<Title>, then trigger a scan
- *     so the file appears at /media/movies/<Title> or /media/tv/<Title> in the scanner.
+ *   - grabber.ts sends a torrent to qBittorrent
+ *   - Primary path: use qBittorrent's setLocation API to move the completed torrent out of
+ *     the download directory and into the library, then trigger a scan so it appears
+ *     immediately rather than waiting for the filesystem watcher.
  *   - Fallback path: if the torrent is no longer in qBittorrent (removed after completion),
- *     scan /media/downloads/complete/ for a matching file/dir and hardlink/copy it into the
- *     library directly.
+ *     search the completed-downloads directory for a matching file/dir and hardlink/copy it
+ *     into the library directly.
+ *
+ * PATH CONTRACT — read before changing any path in this file:
+ *   Every container must mount the library tree at the SAME container path, and MEDIA_ROOTS
+ *   must name the subdirectories inside it that the scanner indexes. Both are load-bearing.
+ *   setLocation paths are resolved by qBittorrent, direct fs calls are resolved here, and the
+ *   scanner only indexes MEDIA_ROOTS — so a path that is not spelled identically in all three
+ *   places produces a silent failure, not an error: files land somewhere real but unwatched
+ *   (or in a container's own writable layer, where they vanish on recreate) and the item never
+ *   leaves 'grabbed'. That is why the targets below are derived from MEDIA_ROOTS instead of
+ *   written out as literals, and why one function now serves both paths.
  *
  * Flow per item:
  *   grabbed monitored_item → find info_hash in grab_history → query qBit for torrent state
@@ -38,37 +46,49 @@ const COMPLETE_STATES = new Set([
   'checkingUP',
 ])
 
+// The same library roots the scanner indexes. Colon-separated container paths.
+const MEDIA_ROOTS = (process.env.MEDIA_ROOTS ?? '')
+  .split(':')
+  .map((s) => s.trim())
+  .filter(Boolean)
+  .map((p) => path.resolve(p))
+
+// Where the download client leaves finished content, as seen from this container — and, per the
+// path contract above, from qBittorrent too. Override when the tree is mounted somewhere else.
+const DOWNLOADS_COMPLETE = path.resolve(
+  process.env.DOWNLOADS_COMPLETE ?? '/srv/media/downloads/complete'
+)
+
 // Characters that are invalid in common filesystem paths — replace with '-'
 function sanitizePath(segment: string): string {
   return segment.replace(/[/\\:*?"<>|]/g, '-').trim()
 }
 
 /**
- * Build the target path where qBittorrent should move the completed torrent.
- * Used for the qBit setLocation API where /data is qBit's rw mount of the
- * same host directory that unified-frontend reads at /media.
+ * The configured root whose last segment is `movies` or `tv`. Returns undefined when
+ * MEDIA_ROOTS does not contain one, which is a misconfiguration the caller must refuse to
+ * guess past — writing to an invented path is exactly the failure this module had.
  */
-function buildQbitTargetPath(item: MonitoredItem): string {
-  const title = sanitizePath(item.title)
-  if (item.type === 'movie') {
-    const suffix = item.year ? ` (${item.year})` : ''
-    return `/data/movies/${title}${suffix}`
-  }
-  return `/data/tv/${title}`
+function findMediaRoot(kind: 'movies' | 'tv'): string | undefined {
+  return MEDIA_ROOTS.find((root) => path.basename(root).toLowerCase() === kind)
 }
 
 /**
- * Build the local (container-side) path for direct fs operations in fallback 2.
- * Uses /media/movies and /media/tv which are bind-mounted rw from the host.
- * IMPORTANT: never use /data here — /data is the SQLite volume, not the media library.
+ * Build the library directory a completed item belongs in. One function, because qBittorrent
+ * and this container address the tree identically — see the path contract at the top.
+ * Undefined means "no configured root for this media type"; do not substitute a default.
  */
-function buildLocalTargetPath(item: MonitoredItem): string {
+export function buildTargetPath(item: MonitoredItem): string | undefined {
   const title = sanitizePath(item.title)
   if (item.type === 'movie') {
+    const root = findMediaRoot('movies')
+    if (!root) return undefined
     const suffix = item.year ? ` (${item.year})` : ''
-    return `/media/movies/${title}${suffix}`
+    return path.join(root, `${title}${suffix}`)
   }
-  return `/media/tv/${title}`
+  const root = findMediaRoot('tv')
+  if (!root) return undefined
+  return path.join(root, title)
 }
 
 /**
@@ -167,8 +187,8 @@ export async function runImportCheck(): Promise<void> {
     // and .torrent-URL adds can still be hashless). Either way we can't look the torrent up by hash,
     // so leave `torrent` undefined and let the same fallbacks used for departed torrents handle it:
     // detect it already reached the library by tmdb_id, or match the completed file by title in
-    // /media/downloads/complete. This is what unsticks a grabbed item that would otherwise re-log
-    // every tick and never import.
+    // the completed-downloads directory. This is what unsticks a grabbed item that would
+    // otherwise re-log every tick and never import.
     const infoHash = hashByItemId.get(item.id) ?? ''
     const torrent = infoHash ? torrentByHash.get(infoHash.toLowerCase()) : undefined
     if (!torrent) {
@@ -190,14 +210,14 @@ export async function runImportCheck(): Promise<void> {
           continue
         }
       }
-      // Fallback 2: look for the file/dir in /media/downloads/complete/ and move it to the library.
+      // Fallback 2: look for the file/dir in the completed-downloads dir and move it to the library.
       const grabHistoryRow = db.prepare(
         'SELECT release_title FROM grab_history WHERE item_id = ? ORDER BY grabbed_at DESC LIMIT 1'
       ).get(item.id) as { release_title: string } | undefined
 
       if (grabHistoryRow?.release_title) {
         const releaseTitle = grabHistoryRow.release_title
-        const completePath = '/media/downloads/complete'
+        const completePath = DOWNLOADS_COMPLETE
 
         try {
           const entries = fs.readdirSync(completePath)
@@ -236,7 +256,13 @@ export async function runImportCheck(): Promise<void> {
 
           if (match) {
             const sourcePath = path.join(completePath, match)
-            const targetPath = buildLocalTargetPath(item)
+            const targetPath = buildTargetPath(item)
+            if (!targetPath) {
+              process.stderr.write(
+                `[importer] no MEDIA_ROOTS entry for ${item.type} — cannot place "${item.title}"\n`
+              )
+              continue
+            }
 
             // Create the target directory
             fs.mkdirSync(targetPath, { recursive: true })
@@ -294,7 +320,13 @@ export async function runImportCheck(): Promise<void> {
     const isComplete = COMPLETE_STATES.has(torrent.state) || torrent.progress >= 1.0
     if (!isComplete) continue
 
-    const targetPath = buildQbitTargetPath(item)
+    const targetPath = buildTargetPath(item)
+    if (!targetPath) {
+      process.stderr.write(
+        `[importer] no MEDIA_ROOTS entry for ${item.type} — cannot place "${item.title}"\n`
+      )
+      continue
+    }
 
     try {
       // Move the torrent's save location to the appropriate library directory
