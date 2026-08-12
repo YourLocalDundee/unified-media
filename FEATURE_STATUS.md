@@ -243,5 +243,43 @@ over the `[x]`/`[!]` flags in the phase checklist below (left as-written for his
 - [ ] **Bandwidth quota** — no `bandwidth_usage` table in migrations, no quota tracking or display
 - [~] **Theme marketplace** — custom themes system exists (create/edit/delete via localStorage `unified-custom-themes`); export/import/share-string functionality described in the backlog is NOT implemented
 
+### Native BitTorrent engine — drop the external download client (idea, 2026-08-10)
+
+Side note, not scoped or committed to. Everything else in this app is native;
+the download client is the last external daemon in the chain, and it is the one
+that keeps producing path- and API-shaped bugs (see the importer path contract
+in `src/lib/automation/importer.ts` — that class of failure only exists because
+two processes have to agree on where files live).
+
+Replacing it means embedding a BitTorrent library and driving it in-process:
+
+- **`webtorrent`** — pure JS/Node, easiest to embed, already speaks magnet
+  links. Weakest on the things that matter at scale here: no DHT/peer tuning
+  depth, weaker seeding behaviour, and historically rough on large multi-file
+  torrents.
+- **`libtorrent` (Rasterbar) via node bindings** — the engine the current
+  client is built on, so behaviour and performance are a known quantity.
+  Costs a native dependency and a build toolchain in the image, which conflicts
+  with the current `node:24-slim` + `output: 'standalone'` setup.
+- **A Rust engine (`rqbit`, `cratetorrent`) behind a thin local API** — keeps
+  the heavy lifting out of Node without a second web UI to maintain. Middle
+  ground: still a separate process, but one we define the interface to.
+
+What has to be solved regardless of choice, and what makes this a real project
+rather than a swap: the killswitch. The external client currently inherits the
+VPN network namespace, so a tunnel drop cannot leak peer traffic. An in-process
+engine runs inside this app's own container, which is deliberately *not* in the
+tunnel (the app has to stay reachable on the LAN). Binding the torrent engine to
+the VPN interface only, and proving it fails closed, is the gating design
+question — get that wrong and the privacy property the whole stack is built on
+is silently gone.
+
+Also needed: resume data persistence across restarts, port forwarding sync
+(currently pushed in by the tunnel container on every reconnect), rate limiting,
+and a seeding/ratio policy. The `/downloads` page and the download-client
+registry (`src/lib/download-client/`) already abstract the client behind an
+interface, so this would land as a new registry entry rather than a rewrite —
+that abstraction is the reason this is feasible at all.
+
 ### the old request app Webhook (Phase 3 spec)
 - [x] `POST /api/the old request app/webhook` — implemented 2026-06-04 (`src/app/api/the old request app/webhook/route.ts`). Timing-safe HMAC verification, handles MEDIA_APPROVED/REQUEST_APPROVED/MEDIA_AVAILABLE, fire-and-forget grab.
