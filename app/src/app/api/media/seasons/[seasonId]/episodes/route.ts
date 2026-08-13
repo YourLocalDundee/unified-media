@@ -7,6 +7,7 @@ export const dynamic = 'force-dynamic'
 interface EpisodeRow {
   id: string
   title: string
+  episode_title: string | null
   episode_number: number | null
   season_number: number | null
   overview: string | null
@@ -41,7 +42,7 @@ export async function GET(
   const episodes = db
     .prepare(
       `SELECT
-         mi.id, mi.title, mi.episode_number, mi.season_number,
+         mi.id, mi.title, mi.episode_title, mi.episode_number, mi.season_number,
          mi.overview, mi.runtime_ticks, mi.poster_path, mi.series_id,
          s.poster_path AS series_poster_path,
          COALESCE(mws.position_ticks, 0) AS position_ticks,
