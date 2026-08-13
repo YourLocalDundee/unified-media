@@ -1,0 +1,7 @@
+# Smoke test: log in, land on the dashboard, confirm it rendered and is error-free.
+nav /login
+snapshot
+login
+wait-for text=Dashboard
+snapshot
+expect-no-errors
