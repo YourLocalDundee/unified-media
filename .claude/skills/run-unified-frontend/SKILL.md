@@ -13,6 +13,31 @@ every path in it was dead.
 Playwright container. Do not try to `npm install` or `npx playwright` on minime — it will fail,
 and installing Node just to run browser tests is not worth it.
 
+## Pick the right tool first — it is a 60x difference
+
+| question | tool | cost |
+|---|---|---|
+| Is the **data** right? (rows, flags, did the job run) | `./api.sh <path>` | **31ms** warm, 371ms cold |
+| Did it **render**? Does the client behave? | `./run.sh <flow>` | ~1.9s |
+
+```bash
+./api.sh /api/auth/me
+./api.sh /api/media/items?limit=5
+./api.sh -X POST /api/admin/scan
+```
+
+`api.sh` runs curl on the host — no container, no browser, no hydration. It logs in once and
+reuses the session cookie (mode 600, in `/tmp`), so only the first call pays for auth.
+
+**Do not reach for the browser to answer a data question.** Most "is this broken" questions are
+data questions.
+
+Equally, **do not try to check rendering over plain HTTP.** This app is client-rendered: fetching
+`/login` returns a 12.9KB shell — 21 `<script>` tags, an RSC flight payload, and *zero*
+occurrences of "Sign In", "Username" or "Password". The visible UI only exists after React
+hydrates. HTTP can tell you a page returned 200; it cannot tell you it rendered. That is what the
+browser is for, and why this skill exists at all.
+
 ## Run a flow
 
 ```bash
@@ -150,10 +175,23 @@ an explicit `v<X.Y.Z>-noble` tag.
 
 | file | purpose |
 |---|---|
-| `run.sh` | wrapper — starts the pinned container, mounts the skill dir + env file, sets the base URL |
+| `api.sh` | no-browser fast path — authenticated API calls in ~31ms |
+| `run.sh` | wrapper — builds/starts the container, mounts the skill dir + env file, sets the base URL |
 | `drive.mjs` | the flow runner itself |
+| `Dockerfile` | chromium-only image, ~2GB vs the official image's 3.5GB |
 | `flows/smoke.flow` | login → dashboard → render check → no console errors |
 | `node_modules/` | playwright 1.50.0, installed via the image (gitignored) |
+
+## Setup cost
+
+First run on a fresh machine builds `unified-drive:1.50.0` from the `Dockerfile` automatically
+(~1 min). That is deliberate: the official `mcr.microsoft.com/playwright` image is **3.5GB**
+because it carries Chromium, Firefox and WebKit plus system deps for all three, and this skill
+launches Chromium only. The local build is **1.99GB** — about 1.5GB less to pull or rebuild.
+
+Per-run latency is identical either way (measured: 1.90s vs 1.88s) — image size is a
+download-and-disk cost, not a speed one. Do not expect the slim image to make flows faster; use
+`api.sh` for that.
 
 ## Related
 

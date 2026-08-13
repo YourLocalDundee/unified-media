@@ -15,7 +15,16 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-IMAGE="${DRIVE_IMAGE:-mcr.microsoft.com/playwright:v1.50.0-noble}"
+IMAGE="${DRIVE_IMAGE:-unified-drive:1.50.0}"
+
+# Built locally from ./Dockerfile — chromium only, ~2GB instead of the official image's 3.5GB,
+# which ships Firefox and WebKit this skill never launches. If the image is missing (fresh
+# machine, pruned docker), build it rather than falling back to the official one: the fallback
+# would work but silently costs an extra 3.5GB pull.
+if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
+  echo "image $IMAGE not found — building it (one time, ~1 min):" >&2
+  docker build -t "$IMAGE" "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" >&2
+fi
 
 # The deployed unified-frontend container publishes 3001 on the host, so --network host reaches
 # it at localhost:3001 with no compose-network juggling and no container-IP lookup.
