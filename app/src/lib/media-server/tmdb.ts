@@ -13,34 +13,42 @@ function tmdbFetch<T>(path: string): Promise<T> {
 }
 
 // Local types — not exported
+// NOTE: this type covers BOTH /search/movie results and /movie/{id} details, and the two shapes
+// differ. Fields marked optional below are ONLY present on the detail response — search results
+// omit them entirely. They were previously typed as required, which let the enricher read
+// imdb_id/runtime/genres off a search result and silently write null for all three. If you need
+// one of the optional fields, you must go through getMovie().
 interface TMDBMovie {
   id: number
   title: string
   original_title: string
   overview: string
   release_date: string
-  runtime: number
   popularity: number
   vote_average: number
   vote_count: number
   poster_path: string | null
   backdrop_path: string | null
-  imdb_id: string | null
-  genres: { id: number; name: string }[]
+  runtime?: number
+  imdb_id?: string | null
+  genres?: { id: number; name: string }[]
 }
 
+// Same split as TMDBMovie: external_ids, genres and episode_run_time come only from /tv/{id}
+// (getTV appends external_ids). Search results do not carry them.
 interface TMDBTVShow {
   id: number
   name: string
   original_name: string
   overview: string
   first_air_date: string
-  episode_run_time: number[]
   popularity: number
   vote_average: number
   vote_count: number
   poster_path: string | null
   backdrop_path: string | null
+  episode_run_time?: number[]
+  genres?: { id: number; name: string }[]
   external_ids?: { imdb_id?: string; tvdb_id?: number }
 }
 

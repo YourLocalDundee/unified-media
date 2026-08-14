@@ -1,5 +1,5 @@
 import { getDb } from '@/lib/db/index'
-import { searchMovie, searchTV, getSeasonEpisodeDetails } from './tmdb'
+import { searchMovie, searchTV, getMovie, getTV, getSeasonEpisodeDetails } from './tmdb'
 import type { MediaItem } from './types'
 
 export async function enrichItem(item: MediaItem): Promise<void> {
@@ -8,8 +8,18 @@ export async function enrichItem(item: MediaItem): Promise<void> {
     const now = Date.now()
 
     if (item.type === 'movie') {
-      const movie = await searchMovie(item.title, item.year ?? undefined)
-      if (!movie) return
+      const match = await searchMovie(item.title, item.year ?? undefined)
+      if (!match) return
+
+      // /search/movie returns a THIN record: no imdb_id, no runtime, no genres — TMDB only sends
+      // those from /movie/{id}. The UPDATE below has always written all three, so they silently
+      // resolved to null on every enrichment (measured 2026-08-14: 0 of 9 movies had any of them).
+      // Search to identify, then fetch details to populate. Falls back to the thin record so a
+      // detail-call failure degrades to the old behaviour instead of losing the match entirely.
+      const movie = await getMovie(match.id).catch((err) => {
+        console.error(`[enricher] getMovie(${match.id}) failed, using search result:`, err)
+        return match
+      })
 
       const releaseYear = movie.release_date
         ? parseInt(movie.release_date.slice(0, 4), 10) || null
@@ -52,8 +62,18 @@ export async function enrichItem(item: MediaItem): Promise<void> {
     }
 
     if (item.type === 'episode' || item.type === 'series') {
-      const show = await searchTV(item.title, item.year ?? undefined)
-      if (!show) return
+      const match = await searchTV(item.title, item.year ?? undefined)
+      if (!match) return
+
+      // Same thin-result trap as movies, and the reason tvdb_id was NULL for every series despite
+      // the UPDATE below writing it: external_ids and genres only come from /tv/{id}, and getTV
+      // appends external_ids for exactly this purpose. tvdb_id matters beyond metadata — TheTVDB
+      // is the only source of real absolute episode numbers, which anime needs (see
+      // docs/incomplete/EPISODE_NUMBERING_PLAN.md).
+      const show = await getTV(match.id).catch((err) => {
+        console.error(`[enricher] getTV(${match.id}) failed, using search result:`, err)
+        return match
+      })
 
       const airYear = show.first_air_date
         ? parseInt(show.first_air_date.slice(0, 4), 10) || null
@@ -81,7 +101,7 @@ export async function enrichItem(item: MediaItem): Promise<void> {
         year: airYear,
         poster_path: show.poster_path ?? null,
         backdrop_path: show.backdrop_path ?? null,
-        genres: JSON.stringify((show as unknown as { genres?: { id: number; name: string }[] }).genres?.map(g => g.name) ?? []),
+        genres: JSON.stringify(show.genres?.map(g => g.name) ?? []),
         popularity: show.popularity ?? null,
         vote_average: show.vote_average ?? null,
         vote_count: show.vote_count ?? null,
