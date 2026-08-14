@@ -86,13 +86,44 @@ to a different ordering. It needs title matching against the provider.
 
 ## Blockers to clear first
 
-1. **No TVDB API key exists.** Nothing in `~/docker/secrets/` provides one. Register at
-   thetvdb.com, store the key the same way as the other credentials, add it to
-   `~/docker/unified-media/.env`, and re-run `~/Downloads/copy-secrets-to-usb.sh`. TVDB v4 also
-   issues a subscriber PIN for user-supported keys — capture it if the account type needs one.
-2. **`tvdb_id` is NULL for all 8 series.** The column exists but nothing writes it. Backfill from
-   TMDB `/tv/{id}/external_ids`, which returns `tvdb_id` directly. No new credential needed for
-   this step.
+1. ⏳ **TVDB API key — waiting on registration.** Files are staged and ready to receive it:
+   - `~/docker/secrets/tvdb.txt` (600) — canonical store, with notes on which account types need a
+     PIN.
+   - `~/docker/unified-media/.env` (600) — `TVDB_API_KEY=` and `TVDB_PIN=` appended empty at lines
+     63–64. Backup of the pre-change file at `.env.bak-20260814`.
+
+   Register at <https://thetvdb.com/api-information> → v4 API. The **PIN is only needed for
+   user-supported (free) subscriber keys**; licensed keys leave it blank. After pasting, re-run
+   `~/Downloads/copy-secrets-to-usb.sh`, then:
+
+   ```
+   docker compose -f ~/docker/unified-media/docker-compose.yml up -d unified-frontend
+   ```
+
+   `env_file` is read at container **create** time — a plain restart will not pick the values up.
+
+2. ✅ **`tvdb_id` backfilled 2026-08-14 — all 8 series, no failures.** Pulled from TMDB
+   `/tv/{id}/external_ids`; no new credential was needed.
+
+   | Series | tmdb | tvdb |
+   | --- | --- | --- |
+   | Avatar The Last Airbender | 246 | 74852 |
+   | Dragon Ball Kai | 61709 | 88031 |
+   | House of the Dragon | 94997 | 371572 |
+   | Hunter x Hunter (2011) | 46298 | 252322 |
+   | InuYasha | 35610 | 71361 |
+   | Legend of Korra | 33880 | 251085 |
+   | Naruto Shippuden | 31910 | 79824 |
+   | Pokémon | 60572 | 76703 |
+
+   The backfill was a throwaway script run inside the container and then deleted. If it is ever
+   needed again (new series arrive with NULL `tvdb_id`), it should become a proper enricher step
+   rather than a one-off — the natural home is alongside the existing TMDB enrichment in
+   `media-server/enricher.ts`, so new series get an id at scan time instead of needing a backfill.
+
+   Note for whoever writes that: the script must run from `/app` inside the container. Both ESM and
+   CJS resolve `node_modules` from the **script's own directory**, so a script dropped in `/tmp`
+   cannot see `better-sqlite3` no matter what `--workdir` is passed.
 
 ## Phases
 
