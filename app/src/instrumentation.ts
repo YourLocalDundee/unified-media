@@ -4,6 +4,25 @@
  */
 export async function register() {
   if (process.env.NEXT_RUNTIME === 'nodejs') {
+    // Last-resort backstop for the background work below. The schedulers wrap their own
+    // ticks, but detached promises elsewhere (fire-and-forget imports, the party server,
+    // the fs watcher) can still reject with nobody listening — and Node's default for an
+    // unhandled rejection is to terminate the process, taking the web server down with a
+    // failure that had nothing to do with serving requests.
+    //
+    // The two cases are deliberately not treated alike. A stray rejection is recoverable,
+    // so log it and keep serving. An uncaught exception leaves the process in an undefined
+    // state, so log it and exit non-zero — compose restarts the container (restart:
+    // unless-stopped) into a clean one. Either way the reason reaches the logs first,
+    // which is the part that was missing.
+    process.on('unhandledRejection', (reason) => {
+      console.error('[process] Unhandled promise rejection:', reason)
+    })
+    process.on('uncaughtException', (err) => {
+      console.error('[process] Uncaught exception — exiting for a clean restart:', err)
+      process.exit(1)
+    })
+
     // Route all outbound HTTP through gluetun's proxy when configured.
     // EnvHttpProxyAgent (not ProxyAgent) so NO_PROXY keeps container-to-container
     // traffic off the tunnel — a missing NO_PROXY entry hangs, it doesn't error.
