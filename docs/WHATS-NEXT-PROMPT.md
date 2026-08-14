@@ -11,7 +11,7 @@ explore → plan → implement → commit workflow.
 ---
 
 ```
-Resume work on unified-frontend (/home/minijoe/dev/unified-frontend). Read CLAUDE.md and
+Resume work on unified-frontend (/home/joe/unified-media). Read CLAUDE.md and
 docs/README.md FIRST, then docs/CLAUDE-MD-GUIDE.md for how we keep context lean. Do not read the
 deep-dive docs or analysis/ unless a task needs them — pull them on demand to protect context.
 
@@ -122,7 +122,7 @@ WIRING / FILES (follow the existing party structure):
   stream lifecycle, and per-peer audio elements. usePartySync stays focused on playback sync; voice is
   a separate hook so a voice failure can never break sync.
 - UI in src/components/party/* (a VoiceBar / mic control + per-member speaking dots).
-- Edge: coturn service in /opt/docker/compose/edge/ (or wherever the edge stack lives), TURN creds via
+- Edge: coturn service in /home/joe/docker/edge/ (or wherever the edge stack lives), TURN creds via
   env, ICE server list delivered to the client from a server route (never bake static long-lived TURN
   creds into client JS — use short-lived credentials if practical).
 - CSP: widen connect-src / add the TURN/STUN hosts as needed in next.config.ts, the same way the party

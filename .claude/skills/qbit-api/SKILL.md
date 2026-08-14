@@ -3,8 +3,16 @@ name: qbit-api
 description: Authenticate to a qBittorrent WebUI and list/add/delete torrents or hit any raw API endpoint, without opening a browser. Use whenever you need to inspect or change qBittorrent's torrent queue directly — e.g. checking what UMT (unified-frontend's download client) actually holds, cleaning up a torrent by hash, or verifying a credential/instance change took effect. Defaults to the same instance unified-frontend itself talks to (UMT_* in app/.env.local); pass explicit connection flags to reach a different instance.
 ---
 
+> ⚠️ **Repointed 2026-08-13, NOT re-tested.** This skill was written for the pre-wipe server. Its
+> paths, IPs and hostnames were mechanically updated to match the rebuilt machine, but no step in
+> it has been run end to end since. Verify before trusting it — and note that **there is no
+> node/npm/npx on this host**, so any bare `npm`/`npx` step here will fail and must be run inside
+> a container. `run-unified-frontend` is the one skill in this directory that has been fully
+> rebuilt and verified; use it as the reference for how these should look.
+
+
 `qbit.cjs` runs on the **host**, not inside any container — qBittorrent is host-networked
-(`network_mode: host` in compose), so it's reachable directly at `<legacy-lan-ip>:<port>` from
+(`network_mode: host` in compose), so it's reachable directly at `<lan-ip>:<port>` from
 wherever this session runs. No `docker exec`/`docker cp` involved, unlike the
 `unified-db-query` skill.
 
@@ -38,7 +46,7 @@ Examples:
 node qbit.cjs list
 node qbit.cjs raw GET /api/v2/app/version
 node qbit.cjs delete 0f8478bf303bbe0e4c5bf159bbdefc823211af30 --files
-node qbit.cjs --host <legacy-lan-ip> --port 8080 --user minijoe --pass '...' list   # the OTHER instance
+node qbit.cjs --host <lan-ip> --port 8080 --user minijoe --pass '...' list   # the OTHER instance
 ```
 
 ## Which instance it talks to

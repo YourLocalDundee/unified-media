@@ -1,5 +1,7 @@
 # Session handoff — Subtitle on-demand search, OpenSubtitles VIP login, lint fix (2026-06-22)
 
+> **Note (2026-08-13):** paths, IPs and hostnames in this document were mechanically updated to match the rebuilt server. The findings, decisions and dates below are the original record and have not been altered.
+
 App version **0.9.11**. Branch **main**. All changes committed and the production container
 (`unified-frontend`) rebuilt + recreated and verified healthy.
 
@@ -69,14 +71,14 @@ now exits 0 (75 warnings, all pre-existing patterns).
 
 ## 6. Config / env state
 
-- Compose sources `unified-frontend` env from `env_file: /home/minijoe/dev/unified-frontend/app/.env.local`
+- Compose sources `unified-frontend` env from `env_file: /home/joe/unified-media/app/.env.local`
   (the **same** file used in dev) plus 3 inline `environment:` overrides. The compose-level
-  `/opt/docker/compose/.env` is **not** used by this service.
+  `/home/joe/docker/.env` is **not** used by this service.
 - `.env.local` now has real values for `OPENSUBTITLES_API_KEY`, `OPENSUBTITLES_USERNAME`,
   `OPENSUBTITLES_PASSWORD` (file is gitignored; not committed). `SUBTITLE_MEDIA_ROOT=/media` is set, so grabs
   write to disk.
 - To redeploy after future env changes: recreate (no rebuild). After code changes: rebuild + recreate via
-  `docker compose -f /opt/docker/compose/docker-compose.yml build unified-frontend && … up -d --force-recreate unified-frontend`.
+  `docker compose -f /home/joe/docker/unified-media/docker-compose.yml build unified-frontend && … up -d --force-recreate unified-frontend`.
 
 ## 7. Still left / follow-ups (none blocking)
 

@@ -1,5 +1,7 @@
 # Audit 13 — Integration Proxies (the movie automation suite / the TV automation suite / the subtitle automation suite / the old media server metadata / the old request app webhook)
 
+> **Note (2026-08-13):** paths, IPs and hostnames in this document were mechanically updated to match the rebuilt server. The findings, decisions and dates below are the original record and have not been altered.
+
 Read-only audit of the server-side proxy layer that fronts the external external automation stack and the old media server
 using server-held API keys. Scope: `src/app/api/{the movie automation suite,the TV automation suite,the subtitle automation suite}/[...path]`,
 `src/app/api/the old request app/webhook`, the the old media server metadata routes (`image/[itemId]`,
@@ -60,7 +62,7 @@ internal host.
   used everywhere else (`requireAuth()` in the handler) is simply missing here. The contrast is
   proven by the sibling route `src/app/api/the old media server/continue-watching/route.ts:40`, which *does*
   call `requireAuth()` — so this is an omission, not an intentional public design.
-- **Why it matters:** Anyone who can reach `<old-app-host>` (it is internet-exposed behind
+- **Why it matters:** Anyone who can reach `<app-host>` (it is internet-exposed behind
   Caddy/BunkerWeb) can enumerate the the old media server library — series, season lists, episode lists with
   overviews, item images — and pivot the server's admin the old media server token as an SSRF/enumeration
   oracle, with zero credentials. `seasons/[seasonId]/episodes` returns full episode metadata for any
@@ -129,7 +131,7 @@ internal host.
   the internal base URL, stack traces, file paths, SQL, or config details. The lib clients also
   embed the body into the thrown `Error` message (e.g. `the movie automation suite … → ${status}: ${body}`), which can
   surface in other responses/logs.
-- **Why it matters:** Information disclosure — leaks internal hostnames/ports (`<legacy-lan-ip>:7878`,
+- **Why it matters:** Information disclosure — leaks internal hostnames/ports (`<lan-ip>:7878`,
   etc.), filesystem layout, and software versions to any client, aiding lateral movement. Does not
   leak the API key itself (keys are header-only), but exposes everything around it.
 - **Suggested fix:** On upstream error, return a sanitized generic body (`{ error: 'Upstream
@@ -158,8 +160,8 @@ internal host.
   `the subtitle automation suite/[...path]/route.ts:16,28`
 - **What's wrong:** `endpoint = '/api/v3/' + path.join('/')` then `fetch(`${LEGACY_MOVIE_URL}${endpoint}
   ${search}`)`. When `path` contains decoded `..` segments, the WHATWG URL parser inside `fetch`
-  normalizes them: `http://<legacy-lan-ip>:7878/api/v3/../../../admin` resolves to
-  `http://<legacy-lan-ip>:7878/admin` (verified). The host is unchanged (no SSRF), but the request is
+  normalizes them: `http://<lan-ip>:7878/api/v3/../../../admin` resolves to
+  `http://<lan-ip>:7878/admin` (verified). The host is unchanged (no SSRF), but the request is
   no longer confined to the `/api/v3` REST surface — it can hit other paths on the same the movie automation suite/
   the TV automation suite/the subtitle automation suite instance (e.g. the web UI, `/feed`, login pages) carrying the API key header.
 - **Why it matters:** Weakens the "this proxy only exposes the v3 REST API" assumption; an authed

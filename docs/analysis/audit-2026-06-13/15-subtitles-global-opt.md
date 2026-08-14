@@ -1,7 +1,9 @@
 # Audit 15 — Subtitles + Ingestion Scanning + Global Optimization/Build Pass
 
+> **Note (2026-08-13):** paths, IPs and hostnames in this document were mechanically updated to match the rebuilt server. The findings, decisions and dates below are the original record and have not been altered.
+
 Scope: subtitle scan/match/download subsystem, media ingestion scanner + filename parser, and a
-whole-app optimization/build pass. App root: `/home/minijoe/dev/unified-frontend/app`.
+whole-app optimization/build pass. App root: `/home/joe/unified-media/app`.
 
 ## Summary
 

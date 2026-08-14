@@ -17,7 +17,7 @@ automation, and subtitle management — a fully self-contained media stack.
 - **Current version:** v0.11.10 is the latest doc-tracked feature-batch label (see
   `docs/complete/FEATURES.md`); `app/package.json` is still `0.11.2`, bumped only at an actual
   release cut, so the two numbers legitimately diverge between cuts. Deployed to production
-  (`<old-app-host>`) as of 2026-07-11 — the doc-tracked and deployed versions are in sync as of
+  (`<app-host>`) as of 2026-07-11 — the doc-tracked and deployed versions are in sync as of
   this writing, but re-check `docker inspect unified-frontend` before assuming that still holds.
 - **Audit:** the 2026-06-13 21-agent audit is closed (all P0/P1 fixed). History +
   remediation: `docs/analysis/audit-2026-06-13-summary.md`; live tracker `docs/incomplete/open-issues.md`.
@@ -75,7 +75,7 @@ request → watch, with download status visible inline.
 ### Directory layout
 
 ```
-/home/minijoe/dev/unified-frontend/
+/home/joe/unified-media/
   app/                  # The Next.js application (run npm run dev from here)
   docs/                 # Deep-dives, feature history, backlog (see docs/README.md)
   CLAUDE.md             # This file
@@ -84,12 +84,15 @@ request → watch, with download status visible inline.
 ### How it fits in the stack
 
 ```
-Internet
-  └── BunkerWeb (WAF, TLS termination)
-        └── Caddy (reverse proxy)
-              └── reverse_proxy → unified-frontend:3001  (this app — auth handled internally)
-                  (party-play WebSocket path → :3002, see docs/features/party-play.md)
+LAN (<lan-subnet>/24) + tailnet — NOT the public internet
+  └── Caddy (reverse proxy, TLS via Porkbun DNS-01)
+        └── reverse_proxy → unified-frontend:3001  (this app — auth handled internally)
+            (party-play WebSocket path → :3002, see docs/features/party-play.md)
 ```
+
+**Nothing here is internet-exposed.** Caddy is the only thing at the edge. BunkerWeb was in this
+chain on the pre-wipe server and is not in the rebuilt one — `*.<internal-domain>` names resolve
+only through Pi-hole, on the LAN and over the tailnet.
 
 The app calls backing services from **Next.js server components and API routes** — never directly
 from the browser. This keeps API keys and qBittorrent session cookies out of client code and avoids
@@ -98,7 +101,7 @@ CORS entirely.
 ### Auth strategy (v0.4.0+)
 
 The app manages its own auth end-to-end. Caddy is a plain reverse proxy with **no external auth
-gateway / `forward_auth`** in front of `<old-app-host>`. Auth is SQLite-backed (`better-sqlite3`) at
+gateway / `forward_auth`** in front of `<app-host>`. Auth is SQLite-backed (`better-sqlite3`) at
 `$DB_PATH` (default `./unified.db`, production `/data/unified.db` via Docker volume `unified-db:/data`).
 
 Key components:
@@ -231,7 +234,7 @@ These are the live "don't trip over this" rules. Kept in full because they're lo
   status 200 — looks like a garbage success to any caller checking only `res.ok`.
 
 ### Auth / Next.js 16
-- **Self-managed auth (v0.4.0+):** `<old-app-host>` uses its own SQLite sessions. No external
+- **Self-managed auth (v0.4.0+):** `<app-host>` uses its own SQLite sessions. No external
   SSO / `forward_auth` gateway and no trusted-auth request headers — never reintroduce header-based
   auth. If `ADMIN_PASSWORD` is missing/weak, a random one is logged to stderr on first start.
   Never delete the `unified-db` volume without a backup.
@@ -245,11 +248,13 @@ These are the live "don't trip over this" rules. Kept in full because they're lo
   context, succeed in Route Handler context). Without this, expired-session users get a 500 on every load.
 
 ### Edge / infra
-- **BunkerWeb WAF:** several features are disabled per-domain for `<old-app-host>` in
-  `/opt/docker/compose/edge/docker-compose.yml` — `USE_BAD_BEHAVIOR`, `USE_CROWDSEC`, `USE_DNSBL`,
-  `USE_MODSECURITY`, `USE_BLACKLIST` all `no` (RSC prefetch scoring, VPN/cellular-NAT false bans,
-  password-field CRS triggers). Rate limiting stays on. Fix per-domain, not globally.
-- **Pi-hole wildcard DNS:** resolves `*.minijoe.dev` → `<legacy-lan-ip>` for LAN + Docker host; no
+- **No WAF in the rebuilt stack.** BunkerWeb used to sit in front of Caddy and needed several
+  features disabled per-domain (`USE_BAD_BEHAVIOR`, `USE_CROWDSEC`, `USE_DNSBL`, `USE_MODSECURITY`,
+  `USE_BLACKLIST`) because RSC prefetch scoring, VPN/cellular-NAT false bans and password-field CRS
+  rules all misfired on this app. None of that applies now — there is no WAF and nothing is
+  internet-exposed. If a WAF is ever reintroduced, those same five will need disabling again.
+- **Editing the Caddyfile needs a container recreate, not a reload** — see the Caddy note in §8.
+- **Pi-hole wildcard DNS:** resolves `*.minijoe.dev` → `<lan-ip>` for LAN + Docker host; no
   `/etc/hosts` needed in the container.
 - **Docker network:** the app's backing containers are reachable by container name or host IP;
   `.env.local` uses host IPs in dev, container names in prod.
@@ -259,6 +264,14 @@ These are the live "don't trip over this" rules. Kept in full because they're lo
   only; it has no playable file. Never generate `/play/${id}` for `type = 'series'`. `play/[id]/page.tsx`
   redirects series IDs to `/browse/${id}` as a safety net, but upstream links must not produce them.
 - **Library vs Browse:** context determines destination (see §5).
+
+### Automation scheduler
+- **node-cron 4.x swallows task errors into its own logger:** every `cron.schedule` body runs inside
+  node-cron's internal try/catch; an unhandled rejection in a tick does **not** escape as an
+  `unhandledRejection` — it's logged as `[NODE-CRON][ERROR]` with no job identity. Task bodies don't
+  need defensive try/catch for survival. `src/lib/automation/scheduler.ts`'s `safeCron()` wrapper exists
+  only to attach a job label to the log line, not to prevent a crash (see `docs/incomplete/open-issues.md`
+  2026-08-13, A17-4).
 
 ### Video player
 - **`<video>` errors don't bubble as React events:** keep `onError={handleVideoError}` wired or a
@@ -286,30 +299,44 @@ violation fails the build). Use the compliant patterns, not `eslint-disable`:
 ## 8. Development Workflow
 
 ### Running locally
+
+⚠️ **There is no node, npm or npx on the rebuilt server.** Run everything through a container:
+
 ```
-cd /home/minijoe/dev/unified-frontend/app
-npm install
-npm run dev        # http://localhost:3000
-npm run lint        # eslint
-npm run type-check  # tsc --noEmit
-npm run test        # vitest run — unit tests live next to their source (*.test.ts)
+docker run --rm -v /home/joe/unified-media/app:/app -w /app node:24-slim \
+  sh -c 'node_modules/.bin/tsc --noEmit'      # type-check
+docker run --rm -v /home/joe/unified-media/app:/app -w /app node:24-slim \
+  sh -c 'node_modules/.bin/vitest run'        # tests
 ```
+
+There is no dev-server workflow on this host for the same reason. To drive the **deployed**
+container in a browser, use `.claude/skills/run-unified-frontend/` (`./run.sh`), or `./api.sh`
+for data-only checks — it is ~60x faster because it skips the browser entirely.
 Auth in dev is the same SQLite session system as prod — no header injection.
 
 ### `.env.local` (core keys)
 ```
 # UMT → qBittorrent
-UMT_URL=http://<legacy-lan-ip>:8080      UMT_USERNAME=<…>   UMT_PASSWORD=<…>
+UMT_URL=http://<lan-ip>:8080      UMT_USERNAME=<…>   UMT_PASSWORD=<…>
 # App + auth
 NEXT_PUBLIC_APP_URL=http://localhost:3001
 ADMIN_USERNAME=<…>   ADMIN_PASSWORD=<strong>   DB_PATH=./unified.db
-TRUSTED_PROXY_COUNT=2     # XFF depth: BunkerWeb→Caddy=2; unset in dev. Drives getClientIp() (A1-005)
+TRUSTED_PROXY_COUNT=2     # XFF depth (code default; see below). Drives getClientIp() (A1-005)
 # SMTP (all optional; unset → codes print to docker logs)
 SMTP_HOST= SMTP_PORT=587 SMTP_USER= SMTP_PASS= SMTP_FROM=
 EMAIL_VERIFICATION_REQUIRED=          # 'true' to require email code; default false
 # Web Push (all optional; unset → push is a logging no-op, mirrors SMTP above)
 VAPID_PUBLIC_KEY= VAPID_PRIVATE_KEY= VAPID_SUBJECT=   # generate: npx web-push generate-vapid-keys
 ```
+
+**`TRUSTED_PROXY_COUNT` in production is `1`, not the `2` shown above** — set in the deployment
+`.env` (`/home/joe/docker/unified-media/.env`, outside this git repo, so grepping the repo only
+finds `src/lib/client-ip.ts`) because only Caddy fronts the app today (BunkerWeb lands at rebuild
+step 12). A wiring audit flagged the old assumed default of 2 as a HIGH-severity rate-limit bypass;
+testing disproved it (Caddy replaces rather than appends `X-Forwarded-For`, so N=1 and N=2 both
+resolved correctly) and `TRUSTED_PROXY_COUNT=1` was set anyway for accuracy, not as a fix. Raise it
+to `2` when BunkerWeb goes back in front of Caddy. Full evidence:
+`docs/incomplete/open-issues.md` ("XFF / rate-limit-bypass finding").
 
 ### Independence-build env (native stack)
 `OPENSUBTITLES_API_KEY` (+ `OPENSUBTITLES_USERNAME`/`PASSWORD` for the VIP 1000/day quota),
@@ -329,14 +356,25 @@ Use `node:24-slim` (Debian, not Alpine) — `better-sqlite3` needs glibc; build 
 
 ### Caddy
 ```
-<old-app-host> {
+<app-host> {
   import compressed
   reverse_proxy unified-frontend:3001
 }
 ```
 Party-play adds a `/api/party/ws*` route to `:3002` — see `docs/features/party-play.md`.
-Update via `python3 scripts/update-caddyfile.py`, then
-`docker exec caddy caddy reload --config /etc/caddy/Caddyfile`.
+
+⚠️ **The documented update flow is silently broken.** `python3 scripts/update-caddyfile.py`
+followed by `docker exec caddy caddy reload` reports success and changes nothing. The Caddyfile is
+a single-**file** bind mount and Docker binds single files by inode; any editor that writes a temp
+file and renames it over the original swaps the inode and detaches the mount, so the container
+keeps serving the original file forever. This was hit for real on 2026-08-11.
+
+After editing, always confirm the container actually sees it:
+
+```
+docker exec caddy grep <something-new> /etc/caddy/Caddyfile
+docker compose up -d caddy     # if stale — recreate, do not just reload
+```
 
 ### Reference material
 - `docs/analysis/` — stack audit + 21-domain audit reports.
@@ -439,7 +477,7 @@ Native watch-together (v0.9.5; shared queue + auto-advance v0.10.0). Shared cont
 sync + presence + text chat + emoji reactions over one WebSocket on a **dedicated `ws` server on port
 3002** (the Next standalone server can't take the `upgrade` event), same process as the route handlers
 so the `globalThis`-pinned `PartyStateStore` is shared. Browser connects same-origin to
-`wss://<old-app-host>/api/party/ws`; Caddy routes that path to 3002.
+`wss://<app-host>/api/party/ws`; Caddy routes that path to 3002.
 
 Full architecture (data model, the PartyStateStore scale seam, the server-authority command pipeline,
 drift bands, readiness gate, resilience/grace, the three action-origin correctness rule, the shared
@@ -494,7 +532,7 @@ in §8. Full detail: `docs/features/pwa-notifications.md`.
 app plus Chromecast casting. **Phase 1 (Android phone wrapper) shipped and emulator-verified
 2026-07-14; phases 2-5 not started.** New `native/` directory (sibling to `app/`, outside the
 Docker build context) holds the Capacitor project — `capacitor.config.ts` points its WebView at the
-live `https://<old-app-host>` instead of a bundled build, so the existing cookie-session auth
+live `https://<app-host>` instead of a bundled build, so the existing cookie-session auth
 and CSRF check work completely unmodified for the phone/TV wrappers themselves. Testing workflow is
 `.claude/skills/test-unified-android/SKILL.md` (headless emulator, driven via adb). Full detail,
 including the not-yet-started phases (`/tv` route, Android TV APK, Chromecast's signed-token

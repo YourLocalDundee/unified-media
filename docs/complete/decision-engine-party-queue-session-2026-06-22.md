@@ -1,5 +1,7 @@
 # Session handoff — Decision engine + Party queue (2026-06-22)
 
+> **Note (2026-08-13):** paths, IPs and hostnames in this document were mechanically updated to match the rebuilt server. The findings, decisions and dates below are the original record and have not been altered.
+
 Shipped the three Tier-1 items from retired design notes: **decision gate-chain + rejection
 reasons**, **real custom formats**, and **Party Play shared queue with auto-advance**. All deployed and
 verified in production.
@@ -126,8 +128,8 @@ a few seconds. If a client's autoplay is blocked it stays paused on the new item
 ## 4. Deploy + verification (done)
 
 ```
-docker compose -f /opt/docker/compose/docker-compose.yml build --no-cache unified-frontend
-docker compose -f /opt/docker/compose/docker-compose.yml up -d --force-recreate unified-frontend
+docker compose -f /home/joe/docker/unified-media/docker-compose.yml build --no-cache unified-frontend
+docker compose -f /home/joe/docker/unified-media/docker-compose.yml up -d --force-recreate unified-frontend
 ```
 
 - Container healthy; logs clean — party WS on `0.0.0.0:3002/api/party/ws`, scheduler/subtitle/scanner up.

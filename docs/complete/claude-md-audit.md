@@ -1,5 +1,7 @@
 # CLAUDE.md Accuracy Audit
 
+> **Note (2026-08-13):** paths, IPs and hostnames in this document were mechanically updated to match the rebuilt server. The findings, decisions and dates below are the original record and have not been altered.
+
 Audited against `app/src/` on 2026-06-04. For each finding: **accurate**, **wrong/outdated**, or **missing**.
 
 ---
@@ -55,15 +57,15 @@ Additionally, `ADMIN_USERNAME` defaults to the string `'admin'` if not set — i
 
 **Wrong — multiple points:**
 
-1. CLAUDE.md says all four `external automation` services run with `network_mode: host` and must be reached via host IP `<legacy-lan-ip>`. This is false. The actual `docker-compose.yml` has them on the bridge network with port bindings:
-   - the TV automation suite: `<legacy-lan-ip>:8989:8989`
-   - the movie automation suite: `<legacy-lan-ip>:7878:7878`
-   - Bridge: `<legacy-lan-ip>:9696:9696`
-   - the subtitle automation suite: `<legacy-lan-ip>:6767:6767`
+1. CLAUDE.md says all four `external automation` services run with `network_mode: host` and must be reached via host IP `<lan-ip>`. This is false. The actual `docker-compose.yml` has them on the bridge network with port bindings:
+   - the TV automation suite: `<lan-ip>:8989:8989`
+   - the movie automation suite: `<lan-ip>:7878:7878`
+   - Bridge: `<lan-ip>:9696:9696`
+   - the subtitle automation suite: `<lan-ip>:6767:6767`
 
    Because they are on the bridge network, they are reachable by container name (`http://the TV automation suite:8989`, `http://the movie automation suite:7878`, etc.) from within the Docker network. The host IP approach works but is not the actual deployment pattern.
 
-2. The source-code defaults in each client file use the host IP as a fallback (`process.env.LEGACY_TV_URL ?? 'http://<legacy-lan-ip>:8989'`), which is consistent with the CLAUDE.md advice, but the compose file does not define `LEGACY_TV_URL` etc. so the fallback is what fires in production. The fallback is functional because Pi-hole resolves the host IP within the Docker host, but the accurate statement would be "reachable by container name."
+2. The source-code defaults in each client file use the host IP as a fallback (`process.env.LEGACY_TV_URL ?? 'http://<lan-ip>:8989'`), which is consistent with the CLAUDE.md advice, but the compose file does not define `LEGACY_TV_URL` etc. so the fallback is what fires in production. The fallback is functional because Pi-hole resolves the host IP within the Docker host, but the accurate statement would be "reachable by container name."
 
 3. The summary internal-address table at the bottom of Section 7 contradicts the Section 3 text: the table correctly lists `http://the TV automation suite:8989` and `http://the movie automation suite:7878` (container names), but the prose in Section 3 and the "Known Constraints" section say to use the host IP.
 
@@ -171,9 +173,9 @@ Routes that exist but are not in the page map:
 
 ~~**Wrong env var prefix.** The YAML example in Section 8 uses `QBT_URL`, `QBT_USERNAME`, `QBT_PASSWORD` (prefix `QBT_`). The actual source code (`session.ts`, `config.ts`) reads `QBIT_URL`, `QBIT_USERNAME`, `QBIT_PASSWORD` (prefix `QBIT_`). The `.env.local` example just above correctly uses `QBIT_`, making the docker-compose snippet internally inconsistent and wrong.~~
 
-**Missing fields in compose example.** The actual `docker-compose.yml` does not use the inline `environment:` block shown in CLAUDE.md. It uses `env_file: /home/minijoe/dev/unified-frontend/app/.env.local` plus a single `environment: - DB_PATH=/data/unified.db`. It also has `mem_limit: 1g` and media volume mounts (`/mnt/media/movies:/media/movies:ro`, `/mnt/media/tv:/media/tv:ro`) not shown in the example.
+**Missing fields in compose example.** The actual `docker-compose.yml` does not use the inline `environment:` block shown in CLAUDE.md. It uses `env_file: /home/joe/unified-media/app/.env.local` plus a single `environment: - DB_PATH=/data/unified.db`. It also has `mem_limit: 1g` and media volume mounts (`/mnt/media/movies:/media/movies:ro`, `/mnt/media/tv:/media/tv:ro`) not shown in the example.
 
-**No `ports:` mapping.** The CLAUDE.md example shows `ports: - "<legacy-lan-ip>:3000:3000"` but the actual compose service has no `ports:` block. The container is reachable only via Caddy on the bridge network.
+**No `ports:` mapping.** The CLAUDE.md example shows `ports: - "<lan-ip>:3000:3000"` but the actual compose service has no `ports:` block. The container is reachable only via Caddy on the bridge network.
 
 ---
 
@@ -203,22 +205,22 @@ Routes that exist but are not in the page map:
 
 > **RESOLVED v0.9.1, 2026-06-04:** The contradiction between the table (container names) and the prose (host IP required) was resolved. CLAUDE.md now consistently uses container names in the table and notes both forms work for external automation stack.
 
-~~**Contradictory.** The table near the end of Section 7 shows `the TV automation suite | http://the TV automation suite:8989` and `the movie automation suite | http://the movie automation suite:7878` (container names), which is correct. But the prose three lines below the table says "All external automation stack run with `network_mode: host` — use the host IP `<legacy-lan-ip>`, not container names." The table and the prose directly contradict each other. The table is the accurate one.~~
+~~**Contradictory.** The table near the end of Section 7 shows `the TV automation suite | http://the TV automation suite:8989` and `the movie automation suite | http://the movie automation suite:7878` (container names), which is correct. But the prose three lines below the table says "All external automation stack run with `network_mode: host` — use the host IP `<lan-ip>`, not container names." The table and the prose directly contradict each other. The table is the accurate one.~~
 
 ### BunkerWeb WAF
 
 > **RESOLVED v0.9.1, 2026-06-04:** CLAUDE.md Section 7 now has a complete BunkerWeb WAF table documenting all five disabled modules (`USE_BAD_BEHAVIOR`, `USE_CROWDSEC`, `USE_DNSBL`, `USE_MODSECURITY`, `USE_BLACKLIST`) with per-module explanations. See "Resolved Since Audit" section below.
 
-~~**Missing — significant gap.** The BunkerWeb section in CLAUDE.md is generic advice (avoid SQLi patterns, large payloads, etc.). It does not document the actual per-domain settings that have been applied to `<old-app-host>` in the edge compose file:~~
+~~**Missing — significant gap.** The BunkerWeb section in CLAUDE.md is generic advice (avoid SQLi patterns, large payloads, etc.). It does not document the actual per-domain settings that have been applied to `<app-host>` in the edge compose file:~~
 
 ```
-<old-app-host>_USE_BAD_BEHAVIOR=no
-<old-app-host>_USE_CROWDSEC=no
-<old-app-host>_USE_DNSBL=no
-<old-app-host>_USE_MODSECURITY=no
-<old-app-host>_USE_BLACKLIST=no
-<old-app-host>_ALLOWED_METHODS=GET|POST|PUT|DELETE|PATCH|OPTIONS|HEAD
-<old-app-host>_USE_GZIP=yes
+<app-host>_USE_BAD_BEHAVIOR=no
+<app-host>_USE_CROWDSEC=no
+<app-host>_USE_DNSBL=no
+<app-host>_USE_MODSECURITY=no
+<app-host>_USE_BLACKLIST=no
+<app-host>_ALLOWED_METHODS=GET|POST|PUT|DELETE|PATCH|OPTIONS|HEAD
+<app-host>_USE_GZIP=yes
 ```
 
 All five WAF modules that would normally run — ModSecurity CRS, CrowdSec, DNSBL, IP reputation blacklist, and bad-behavior scoring — are **disabled** for the unified domain. Comments in the compose file explain why each is off (Next.js RSC prefetch requests tripping bad-behavior scoring; CrowdSec/DNSBL blocking VPN and cellular NAT IPs; ModSecurity CRS triggering on registration POST bodies). None of this is in CLAUDE.md. A developer reading the WAF section would not know the app is running with essentially all WAF modules off.

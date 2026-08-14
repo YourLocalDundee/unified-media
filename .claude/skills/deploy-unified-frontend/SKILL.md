@@ -3,9 +3,17 @@ name: deploy-unified-frontend
 description: Rebuild and redeploy the unified-frontend container, then drive/verify the deployed app. Use when asked to deploy, rebuild the image, ship merged changes to the running container, or test against the live deployed container (not a dev server). Covers the compose build/recreate dance, health-wait, the two-interface container-IP trap, and the loopback-forwarder pattern for browser-driving the deployed app past the edge's rate-limit/CSRF.
 ---
 
-Deploys the Next.js app that runs at `<old-app-host>`. The image is built and run by
-Docker Compose (project **`compose`**) from `/opt/docker/compose/docker-compose.yml`; the app's
-build context is `/home/minijoe/dev/unified-frontend/app`. Container name: `unified-frontend`,
+> ⚠️ **Repointed 2026-08-13, NOT re-tested.** This skill was written for the pre-wipe server. Its
+> paths, IPs and hostnames were mechanically updated to match the rebuilt machine, but no step in
+> it has been run end to end since. Verify before trusting it — and note that **there is no
+> node/npm/npx on this host**, so any bare `npm`/`npx` step here will fail and must be run inside
+> a container. `run-unified-frontend` is the one skill in this directory that has been fully
+> rebuilt and verified; use it as the reference for how these should look.
+
+
+Deploys the Next.js app that runs at `<app-host>`. The image is built and run by
+Docker Compose (project **`compose`**) from `/home/joe/docker/unified-media/docker-compose.yml`; the app's
+build context is `/home/joe/unified-media/app`. Container name: `unified-frontend`,
 listens on `:3001` (app) and `:3002` (party-play WebSocket), neither published to the host.
 
 ## Preflight (do this before building)
@@ -14,7 +22,7 @@ Docs (CLAUDE.md, docs/, CHANGELOG) are NOT in the build context (`app/`) — cha
 rebuild. Only `app/**` changes require a deploy.
 
 ```bash
-cd /home/minijoe/dev/unified-frontend/app
+cd /home/joe/unified-media/app
 npm run type-check && npm run lint && npm run test   # the Docker build runs next build (which lints); catch failures here first
 ```
 - If a feature added an env var (e.g. VAPID, SMTP), add it to `app/.env.local` first — the container
@@ -28,9 +36,9 @@ Always `--no-cache` (CLAUDE.md §8 mandate — avoids stale-layer/typo images), 
 project name + config so it targets the existing `compose-unified-frontend` image, not a stray one:
 
 ```bash
-CF=/opt/docker/compose/docker-compose.yml
-docker compose -f "$CF" -p compose --project-directory /opt/docker/compose build --no-cache unified-frontend
-docker compose -f "$CF" -p compose --project-directory /opt/docker/compose up -d --force-recreate unified-frontend
+CF=/home/joe/docker/unified-media/docker-compose.yml
+docker compose -f "$CF" -p compose --project-directory /home/joe/docker build --no-cache unified-frontend
+docker compose -f "$CF" -p compose --project-directory /home/joe/docker up -d --force-recreate unified-frontend
 ```
 Run the build in the background (it takes 1–2 min) and wait for the completion notification rather
 than polling. Then wait for health:
@@ -46,12 +54,12 @@ The DB persists across recreate (volume `unified-db:/data`), so sessions + data 
 
 Confirm the edge is serving:
 ```bash
-curl -s --max-time 8 https://<old-app-host>/api/health -o /dev/null -w "edge: %{http_code}\n"   # expect 200
+curl -s --max-time 8 https://<app-host>/api/health -o /dev/null -w "edge: %{http_code}\n"   # expect 200
 ```
 
 ## Driving / verifying the DEPLOYED container (not a dev server)
 
-The container ports aren't published, and hitting the real edge (`<old-app-host>`) in a headless
+The container ports aren't published, and hitting the real edge (`<app-host>`) in a headless
 browser trips BunkerWeb rate-limiting on the burst of JS chunks (429 → React never hydrates). So
 forward loopback ports straight to the container and drive `http://localhost:3001` — a "secure
 context" (Secure cookies work) whose Origin `http://localhost:3001` is in the app's CSRF allowlist.

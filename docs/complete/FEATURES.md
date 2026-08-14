@@ -1,5 +1,7 @@
 # Shipped Features
 
+> **Note (2026-08-13):** paths, IPs and hostnames in this document were mechanically updated to match the rebuilt server. The findings, decisions and dates below are the original record and have not been altered.
+
 Index of what's built. Chronology is in `CHANGELOG.md`; live deep-dives are under `docs/player/` and
 `docs/features/`.
 
@@ -52,7 +54,7 @@ Quality Profiles → Collections → Settings.
 ### the old request app webhook (Phase 3)
 
 the old request app → Settings → Notifications → Webhook → URL
-`https://<old-app-host>/api/the old request app/webhook`. Enable `Request Approved` + `Media Available`. Set
+`https://<app-host>/api/the old request app/webhook`. Enable `Request Approved` + `Media Available`. Set
 secret in both the old request app and `the retired webhook secret`. `/api/the old request app/webhook` receives `MEDIA_APPROVED`,
 `REQUEST_APPROVED`, `MEDIA_AVAILABLE`.
 

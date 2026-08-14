@@ -1,7 +1,9 @@
 # Audit 17 — Global Resilience / Error-Handling + Consolidated Dead-Code & No-Op Inventory
 
+> **Note (2026-08-13):** paths, IPs and hostnames in this document were mechanically updated to match the rebuilt server. The findings, decisions and dates below are the original record and have not been altered.
+
 Cross-cutting READ-ONLY pass on top of the 15 vertical audits (01–15). App root:
-`/home/minijoe/dev/unified-frontend/app` (source in `src/`). Stack: Next.js 16.2.7 App Router,
+`/home/joe/unified-media/app` (source in `src/`). Stack: Next.js 16.2.7 App Router,
 React 19, TypeScript, @tanstack/react-query, zustand. Notifications/SMTP skipped per scope.
 
 ## Summary

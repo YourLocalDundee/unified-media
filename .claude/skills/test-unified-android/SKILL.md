@@ -3,10 +3,18 @@ name: test-unified-android
 description: Build the Unified Media Capacitor Android app and drive it on a headless emulator (or a real device over adb). Use when asked to test the phone/TV app, build the debug APK, boot the Android emulator, or click through a flow in the native Android wrapper (as opposed to the web app — see run-unified-frontend for that).
 ---
 
-Drives the Capacitor Android shell at `/home/minijoe/dev/unified-frontend/native/` (see
-`/home/minijoe/.claude/plans/sorted-riding-popcorn.md` for the full phone/TV app plan). The
+> ⚠️ **Repointed 2026-08-13, NOT re-tested.** This skill was written for the pre-wipe server. Its
+> paths, IPs and hostnames were mechanically updated to match the rebuilt machine, but no step in
+> it has been run end to end since. Verify before trusting it — and note that **there is no
+> node/npm/npx on this host**, so any bare `npm`/`npx` step here will fail and must be run inside
+> a container. `run-unified-frontend` is the one skill in this directory that has been fully
+> rebuilt and verified; use it as the reference for how these should look.
+
+
+Drives the Capacitor Android shell at `/home/joe/unified-media/native/` (see
+`/home/joe/.claude/plans/sorted-riding-popcorn.md` for the full phone/TV app plan). The
 shell has almost no code of its own — `capacitor.config.ts` points its WebView straight at
-`https://<old-app-host>`, so this skill is really "drive the real production site inside an
+`https://<app-host>`, so this skill is really "drive the real production site inside an
 Android WebView, using adb instead of Playwright." No X server/display is required — everything
 below is driven headlessly through `adb shell input` + `adb exec-out screencap`.
 
@@ -32,7 +40,7 @@ below is driven headlessly through `adb shell input` + `adb exec-out screencap`.
 ```bash
 export ANDROID_HOME="$HOME/Android/Sdk"
 export PATH="$PATH:$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools"
-cd /home/minijoe/dev/unified-frontend/native/android
+cd /home/joe/unified-media/native/android
 ./gradlew assembleDebug --console=plain
 ```
 Output: `app/build/outputs/apk/debug/app-debug.apk`. The `org.gradle.java.home` pin in
@@ -41,7 +49,7 @@ Output: `app/build/outputs/apk/debug/app-debug.apk`. The `org.gradle.java.home` 
 Rebuild only after changing `native/` (the Capacitor shell itself, e.g. `capacitor.config.ts`,
 icons, plugins) or `app/src/components/native/NativeAppBridge.tsx`-style native-bridge code.
 Ordinary web feature work needs **no APK rebuild** — `server.url` mode means the WebView always
-loads whatever is currently live at `https://<old-app-host>`.
+loads whatever is currently live at `https://<app-host>`.
 
 ## Boot the emulator (headless)
 
@@ -62,7 +70,7 @@ Full cold boot takes ~1–3 minutes. `adb devices` should show `emulator-5554  d
 ## Install + launch
 
 ```bash
-adb install -r /home/minijoe/dev/unified-frontend/native/android/app/build/outputs/apk/debug/app-debug.apk
+adb install -r /home/joe/unified-media/native/android/app/build/outputs/apk/debug/app-debug.apk
 adb shell am start -n dev.minijoe.unified/.MainActivity
 ```
 Don't use `adb shell monkey -p <pkg> -c android.intent.category.LAUNCHER 1` to launch — it was
@@ -97,7 +105,7 @@ Same underlying risk as `run-unified-frontend`'s tmux/`send-keys` warning, diffe
 (there's no driver script to hide it behind — yet). Do it like this, so the password only ever
 exists inside a shell variable, never as a literal argument that gets echoed or printed:
 ```bash
-ADMIN_PW=$(grep "^ADMIN_PASSWORD=" /home/minijoe/dev/unified-frontend/app/.env.local | cut -d= -f2-)
+ADMIN_PW=$(grep "^ADMIN_PASSWORD=" /home/joe/unified-media/app/.env.local | cut -d= -f2-)
 adb shell input tap <username-field-x> <username-field-y>
 adb shell input text "admin"
 adb shell input tap <password-field-x> <password-field-y>
@@ -144,7 +152,7 @@ recreate it next time, just re-run the boot step above.
   `avdmanager` need to recognize it as properly installed — no need for a full `package.xml`.
 - **`Unsupported class file major version 69` from Gradle**: the JDK 21 pin in
   `~/.gradle/gradle.properties` is missing or was removed. Re-add
-  `org.gradle.java.home=/home/minijoe/.jdks/jdk-21.0.11+10` (see Prerequisites).
+  `org.gradle.java.home=/home/joe/.jdks/jdk-21.0.11+10` (see Prerequisites).
 - **`adb devices` shows the emulator as `offline` for a while after boot**: normal during early
   boot — wait for `sys.boot_completed=1` rather than treating `offline` as a failure.
 - **AVD is gone / this is a fresh machine**: recreate it —

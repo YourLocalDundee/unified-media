@@ -3,9 +3,17 @@ name: unified-db-query
 description: Query or mutate the LIVE unified-frontend container's SQLite database, or make an authenticated request against its running API (including polling a background job to completion). Use whenever you need to inspect/fix data in the deployed app's unified.db, or call an admin-only API route without a browser (trigger a scan, check /api/auth/me, patch a profile field, etc.) — as opposed to editing the app's source code, which is a normal file edit + the deploy-unified-frontend skill.
 ---
 
+> ⚠️ **Repointed 2026-08-13, NOT re-tested.** This skill was written for the pre-wipe server. Its
+> paths, IPs and hostnames were mechanically updated to match the rebuilt machine, but no step in
+> it has been run end to end since. Verify before trusting it — and note that **there is no
+> node/npm/npx on this host**, so any bare `npm`/`npx` step here will fail and must be run inside
+> a container. `run-unified-frontend` is the one skill in this directory that has been fully
+> rebuilt and verified; use it as the reference for how these should look.
+
+
 Two small tools, both invoked via `run.sh` in this directory. Neither needs the dev server —
 they talk to whatever `unified-frontend` container is actually running in production
-(`/opt/docker/compose/docker-compose.yml`), same DB (`unified-db` volume → `/data/unified.db`
+(`/home/joe/docker/unified-media/docker-compose.yml`), same DB (`unified-db` volume → `/data/unified.db`
 inside the container) and same live app the real users hit.
 
 ## Why this exists (read once)

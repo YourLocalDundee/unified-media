@@ -1,5 +1,7 @@
 # Audit — 2026-06-13 (21-agent read-only) — CLOSED
 
+> **Note (2026-08-13):** paths, IPs and hostnames in this document were mechanically updated to match the rebuilt server. The findings, decisions and dates below are the original record and have not been altered.
+
 > Moved out of `CLAUDE.md`. This is the original audit block plus the remediation note. **All P0/P1
 > are closed.** The live tracker is `analysis/open-issues.md` (read that for current state); the
 > per-domain reports are `analysis/audit-2026-06-13/00-SUMMARY.md` + `01..21-*.md`.
@@ -36,7 +38,7 @@ settings (product decision), a11y modal focus traps + light-theme contrast.
   not valid. The qBittorrent `[...path]` proxy, most the old media server routes, and `api/torznab/search` ran
   with no `requireAuth()`. (A7-01, A4, A13-01, A12-02, A14-C1/C2)
 - **CSRF effectively off.** `verifyOrigin` ran on ~12 of 51 mutating routes and used
-  `origin.startsWith()` so `<old-app-host>.evil.com` passed; missing Origin was allowed.
+  `origin.startsWith()` so `<app-host>.evil.com` passed; missing Origin was allowed.
   (`lib/csrf.ts:11`; A6-01, A9-01, A1-002)
 - **Forced password change bypassable.** 30-day cookie set before the `force_pw_change` check.
   (`api/auth/login/route.ts:97`; A1-001)

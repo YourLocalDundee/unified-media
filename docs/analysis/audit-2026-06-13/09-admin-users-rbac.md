@@ -1,5 +1,7 @@
 # Audit 09 — Admin: Users, Invites, Activity, Audit, RBAC
 
+> **Note (2026-08-13):** paths, IPs and hostnames in this document were mechanically updated to match the rebuilt server. The findings, decisions and dates below are the original record and have not been altered.
+
 Scope: `src/app/admin/{page,users,users/[id],invites,activity,audit}` and
 `src/app/api/admin/{users,users/[id]/*,invites,invites/[code],activity,activity/export,audit,audit/export,stats}`.
 Read-only review across three lenses: logic flow / RBAC, button & interaction wiring, and optimization.
@@ -44,7 +46,7 @@ reset-password, invite create/revoke) is unthrottled.
 ### A9-01 — No CSRF/Origin check on any admin mutation route
 - **Severity:** CRITICAL
 - **File:** `src/app/api/admin/users/[id]/route.ts:13,38`; `users/[id]/suspend/route.ts:10`; `users/[id]/activate/route.ts:9`; `users/[id]/reset-password/route.ts:22`; `invites/route.ts:29`; `invites/[code]/route.ts:8`. Compare `src/lib/csrf.ts` + `src/app/api/auth/register/route.ts:90`.
-- **What's wrong:** `verifyOrigin()` is implemented and used on the public register route, but **none** of the admin state-mutating routes call it. Auth is by the `unified-session` cookie, which is `SameSite=lax` (`src/lib/dal.ts:104`). `lax` still sends the cookie on top-level cross-site POST navigations and (for some flows) is the only barrier; there is no CSRF token and no Origin/Referer check. A malicious page an admin visits can issue `fetch('https://<old-app-host>/api/admin/users/<id>', {method:'DELETE', credentials:'include'})` or auto-submit a form to suspend/promote/delete.
+- **What's wrong:** `verifyOrigin()` is implemented and used on the public register route, but **none** of the admin state-mutating routes call it. Auth is by the `unified-session` cookie, which is `SameSite=lax` (`src/lib/dal.ts:104`). `lax` still sends the cookie on top-level cross-site POST navigations and (for some flows) is the only barrier; there is no CSRF token and no Origin/Referer check. A malicious page an admin visits can issue `fetch('https://<app-host>/api/admin/users/<id>', {method:'DELETE', credentials:'include'})` or auto-submit a form to suspend/promote/delete.
 - **Why it matters:** Full account-takeover / destructive admin actions triggered by an admin merely browsing a hostile page. This is the highest-impact gap because it bypasses all the otherwise-correct RBAC.
 - **Suggested fix:** Add `if (!verifyOrigin(req)) return 403` to the top of every admin mutation handler (after `requireAdmin`), exactly as `register/route.ts` does. For DELETE/PATCH the `req` is already in scope; the no-arg POST handlers (`suspend`, `activate`, `reset-password`) must accept and inspect `req`. Consider a shared wrapper so no route can forget.
 

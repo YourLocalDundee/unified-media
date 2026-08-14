@@ -288,7 +288,7 @@ CREATE TABLE subtitle_wants (
 
 ```
 # Already present
-LEGACY_MEDIA_URL=http://<legacy-lan-ip>:8096
+LEGACY_MEDIA_URL=http://<lan-ip>:8096
 LEGACY_MEDIA_API_KEY=<from the old media server dashboard>
 LEGACY_MEDIA_USER_ID=<UUID from GET /Users/Me>   ← REQUIRED by Phase 3
 a retired env var=http://the old request app:5055
@@ -303,7 +303,7 @@ OPENSUBTITLES_API_KEY=<from opensubtitles.com>
 
 ### the old request app webhook configuration (Phase 3)
 In the old request app → Settings → Notifications → Webhook:
-- URL: `https://<old-app-host>/api/the old request app/webhook`
+- URL: `https://<app-host>/api/the old request app/webhook`
 - JSON Payload: (default the old request app webhook format — no custom payload needed)
 - Notification Types: enable `Request Approved`, `Media Available`
 - If using secret: set the secret in the old request app's webhook settings AND `the retired webhook secret` env var

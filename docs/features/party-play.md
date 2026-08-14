@@ -20,11 +20,11 @@ Next route handlers and the existing schedulers. That shared process is why the 
 `PartyStateStore` singleton is visible to both the WS server and the `/api/party` REST routes. The
 Docker `CMD` stays `node server.js`.
 
-Public-edge routing. The browser connects same-origin to `wss://<old-app-host>/api/party/ws`. The
+Public-edge routing. The browser connects same-origin to `wss://<app-host>/api/party/ws`. The
 live Caddy block routes that path to 3002, everything else to 3001:
 
 ```
-http://<old-app-host> {
+http://<app-host> {
     import compressed
     @partyws path /api/party/ws*
     reverse_proxy @partyws unified-frontend:3002
@@ -39,7 +39,7 @@ server listens on `0.0.0.0:3002`. Dev has no Caddy, so the client connects direc
 so `unified-session` is still sent).
 
 `next.config.ts` CSP `connect-src` was widened to
-`'self' http://ip-api.com wss://<old-app-host> ws://localhost:3002`.
+`'self' http://ip-api.com wss://<app-host> ws://localhost:3002`.
 
 ## Data model — durable (SQLite) vs ephemeral (memory)
 
@@ -188,7 +188,7 @@ After deploy, the spec **requires** an edge test: connect from an off-tailnet (c
 the full BunkerWeb → CrowdSec → Caddy path and confirm the upgrade completes and the socket survives at
 least two minutes idle. The 5s heartbeat + 20s ws ping keep the socket under any typical 60s idle reap.
 **If BunkerWeb still reaps it**, add a WebSocket-aware per-domain exception for `/api/party/ws` in
-`/opt/docker/compose/edge/docker-compose.yml`, in the same style as the existing `<old-app-host>_*`
+`/home/joe/docker/edge/docker-compose.yml`, in the same style as the existing `<app-host>_*`
 overrides (raise the reverse-proxy read timeout for that path or exempt it from idle close); confirm the
 exact BunkerWeb variable against the running config first. Tailnet clients don't hit this.
 

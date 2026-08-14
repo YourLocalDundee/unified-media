@@ -1,5 +1,7 @@
 # Party Play — Implementation Audit (v0.9.5)
 
+> **Note (2026-08-13):** paths, IPs and hostnames in this document were mechanically updated to match the rebuilt server. The findings, decisions and dates below are the original record and have not been altered.
+
 > **STATUS: ALL FINDINGS REMEDIATED.** Every Critical/High/Medium/Low item below was fixed in a
 > follow-up pass (10 agents, one file group each); `tsc --noEmit` and the production build are clean.
 > The one deferred item is L5 (explicit Caddy idle timeout), which is addressed only if the mandated
@@ -19,7 +21,7 @@ and specified in `PARTY_PLAY_SPEC.txt`.
   constants match the spec exactly, the eight-emoji reaction set is exact, and every stated v1
   non-goal is respected.
 - **Deployment status.** The feature is **built, committed (branch `feat/party-play`), and
-  deployed live** behind Caddy on `<old-app-host>`. Note the endpoint traverses a path where
+  deployed live** behind Caddy on `<app-host>`. Note the endpoint traverses a path where
   several BunkerWeb WAF features are disabled for this domain (CrowdSec, ModSecurity, blacklist,
   DNSBL — see CLAUDE.md §7), so the application is the primary line of defense.
 
@@ -122,7 +124,7 @@ reversing the clock.
 - **H1 — No Origin check on the WS upgrade.** The upgrade handler validates path + cookie but never
   inspects `req.headers.origin`. Browsers send the ambient `unified-session` cookie on cross-origin
   WS upgrades and do not apply SameSite to the handshake, so any site a logged-in user visits can
-  open `wss://<old-app-host>/api/party/ws` and, with a known/guessed `partyId`, act as the
+  open `wss://<app-host>/api/party/ws` and, with a known/guessed `partyId`, act as the
   victim. **Fix.** Reject upgrades whose `Origin` is not the app origin (prod + dev), `socket.destroy()`
   on mismatch.
 - **H2 — Sockets are never re-authorized.** `lookupPartySession` runs once at upgrade; the socket

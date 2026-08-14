@@ -1,5 +1,7 @@
 # Changelog
 
+> **Note (2026-08-13):** paths, IPs and hostnames in this document were mechanically updated to match the rebuilt server. The findings, decisions and dates below are the original record and have not been altered.
+
 All notable changes to unified-frontend are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
@@ -10,7 +12,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Added
 - **Native phone/TV apps (Capacitor), Phase 1 of 6 — Android phone wrapper.** New `native/`
   directory (sibling to `app/`, outside the Docker build context) holding a Capacitor project whose
-  WebView loads the live `https://<old-app-host>` directly (`server.url` mode) instead of a
+  WebView loads the live `https://<app-host>` directly (`server.url` mode) instead of a
   bundled build, so the existing cookie-session auth and CSRF check work unmodified. New
   `app/src/components/native/NativeAppBridge.tsx` (+ `@capacitor/core`/`@capacitor/app` added to
   `app/package.json`) wires the Android hardware back button; no-ops in a normal browser tab.
@@ -169,7 +171,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **unified-media is now fully the old media server-free.** Removed the last leftover the old media server references from
   the app. The native media-server stack already handled all in-app browse/playback; nothing called
   the old media server at runtime. Specifically: dropped the dead `LEGACY_MEDIA_*` startup-warning check
-  (`instrumentation.ts`), the unused `<legacy-lan-ip>:8096/Items/**` image `remotePattern`
+  (`instrumentation.ts`), the unused `<lan-ip>:8096/Items/**` image `remotePattern`
   (`next.config.ts`), and the disabled "the old media server URL Override" section (`settings/advanced`); removed
   the `LEGACY_MEDIA_*` vars from `.env.local` / `.env.local.example`. `the legacy media-server SDK` was already absent
   from `package.json` (no-op). A standalone the old media server still runs separately for direct TV use and is
@@ -403,7 +405,7 @@ shipped with an API/engine but no UI, plus a subtitle-matching improvement. See
 ## [0.9.1] — 2026-06-04
 
 ### Fixed
-- **BunkerWeb: disabled `USE_BLACKLIST` for `<old-app-host>`** — IP reputation blocklist feeds (Emerging Threats, firehol, etc.) were flagging cellular carrier NAT pool ranges, resulting in 403 for first-time external and mobile visitors. 2,472 IPs were blocked at time of discovery. `USE_BLACKLIST=no` now set per-domain in edge compose for both `bunkerweb` and `bwscheduler` services.
+- **BunkerWeb: disabled `USE_BLACKLIST` for `<app-host>`** — IP reputation blocklist feeds (Emerging Threats, firehol, etc.) were flagging cellular carrier NAT pool ranges, resulting in 403 for first-time external and mobile visitors. 2,472 IPs were blocked at time of discovery. `USE_BLACKLIST=no` now set per-domain in edge compose for both `bunkerweb` and `bwscheduler` services.
 - **Subtitle scheduler no longer crashes when `OPENSUBTITLES_API_KEY` is unset** — `downloadPendingSubtitles()` now returns immediately with a warning log when the key is absent; previously it would attempt network calls and surface 401 errors through the cron job. Both cron callbacks in `scheduler.ts` wrapped in try/catch.
 - **Admin seeding documented correctly** — CLAUDE.md previously claimed the container would `process.exit(1)` on missing `ADMIN_PASSWORD`; actual behavior is auto-generation of a random password printed to stderr with `force_pw_change=1`. Corrected.
 - **`external automation` services documented as bridge-network** — CLAUDE.md and `.env.local` incorrectly stated the external automation services/the indexer bridge/the subtitle automation suite ran with `network_mode: host`. Confirmed on `compose_default` bridge; reachable by container name or host IP.
@@ -633,7 +635,7 @@ shipped with an API/engine but no UI, plus a subtitle-matching improvement. See
 
 ### Fixed
 - Sidebar and header no longer appear on login, register, forgot, change-password, or invite pages — `ConditionalLayout` wraps `AppLayout` only on authenticated routes
-- HLS playback fixed — stream URLs were pointing to LAN IP `http://<legacy-lan-ip>:8096` which browsers cannot reach from the public internet; all streams now route through `/api/the old media server/stream/` proxy
+- HLS playback fixed — stream URLs were pointing to LAN IP `http://<lan-ip>:8096` which browsers cannot reach from the public internet; all streams now route through `/api/the old media server/stream/` proxy
 - HLS manifest segment URLs rewritten by proxy to go through same proxy (not raw the old media server LAN URLs)
 - `manifestLoadError` now shows specific message based on HTTP status code (401/403/404/network)
 - Retry button on player error re-initializes the entire HLS pipeline
@@ -673,7 +675,7 @@ shipped with an API/engine but no UI, plus a subtitle-matching improvement. See
 - **IP geolocation** — `src/lib/geo.ts` uses ip-api.com with 1h cache and private-IP short-circuit for audit log enrichment.
 
 ### Changed
-- **Caddy block** — Removed the external SSO `forward_auth` from `<old-app-host>`. App now handles its own auth entirely.
+- **Caddy block** — Removed the external SSO `forward_auth` from `<app-host>`. App now handles its own auth entirely.
 - **AppLayout / Header** — Switched from reading external SSO trusted-auth headers to using `useAuth()` from AuthContext.
 - **Login / Register pages** — Fully rewritten. Login shows specific error messages by status code. Register has zxcvbn strength meter (dynamic import), rule checklist, username availability check (debounced 500ms).
 - **Middleware** — Rewritten to redirect unauthenticated users to `/login?from={pathname}` and bounce authenticated users away from auth pages.

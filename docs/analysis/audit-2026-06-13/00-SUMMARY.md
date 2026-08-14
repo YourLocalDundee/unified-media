@@ -1,5 +1,7 @@
 # Unified Media — Full Audit Summary (2026-06-13)
 
+> **Note (2026-08-13):** paths, IPs and hostnames in this document were mechanically updated to match the rebuilt server. The findings, decisions and dates below are the original record and have not been altered.
+
 Read-only audit of `app/` (Next.js 16, React 19, better-sqlite3) by 21 focused agents across
 logic flow, interactions/buttons, optimizations, security, a11y, runtime, and data integrity.
 Notifications and SMTP were excluded by request. Build status at audit time: `npm run type-check`
@@ -55,7 +57,7 @@ Fix: add `requireAuth()`/`requireAdmin()` at the top of each handler; make `prox
 **S2. CSRF unprotected on state-changing routes.** `verifyOrigin` exists but is called on only ~12 of 51
 mutating routes. All of requests, admin (suspend/activate/delete/reset-password/promote), automation,
 indexer, subtitle, and profile mutations omit it, on a `SameSite=lax` cookie with no CSRF token.
-Where present, `verifyOrigin` uses `origin.startsWith(allowed)` so `https://<old-app-host>.evil.com`
+Where present, `verifyOrigin` uses `origin.startsWith(allowed)` so `https://<app-host>.evil.com`
 passes, and a missing Origin is allowed. `lib/csrf.ts:11-12` (A6-01, A9-01, A14, A1-002, A10-02).
 Fix: tighten `verifyOrigin` to exact host match + deny missing Origin; call it on every POST/PUT/PATCH/DELETE.
 

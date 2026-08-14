@@ -1,5 +1,7 @@
 # Unified Media v0.10.2 — Master Audit Progress Tracker
 
+> **Note (2026-08-13):** paths, IPs and hostnames in this document were mechanically updated to match the rebuilt server. The findings, decisions and dates below are the original record and have not been altered.
+
 Source: consolidated master document (full security/correctness audit of all 113 API routes +
 every subsystem, performance/strain sweep, independence/dependency + mining analysis).
 Started working: 2026-06-24.
@@ -7,7 +9,7 @@ Started working: 2026-06-24.
 Path mapping (doc paths are relative to the Next.js app root):
 - doc `app/api/...`  ->  `app/src/app/api/...`
 - doc `lib/...`      ->  `app/src/lib/...`
-- App root: `/home/minijoe/dev/unified-frontend/app` (Next.js 16 / React 19, better-sqlite3 WAL, VAAPI HLS, Intel N100)
+- App root: `/home/joe/unified-media/app` (Next.js 16 / React 19, better-sqlite3 WAL, VAAPI HLS, Intel N100)
 
 Severity key: [S] security · [D] data/engine correctness · [F] functional · [P] perf/strain · [H] hygiene.
 

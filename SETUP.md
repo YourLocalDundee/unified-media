@@ -9,9 +9,11 @@ SQLite-backed auth. No the old media server dependency.
 ## Prerequisites
 
 - Docker + Docker Compose (running `compose_default` network alongside existing stack)
-- the old request app and qBittorrent containers already running
-- Caddy reverse proxy already running
-- BunkerWeb WAF already running
+- the download client already running (inside the gluetun netns)
+- Caddy reverse proxy already running — the only thing at the edge
+
+There is **no WAF** and nothing is internet-exposed; BunkerWeb was part of the pre-wipe stack and
+is not in the rebuilt one. There is also **no node/npm/npx on the host** — see section 7.
 
 ---
 
@@ -20,8 +22,8 @@ SQLite-backed auth. No the old media server dependency.
 Copy the template and fill in values:
 
 ```bash
-cp /home/minijoe/dev/unified-frontend/app/.env.local.example \
-   /home/minijoe/dev/unified-frontend/app/.env.local
+cp /home/joe/unified-media/app/.env.local.example \
+   /home/joe/unified-media/app/.env.local
 ```
 
 Required variables:
@@ -33,7 +35,7 @@ Required variables:
 | `QBIT_URL` | `http://qbittorrent:8080` |
 | `QBIT_USERNAME` | qBittorrent web UI credentials |
 | `QBIT_PASSWORD` | qBittorrent web UI credentials |
-| `NEXT_PUBLIC_APP_URL` | `https://<old-app-host>` (production) |
+| `NEXT_PUBLIC_APP_URL` | `https://<app-host>` (production) |
 | `ADMIN_USERNAME` | Choose a username for the admin account |
 | `ADMIN_PASSWORD` | Must meet password policy (see below) |
 | `DB_PATH` | `/data/unified.db` (production), `./unified.db` (dev) |
@@ -54,7 +56,7 @@ Admin password must satisfy all of:
 ## 2. Build the Docker image
 
 ```bash
-cd /home/minijoe/dev/unified-frontend/app
+cd /home/joe/unified-media/app
 docker build -t unified-frontend:latest .
 ```
 
@@ -65,7 +67,7 @@ Output mode is `standalone` — no `node_modules` in the final image.
 
 ## 3. Add to docker-compose
 
-Add this service to `/opt/docker/compose/docker-compose.yml`:
+Add this service to `/home/joe/docker/unified-media/docker-compose.yml`:
 
 ```yaml
   unified-frontend:
@@ -73,7 +75,7 @@ Add this service to `/opt/docker/compose/docker-compose.yml`:
     container_name: unified-frontend
     restart: unless-stopped
     env_file:
-      - /home/minijoe/dev/unified-frontend/app/.env.local
+      - /home/joe/unified-media/app/.env.local
     environment:
       - NODE_ENV=production
       - a retired env var=http://the old request app:5055
@@ -115,29 +117,35 @@ The app handles its own auth — no `forward_auth` / external auth gateway neede
 Run the update script to replace the Caddyfile block:
 
 ```bash
-python3 /home/minijoe/dev/unified-frontend/scripts/update-caddyfile.py
+python3 /home/joe/unified-media/scripts/update-caddyfile.py
 ```
 
 Verify the new block looks like:
 
 ```caddyfile
-<old-app-host> {
+<app-host> {
     import compressed
     reverse_proxy unified-frontend:3001
 }
 ```
 
-Reload Caddy:
+Apply it — **`caddy reload` alone is not enough**:
 
 ```bash
-docker exec caddy caddy reload --config /etc/caddy/Caddyfile
+docker exec caddy grep <app-host> /etc/caddy/Caddyfile   # confirm the container SEES the change
+docker compose up -d caddy                              # recreate if it does not
 ```
+
+The Caddyfile is a single-file bind mount and Docker binds single files by inode. Any editor that
+writes a temp file and renames it swaps the inode and silently detaches the mount, after which
+`caddy reload` re-reads the stale file, reports success, and changes nothing. Hit for real
+2026-08-11.
 
 ---
 
 ## 5. First login
 
-1. Navigate to `https://<old-app-host>`
+1. Navigate to `https://<app-host>`
 2. Log in with `ADMIN_USERNAME` and `ADMIN_PASSWORD` you set in `.env.local`
 3. Go to `/admin/invites` to create invite codes for other users
 
@@ -146,7 +154,7 @@ docker exec caddy caddy reload --config /etc/caddy/Caddyfile
 ## 6. Adding users
 
 1. Admin goes to `/admin/invites` → Create an invite code
-2. Copy the link: `https://<old-app-host>/invite/{code}`
+2. Copy the link: `https://<app-host>/invite/{code}`
 3. Send it to the user
 4. User visits the link, fills in username and password, account is created
 
@@ -156,14 +164,19 @@ Invite codes can be set with a max-use count and expiry date.
 
 ## 7. Development
 
+⚠️ **There is no node, npm or npx on this host**, so there is no local dev-server workflow.
+Run tooling through a container instead:
+
 ```bash
-cd /home/minijoe/dev/unified-frontend/app
-npm install
-npm run dev        # starts on http://localhost:3001
+docker run --rm -v /home/joe/unified-media/app:/app -w /app node:24-slim \
+  sh -c 'node_modules/.bin/tsc --noEmit'
+docker run --rm -v /home/joe/unified-media/app:/app -w /app node:24-slim \
+  sh -c 'node_modules/.bin/vitest run'
 ```
 
-For dev, set `DB_PATH=./unified.db` in `.env.local` (SQLite file in app directory). The admin
-account seeds on first start. Type-check with `npm run type-check`.
+To exercise the running app, drive the deployed container with
+`.claude/skills/run-unified-frontend/` — `./run.sh <flow>` for browser checks, `./api.sh <path>`
+for data checks (~60x faster, no browser).
 
 ---
 
@@ -229,7 +242,7 @@ To override, use Playback tab → Aspect Ratio in the tools panel.
 ## 9. Upgrading
 
 1. Pull or copy new source
-2. Rebuild: `docker build -t unified-frontend:latest /home/minijoe/dev/unified-frontend/app`
+2. Rebuild: `docker build -t unified-frontend:latest /home/joe/unified-media/app`
 3. Restart: `docker compose up -d --force-recreate unified-frontend`
 4. Migrations run automatically on startup — no manual SQL needed
 

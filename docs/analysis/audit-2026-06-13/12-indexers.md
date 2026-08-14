@@ -1,5 +1,7 @@
 # Audit 12 — Indexer Subsystem & Torznab Parsing (READ-ONLY)
 
+> **Note (2026-08-13):** paths, IPs and hostnames in this document were mechanically updated to match the rebuilt server. The findings, decisions and dates below are the original record and have not been altered.
+
 Scope: native indexer aggregation (`src/lib/indexer/*`), per-adapter correctness (eztv, nyaa, yts),
 Torznab XML parsing, indexer admin API (`/api/indexer/*`), the indexer bridge proxy (`/api/the indexer bridge/[...path]`),
 and the internal `/api/torznab/search` fan-out endpoint. Notifications/SMTP skipped per instructions.
@@ -73,7 +75,7 @@ Next.js route reachable at `/api/torznab/search?q=...`. It calls `searchAllIndex
 (`:32`), which queries every enabled public tracker (YTS, EZTV, Nyaa, plus any Torznab indexers).
 There is no rate limit and no origin check.
 
-**Why it matters:** Anyone who can reach the app (and `<old-app-host>` is internet-exposed via
+**Why it matters:** Anyone who can reach the app (and `<app-host>` is internet-exposed via
 BunkerWeb/Caddy) can drive unlimited outbound queries to public trackers through the server's IP.
 This is a query-amplification vector and a real tracker-ban risk: trackers throttle/ban source IPs
 that hammer them, and here the source IP is the home server's. An attacker can also use it as a blind

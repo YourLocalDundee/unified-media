@@ -1,5 +1,7 @@
 # unified-frontend Stack Audit
 
+> **Note (2026-08-13):** paths, IPs and hostnames in this document were mechanically updated to match the rebuilt server. The findings, decisions and dates below are the original record and have not been altered.
+
 Generated: 2026-06-04
 
 ---
@@ -50,35 +52,35 @@ All variables the app reads via `process.env.*` in `src/`, cross-referenced with
 | `ADMIN_PASSWORD` | `Pr1v@teS3rv!2026` | Required | Yes | Process exits if unset on first DB init. |
 | `ADMIN_USERNAME` | `admin` | Required | Yes | Process exits if unset on first DB init. |
 | `LEGACY_SUBS_API_KEY` | `72ca2d1b280e574e3cd62d34b1893fac` | Required (if the subtitle automation suite used) | Yes | |
-| `LEGACY_SUBS_URL` | `http://<legacy-lan-ip>:6767` | Required (if the subtitle automation suite used) | Yes | |
+| `LEGACY_SUBS_URL` | `http://<lan-ip>:6767` | Required (if the subtitle automation suite used) | Yes | |
 | `DB_PATH` | `./unified.db` (.env.local) / `/data/unified.db` (compose override) | Required | Yes | Compose sets this to `/data/unified.db`, overriding .env.local value. |
 | `DOWNLOAD_CLIENT` | `qbittorrent` | Optional | Yes (section 3) | Defaults to `qbittorrent` in code. |
 | `EMAIL_VERIFICATION_REQUIRED` | **NOT SET** | Optional | **No** | Controls whether email verification is enforced at registration. When absent, treated as `false`. See Missing Vars section. |
 | `FFMPEG_PATH` | **NOT SET** | Optional | **No** | Path to ffmpeg binary. Defaults to `ffmpeg` (uses PATH). ffmpeg is installed in the Dockerfile so the default works. |
 | `FLARESOLVERR_URL` | **NOT SET** | Optional | Yes (section 7, CLAUDE.md mentions FlareSolverr) | Defaults to `http://flaresolverr:8191` in code. flaresolverr container exists in compose. |
 | `LEGACY_MEDIA_API_KEY` | `20f7a0a60bc54ad995078b56f4f3a2d0` | Required | Yes | |
-| `LEGACY_MEDIA_URL` | `http://<legacy-lan-ip>:8096` | Required | Yes | |
+| `LEGACY_MEDIA_URL` | `http://<lan-ip>:8096` | Required | Yes | |
 | `LEGACY_MEDIA_USER_ID` | `9A4FADEB-0255-4BF6-9871-30859DA390F8` | Required (Phase 3+) | Yes (section 14) | |
 | `MEDIA_ROOTS` | `/media/movies:/media/tv` | Required (Phase 5) | Yes (section 14) | |
-| `NEXT_PUBLIC_APP_URL` | `https://<old-app-host>` | Required | Yes | |
+| `NEXT_PUBLIC_APP_URL` | `https://<app-host>` | Required | Yes | |
 | `NEXT_RUNTIME` | **NOT SET** | Optional (runtime internal) | No | Read by Next.js runtime itself, not app-level code. Can be ignored. |
 | `NODE_ENV` | **NOT SET** in .env.local (set to `production` in Dockerfile) | Optional | No | Standard Node/Next.js var; Dockerfile sets it correctly. |
 | `OPENSUBTITLES_API_KEY` | *(empty string)* | Required (Phase 4) | Yes (section 14) | Set in .env.local but empty. Phase 4 subtitle fetching will fail silently or error without this. |
 | `a retired env var` | `d6b7242607a642cebc0e727d3c99bbf0` | Required (if the indexer bridge used) | Yes | |
-| `a retired env var` | `http://<legacy-lan-ip>:9696` | Required (if the indexer bridge used) | Yes | |
+| `a retired env var` | `http://<lan-ip>:9696` | Required (if the indexer bridge used) | Yes | |
 | `QBIT_PASSWORD` | `WOskXN!234` | Required | Yes (as `QBT_PASSWORD` in CLAUDE.md) | See naming discrepancy note below. |
 | `QBIT_URL` | **NOT SET** | Optional | Yes (as `QBT_URL` in CLAUDE.md) | Defaults to `http://qbittorrent:8080` in `config.ts`. **See naming discrepancy note below.** |
 | `QBIT_USERNAME` | `admin` | Required | Yes (as `QBT_USERNAME` in CLAUDE.md) | See naming discrepancy note below. |
 | `QBT_URL` | **NOT SET** | Optional | Yes | Used only in `api/admin/server-status/route.ts` health check. Defaults to `http://qbittorrent:8080`. Different from `QBIT_URL` used by `download-client/config.ts`. |
 | `LEGACY_MOVIE_API_KEY` | `f055b2b05b884ce9a712edaaed3cab46` | Required (if the movie automation suite used) | Yes | |
-| `LEGACY_MOVIE_URL` | `http://<legacy-lan-ip>:7878` | Required (if the movie automation suite used) | Yes | |
-| `SMTP_FROM` | `Unified Media <no-reply@<old-app-host>>` | Optional | Yes (section 7) | Has a value even without SMTP creds — used as the From address if SMTP is configured later. |
+| `LEGACY_MOVIE_URL` | `http://<lan-ip>:7878` | Required (if the movie automation suite used) | Yes | |
+| `SMTP_FROM` | `Unified Media <no-reply@<app-host>>` | Optional | Yes (section 7) | Has a value even without SMTP creds — used as the From address if SMTP is configured later. |
 | `SMTP_HOST` | *(empty string)* | Optional | Yes (section 7) | Empty = dev fallback mode (code to stdout). |
 | `SMTP_PASS` | *(empty string)* | Optional | Yes (section 7) | |
 | `SMTP_PORT` | `587` | Optional | Yes (section 7) | |
 | `SMTP_USER` | *(empty string)* | Optional | Yes (section 7) | |
 | `LEGACY_TV_API_KEY` | `b83a210a3d14415b9c5a37bc9bfa07cc` | Required (if the TV automation suite used) | Yes | |
-| `LEGACY_TV_URL` | `http://<legacy-lan-ip>:8989` | Required (if the TV automation suite used) | Yes | |
+| `LEGACY_TV_URL` | `http://<lan-ip>:8989` | Required (if the TV automation suite used) | Yes | |
 | `SUBTITLE_LANGUAGES` | `en` | Optional | Yes (section 14) | |
 | `SUBTITLE_MEDIA_ROOT` | **NOT SET** | Optional | Yes (section 14) | Required for writing .srt files to disk. Without it, downloaded subtitles cannot be saved. |
 | `TMDB_ACCESS_TOKEN` | *(JWT set)* | Required (Phase 5) | Yes (section 14) | |
@@ -189,11 +191,11 @@ The actual `unified-frontend` service in `docker-compose.yml` differs from the e
 
 | Aspect | CLAUDE.md example | Actual compose | Notes |
 |---|---|---|---|
-| Image source | `image: unified-frontend:latest` | `build: context: /home/minijoe/dev/unified-frontend/app` | Compose builds locally — correct per CLAUDE.md's later note about `docker compose build` |
+| Image source | `image: unified-frontend:latest` | `build: context: /home/joe/unified-media/app` | Compose builds locally — correct per CLAUDE.md's later note about `docker compose build` |
 | DB_PATH override | Not shown | `environment: DB_PATH=/data/unified.db` | Correct — overrides `.env.local`'s `./unified.db` |
-| env_file | Not shown | `env_file: /home/minijoe/dev/unified-frontend/app/.env.local` | All .env.local vars are passed in |
+| env_file | Not shown | `env_file: /home/joe/unified-media/app/.env.local` | All .env.local vars are passed in |
 | Volumes | `none required` in Phase 1 note | `unified-db:/data`, `/mnt/media/movies:/media/movies:ro`, `/mnt/media/tv:/media/tv:ro` | Correct for Phase 5+ media server |
-| Port mapping | `<legacy-lan-ip>:3000:3000` | No port mapping (internal only via Caddy) | Caddy handles external routing — no exposed port needed |
+| Port mapping | `<lan-ip>:3000:3000` | No port mapping (internal only via Caddy) | Caddy handles external routing — no exposed port needed |
 | Watchtower | `enable=false` | `enable=false` | Match |
 | Memory limit | Not shown | `mem_limit: 1g` | Reasonable for a Node app with SQLite |
 | Health check | Not shown | `node -e require('http').get(...)` on `:3001/api/health` | Correct port |

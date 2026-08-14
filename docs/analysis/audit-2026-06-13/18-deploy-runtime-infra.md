@@ -1,13 +1,15 @@
 # Audit 18 — Deployment / Runtime / Infra, Repo Hygiene, WebSocket Wiring
 
-READ-ONLY cross-cutting pass. Repo: `/home/minijoe/dev/unified-frontend` (branch `feat/party-play`).
+> **Note (2026-08-13):** paths, IPs and hostnames in this document were mechanically updated to match the rebuilt server. The findings, decisions and dates below are the original record and have not been altered.
+
+READ-ONLY cross-cutting pass. Repo: `/home/joe/unified-media` (branch `feat/party-play`).
 Stack: Next.js 16 standalone, React 19, better-sqlite3, node-cron, chokidar, `ws` (party play on dedicated port 3002), Docker behind BunkerWeb + Caddy.
 
 ## Summary
 
 The runtime init in `app/src/instrumentation.ts` is correctly guarded against double-registration: every background subsystem (automation cron, subtitle cron, chokidar scanner, party WS server) uses a module-level or `globalThis`-pinned "started" flag, and `register()` only runs in the Node runtime. The party-play WebSocket design (dedicated `ws` server on port 3002 in the same process, `globalThis` store singleton) is sound and matches the documented architecture in CLAUDE.md §16. Repo hygiene is good: `.env.local`, `unified.db`, `tsconfig.tsbuildinfo`, `app-backup-2026-05-26-1127/`, `sources/`, and `node_modules` are all correctly gitignored and NOT tracked.
 
-The serious problems are in the deploy surface, not the application code. (1) The committed Docker healthcheck calls `curl`, which is not installed in the runner image, so the container will report **unhealthy forever**. (2) The committed `caddy.fragment` and `docker-compose.fragment.yml` are **stale** — they have no `/api/party/ws` route and no path to port 3002, so a deploy built from the repo's own reference files has party play broken at the edge (the working config exists only as prose in CLAUDE.md). (3) **No SIGTERM/graceful-shutdown handler exists anywhere** — cron, chokidar, ws sockets, in-flight ffmpeg, and the SQLite handle are all hard-killed on `docker stop`. (4) Transcoding infra is under-provisioned in compose: no `/dev/dri`, no render `group_add`, no `/transcode` volume, `TRANSCODE_CACHE` defaults to ephemeral `/tmp`, and `mem_limit: 512m` is far too low for ffmpeg. (5) CSP `connect-src` hardcodes `wss://<old-app-host>` + `ws://localhost:3002` in `next.config.ts`, so any other deploy hostname is CSP-blocked from connecting the party socket. The 73 MB standalone trace is confirmed but is driven by `@img`/sharp (33 MB) + `next` (16 MB), **not** `transcode.ts` as a sibling audit claimed.
+The serious problems are in the deploy surface, not the application code. (1) The committed Docker healthcheck calls `curl`, which is not installed in the runner image, so the container will report **unhealthy forever**. (2) The committed `caddy.fragment` and `docker-compose.fragment.yml` are **stale** — they have no `/api/party/ws` route and no path to port 3002, so a deploy built from the repo's own reference files has party play broken at the edge (the working config exists only as prose in CLAUDE.md). (3) **No SIGTERM/graceful-shutdown handler exists anywhere** — cron, chokidar, ws sockets, in-flight ffmpeg, and the SQLite handle are all hard-killed on `docker stop`. (4) Transcoding infra is under-provisioned in compose: no `/dev/dri`, no render `group_add`, no `/transcode` volume, `TRANSCODE_CACHE` defaults to ephemeral `/tmp`, and `mem_limit: 512m` is far too low for ffmpeg. (5) CSP `connect-src` hardcodes `wss://<app-host>` + `ws://localhost:3002` in `next.config.ts`, so any other deploy hostname is CSP-blocked from connecting the party socket. The 73 MB standalone trace is confirmed but is driven by `@img`/sharp (33 MB) + `next` (16 MB), **not** `transcode.ts` as a sibling audit claimed.
 
 ## Counts by severity
 
@@ -59,8 +61,8 @@ The serious problems are in the deploy surface, not the application code. (1) Th
 ### A18-H3 — CSP connect-src hardcodes the production WS origin; non-default hostnames are blocked
 - **Severity:** High
 - **Path:** `app/next.config.ts:39`
-- **What's wrong:** `connect-src 'self' http://ip-api.com wss://<old-app-host> ws://localhost:3002`. The party socket URL is computed at runtime per environment (`app/src/lib/party/socket-url.ts`) and the WS-origin allowlist is env-driven (`allowedWsOrigins()` reads `NEXT_PUBLIC_APP_URL`), but the browser-enforced CSP that must *permit* the connection is a static literal. `ws://localhost:3002` is a dev-only value baked into the production header.
-- **Why it matters:** Any deployment that is not literally `<old-app-host>` (rename, staging host, second instance, IP access) will have the WS handshake blocked by CSP before it leaves the browser — party play breaks with an opaque console error and no server-side trace. The leftover `ws://localhost:3002` also slightly widens prod CSP for no production benefit. It is also a single-source-of-truth violation against `NEXT_PUBLIC_APP_URL`.
+- **What's wrong:** `connect-src 'self' http://ip-api.com wss://<app-host> ws://localhost:3002`. The party socket URL is computed at runtime per environment (`app/src/lib/party/socket-url.ts`) and the WS-origin allowlist is env-driven (`allowedWsOrigins()` reads `NEXT_PUBLIC_APP_URL`), but the browser-enforced CSP that must *permit* the connection is a static literal. `ws://localhost:3002` is a dev-only value baked into the production header.
+- **Why it matters:** Any deployment that is not literally `<app-host>` (rename, staging host, second instance, IP access) will have the WS handshake blocked by CSP before it leaves the browser — party play breaks with an opaque console error and no server-side trace. The leftover `ws://localhost:3002` also slightly widens prod CSP for no production benefit. It is also a single-source-of-truth violation against `NEXT_PUBLIC_APP_URL`.
 - **Suggested fix:** Build `connect-src` from `process.env.NEXT_PUBLIC_APP_URL` inside `next.config.ts` (derive the `wss://<host>` and, in dev only, the `ws://<host>:3002`). Gate the localhost entry on `NODE_ENV !== 'production'`. Keep it consistent with `allowedWsOrigins()` and `getPartySocketUrl()`.
 
 ### A18-H4 — `.env.local.example` is stale/misleading vs the real env contract (download-client keys, AUTH_SECRET)
@@ -143,8 +145,8 @@ The serious problems are in the deploy surface, not the application code. (1) Th
 
 ### A18-L4 — Image `next.config.ts` remotePatterns pin a hardcoded LAN IP for the old media server images
 - **Severity:** Low
-- **Path:** `app/next.config.ts:8-13` (`hostname: '<legacy-lan-ip>', port: '8096'`)
-- **What's wrong:** `next/image` `remotePatterns` hardcodes `http://<legacy-lan-ip>:8096/Items/**`. This matches the documented the old media server host-network IP, so it works for this deployment, but it is environment-specific config living in source rather than env.
+- **Path:** `app/next.config.ts:8-13` (`hostname: '<lan-ip>', port: '8096'`)
+- **What's wrong:** `next/image` `remotePatterns` hardcodes `http://<lan-ip>:8096/Items/**`. This matches the documented the old media server host-network IP, so it works for this deployment, but it is environment-specific config living in source rather than env.
 - **Why it matters:** A deployment with a different the old media server host (or container-name access) silently fails image optimization (Next blocks unconfigured remote hosts with a 400). Tightly coupled to one homelab. Low impact since the app is single-homelab.
 - **Suggested fix:** Acceptable for a single-host homelab; if portability is wanted, drive the allowed image host from `LEGACY_MEDIA_URL`'s host at build time. Note `media-src`/`img-src` CSP would also need to match.
 

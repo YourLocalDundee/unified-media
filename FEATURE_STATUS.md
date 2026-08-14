@@ -1,6 +1,6 @@
 # Feature Status
 
-Audit date: 2026-06-04. Last updated: 2026-06-13 (full read-only audit correction appended below; see `analysis/audit-2026-06-13/`). Verified against `/home/minijoe/dev/unified-frontend/app/src/`.
+Audit date: 2026-06-04. Last updated: 2026-06-13 (full read-only audit correction appended below; see `analysis/audit-2026-06-13/`). Verified against `/home/joe/unified-media/app/src/`.
 
 Legend:
 - `[x]` Done — file exists and implements the feature
@@ -200,15 +200,15 @@ over the `[x]`/`[!]` flags in the phase checklist below (left as-written for his
 ## Infrastructure
 
 ### BunkerWeb / Edge Stack
-- [x] `<old-app-host>_USE_REVERSE_PROXY=yes` set in edge compose
-- [x] `<old-app-host>_REVERSE_PROXY_HOST=http://caddy:8080` — uses correct `REVERSE_PROXY_HOST` (not `REVERSE_PROXY_URL`)
-- [x] `<old-app-host>_USE_BLACKLIST=no` — IP reputation blocklist disabled
-- [x] `<old-app-host>_USE_MODSECURITY=no` — ModSecurity/CRS disabled for this domain
-- [x] `<old-app-host>_USE_BAD_BEHAVIOR=no`
-- [x] `<old-app-host>_USE_CROWDSEC=no`
-- [x] `<old-app-host>_USE_DNSBL=no`
-- [x] `<old-app-host>_USE_GZIP=yes`
-- [x] `<old-app-host>_ALLOWED_METHODS=GET|POST|PUT|DELETE|PATCH|OPTIONS|HEAD`
+- [x] `<app-host>_USE_REVERSE_PROXY=yes` set in edge compose
+- [x] `<app-host>_REVERSE_PROXY_HOST=http://caddy:8080` — uses correct `REVERSE_PROXY_HOST` (not `REVERSE_PROXY_URL`)
+- [x] `<app-host>_USE_BLACKLIST=no` — IP reputation blocklist disabled
+- [x] `<app-host>_USE_MODSECURITY=no` — ModSecurity/CRS disabled for this domain
+- [x] `<app-host>_USE_BAD_BEHAVIOR=no`
+- [x] `<app-host>_USE_CROWDSEC=no`
+- [x] `<app-host>_USE_DNSBL=no`
+- [x] `<app-host>_USE_GZIP=yes`
+- [x] `<app-host>_ALLOWED_METHODS=GET|POST|PUT|DELETE|PATCH|OPTIONS|HEAD`
 - [x] Settings present in both service definitions (BunkerWeb scheduler + main container)
 
 ### Email Verification

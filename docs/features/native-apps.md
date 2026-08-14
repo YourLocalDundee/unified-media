@@ -3,17 +3,17 @@
 Turns Unified Media into an installable phone app (Android + iOS) and, eventually, a real app on
 Android TV/Fire TV/Google TV plus Chromecast casting. **6-phase plan, only Phase 1 shipped so
 far** (2026-07-14). Full phase-by-phase design (file-level detail, cost/effort table, spikes to
-run before deeper investment) lives at `/home/minijoe/.claude/plans/sorted-riding-popcorn.md` —
+run before deeper investment) lives at `/home/joe/.claude/plans/sorted-riding-popcorn.md` —
 this doc is the condensed, durable version of what actually landed.
 
 ## Architecture: one app, thin delivery shells
 
-The Next.js site (`<old-app-host>`) stays the single source of truth. Phone/TV "apps" are
+The Next.js site (`<app-host>`) stays the single source of truth. Phone/TV "apps" are
 Capacitor shells whose WebView is pointed at the **live production URL** via `server.url` in
 `capacitor.config.ts`, instead of loading a bundled static build. Consequences, all deliberate:
 
 - The WebView's cookie jar and `Origin` header are indistinguishable from mobile Chrome/Safari
-  hitting `<old-app-host>` — the existing cookie-session auth (`src/lib/dal.ts`) and CSRF
+  hitting `<app-host>` — the existing cookie-session auth (`src/lib/dal.ts`) and CSRF
   check (`verifyOrigin()` in `src/lib/csrf.ts`, which allowlists `NEXT_PUBLIC_APP_URL`) work
   **completely unmodified**. No auth rework for phone/TV wrappers themselves.
 - Ordinary web deploys are instantly live in every installed app — no APK/IPA rebuild needed
@@ -27,7 +27,7 @@ Capacitor shells whose WebView is pointed at the **live production URL** via `se
 
 **New directory, sibling to `app/`, outside the Docker build context:**
 ```
-/home/minijoe/dev/unified-frontend/
+/home/joe/unified-media/
   app/            # existing Next.js app — untouched, still the sole Docker build context
   native/         # Capacitor project root (own package.json, only @capacitor/* deps)
     capacitor.config.ts
@@ -37,7 +37,7 @@ Capacitor shells whose WebView is pointed at the **live production URL** via `se
 web rebuild and vice versa — the `deploy-unified-frontend` skill needed zero changes.
 
 **`native/capacitor.config.ts`:** `appId: dev.minijoe.unified`, `appName: Unified Media`,
-`server: { url: 'https://<old-app-host>', cleartext: false }`. Capacitor still requires a
+`server: { url: 'https://<app-host>', cleartext: false }`. Capacitor still requires a
 non-empty `webDir` to scaffold platform projects even though it's unused at runtime in `server.url`
 mode — `native/www/index.html` is a placeholder with a comment explaining why.
 
@@ -109,5 +109,5 @@ Full detail for each is in the plan file; summarized here only so this doc stays
 - `docs/features/pwa-notifications.md` — the existing installable-PWA path (already shipped,
   separate from this Capacitor effort; the two are complementary, not redundant — PWA installs from
   a browser with zero native tooling, Capacitor gives a real APK/IPA with native APIs).
-- `/home/minijoe/.claude/plans/sorted-riding-popcorn.md` — the original full plan (architecture
+- `/home/joe/.claude/plans/sorted-riding-popcorn.md` — the original full plan (architecture
   rationale, file-level design for every phase, cost/effort table).

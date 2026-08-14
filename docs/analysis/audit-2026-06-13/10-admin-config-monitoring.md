@@ -1,5 +1,7 @@
 # A10 — Admin Config & Monitoring Audit (2026-06-13)
 
+> **Note (2026-08-13):** paths, IPs and hostnames in this document were mechanically updated to match the rebuilt server. The findings, decisions and dates below are the original record and have not been altered.
+
 Scope: admin config UIs (`/admin/server`, `monitoring`, `settings`, `media-server`, `subtitles`,
 `requests`, `automation`, `automation/bridge`, `indexers`, `quality-profiles`) and their direct
 endpoints (`/api/admin/settings`, `monitoring`, `server-status`, `/api/health`,
@@ -111,7 +113,7 @@ so server-to-server callers are unaffected.
 1. **Env var mismatch:** it reads `process.env.QBT_URL`, but the whole app standardises on `UMT_URL`
    (`src/lib/download-client/config.ts:18`, CLAUDE.md `.env.local` block). `QBT_URL` is never
    documented or set, so it always falls back to the hardcoded `http://qbittorrent:8080`. In dev
-   (`UMT_URL=http://<legacy-lan-ip>:8080`) the probe hits the wrong host and reports Offline.
+   (`UMT_URL=http://<lan-ip>:8080`) the probe hits the wrong host and reports Offline.
 2. **Unauthenticated probe:** `checkService` does a bare `fetch('…/api/v2/app/version')` with no SID
    cookie. qBittorrent's Web API requires a session cookie; the rest of the app goes through
    `qbitFetch`/`session.ts` for exactly this reason. Without "bypass auth for localhost/subnet"

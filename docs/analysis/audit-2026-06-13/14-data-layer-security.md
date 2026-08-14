@@ -1,5 +1,7 @@
 # Audit 14 — Data Layer, DB, and Cross-Cutting Security
 
+> **Note (2026-08-13):** paths, IPs and hostnames in this document were mechanically updated to match the rebuilt server. The findings, decisions and dates below are the original record and have not been altered.
+
 **Scope:** `src/lib/dal.ts`, `src/lib/db/{index,migrations,seed}.ts`, `src/lib/utils.ts`, `src/lib/rate-limit.ts`, `src/lib/safe-redirect.ts`, `src/lib/csrf.ts`, `src/lib/settings/index.ts`, plus a repo-wide security sweep across `src/`.
 **Date:** 2026-06-13 · **Mode:** READ-ONLY · **App:** unified-frontend v0.9.5 (Next.js 16, better-sqlite3, TypeScript)
 
@@ -68,7 +70,7 @@ The serious problems are **authorization gaps on mutating API routes**, not the 
 ### A14-H2 — `verifyOrigin()` uses a bypassable prefix match (and trusts missing Origin)
 **Severity:** HIGH
 **File:** `src/lib/csrf.ts:11-12`
-**What's wrong:** `ALLOWED_ORIGINS.some(o => origin === o || origin.startsWith(o))`. The `startsWith` arm means an attacker origin such as `https://<old-app-host>.evil.com` or `http://localhost:3001.evil.com` **passes** (it begins with an allowed string — an Origin has no path delimiter, so the host runs straight into the attacker domain). Also, a missing `Origin` header returns `true` (allow).
+**What's wrong:** `ALLOWED_ORIGINS.some(o => origin === o || origin.startsWith(o))`. The `startsWith` arm means an attacker origin such as `https://<app-host>.evil.com` or `http://localhost:3001.evil.com` **passes** (it begins with an allowed string — an Origin has no path delimiter, so the host runs straight into the attacker domain). Also, a missing `Origin` header returns `true` (allow).
 **Why it matters:** Even the 12 routes that DO call `verifyOrigin` are partially defeatable, so fixing A14-H1 by calling this helper would still leave a hole. `startsWith` on an Origin is a well-known CSRF bypass.
 **Suggested fix:** Compare full origins for exact equality only (`origin === o`); delete the `startsWith`. Optionally cross-check against `Host`/`X-Forwarded-Host`.
 

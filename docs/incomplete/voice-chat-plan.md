@@ -221,7 +221,7 @@ deliberate per-session toggle ON.
 
 ## 6. coturn deployment (edge stack)
 
-Edge stack confirmed at `/opt/docker/compose/edge/docker-compose.yml` (alongside BunkerWeb/Caddy).
+Edge stack confirmed at `/home/joe/docker/edge/docker-compose.yml` (alongside BunkerWeb/Caddy).
 coturn is the same population that needed the BunkerWeb cellular exceptions.
 
 **Operational cost (informed-decision callout):** a new long-running service, an open relay port
@@ -269,7 +269,7 @@ Two load-bearing edits found during investigation:
    including self.** `getUserMedia({audio:true})` is blocked by policy before our gate runs. Change
    to `microphone=(self)`. (Leave `camera=()` — no video in v1.) This is the single most important
    header change; without it the feature cannot work.
-2. **`connect-src`** currently `'self' http://ip-api.com wss://<old-app-host> ws://localhost:3002`.
+2. **`connect-src`** currently `'self' http://ip-api.com wss://<app-host> ws://localhost:3002`.
    Browsers match ICE server URLs against `connect-src`. Add the STUN/TURN host:
    `stun:<turn-host>:3478 turn:<turn-host>:3478`. (Schemes `stun:`/`turn:` are matched as
    the host source; include them so cellular TURN relay isn't CSP-blocked.)
@@ -343,7 +343,7 @@ after each pair; update this doc's checklist as items land.
 
 ### Config / infra (not app code, tracked here)
 10. `app/next.config.ts` — `Permissions-Policy microphone=(self)`; `connect-src` += STUN/TURN host.
-11. `/opt/docker/compose/edge/docker-compose.yml` + `turnserver.conf` — coturn service, secret via
+11. `/home/joe/docker/edge/docker-compose.yml` + `turnserver.conf` — coturn service, secret via
     env, narrowed relay port range.
 
 ### Docs on ship

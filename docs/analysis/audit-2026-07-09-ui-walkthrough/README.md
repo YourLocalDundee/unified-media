@@ -1,9 +1,11 @@
 # UI Walkthrough Audit — 2026-07-09
 
+> **Note (2026-08-13):** paths, IPs and hostnames in this document were mechanically updated to match the rebuilt server. The findings, decisions and dates below are the original record and have not been altered.
+
 Interactive click-through audit driven via `.claude/skills/run-unified-frontend/driver.mjs`
 (headless Chromium/Playwright). Every row below was actually navigated/clicked in a live dev
 server (`npm run dev`, port 3001) against the real dev DB (`app/unified.db`) and the real
-LAN services in `.env.local` (the old request app/the external automation services at <legacy-lan-ip>; qBittorrent/UMT confirmed
+LAN services in `.env.local` (the old request app/the external automation services at <lan-ip>; qBittorrent/UMT confirmed
 unreachable from this container per the skill's documented gotcha).
 
 **Destructive-action policy (per explicit instruction):** mutating actions were actually executed,
