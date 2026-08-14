@@ -17,17 +17,22 @@ const navItems = [
   { href: '/browse', icon: Film, label: 'Browse' },
   { href: '/library', icon: Library, label: 'Library' },
   { href: '/requests', icon: ClipboardList, label: 'Requests' },
-  // Downloads (qBittorrent queue) is admin-only — the /downloads route and /api/qbit proxy are both
+  // Downloads (UMT queue) is admin-only — the /downloads route and /api/qbit proxy are both
   // admin-gated, so the link is hidden from regular users.
   { href: '/downloads', icon: Download, label: 'Downloads', adminOnly: true },
 ]
 
 // Isolated into its own component so it can be wrapped in a Suspense boundary
 // (Next.js requires client hooks like usePathname to be in a Suspense subtree on static pages).
-function SidebarNav({ sidebarOpen }: { sidebarOpen: boolean }) {
+// `showLabels` is the Display pref ("Sidebar → Show Labels"); it is independent of the
+// collapse state. Labels render only when the sidebar is open AND the pref allows them, so
+// turning the pref off gives an icon-only nav at full width. Whenever the text is absent —
+// for either reason — the link keeps its `title` so the tooltip still names the destination.
+function SidebarNav({ sidebarOpen, showLabels }: { sidebarOpen: boolean; showLabels: boolean }) {
   const pathname = usePathname()
   const { user } = useAuth()
   const items = navItems.filter((item) => !item.adminOnly || user?.role === 'admin')
+  const labelled = sidebarOpen && showLabels
 
   function isActive(href: string): boolean {
     if (href === '/') return pathname === '/'
@@ -46,10 +51,10 @@ function SidebarNav({ sidebarOpen }: { sidebarOpen: boolean }) {
             isActive(href) && 'bg-primary/10 text-primary',
             !sidebarOpen && 'justify-center px-2',
           )}
-          title={!sidebarOpen ? label : undefined}
+          title={!labelled ? label : undefined}
         >
           <Icon className="h-5 w-5 flex-shrink-0" />
-          {sidebarOpen && <span>{label}</span>}
+          {labelled && <span>{label}</span>}
         </Link>
       ))}
     </nav>
@@ -95,7 +100,7 @@ export function Sidebar() {
       </div>
 
       <Suspense fallback={<nav className="flex flex-1 flex-col gap-1 p-2" />}>
-        <SidebarNav sidebarOpen={sidebarOpen} />
+        <SidebarNav sidebarOpen={sidebarOpen} showLabels={prefs.sidebarLabels} />
       </Suspense>
     </aside>
   )
