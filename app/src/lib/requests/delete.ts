@@ -68,7 +68,7 @@ export async function deleteRequestWithCascade(id: number): Promise<RequestDelet
     .map((h) => h.info_hash)
     .filter(Boolean)
 
-  // Best-effort torrent removal (torrent-only, keep files): don't abort the DB cleanup on a qBit error.
+  // Best-effort torrent removal (torrent-only, keep files): don't abort the DB cleanup on a UMT error.
   let torrentsDeleted = 0
   if (hashes.length > 0) {
     try {

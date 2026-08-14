@@ -49,7 +49,7 @@ A Next.js 16+ web app with a **fully native** media stack. Library browsing, pla
 aggregation, download automation, request management, and subtitle management all run inside the
 app. One external service is used at the edge:
 
-- **qBittorrent** — the download client that feeds the library (via the native automation layer)
+- **UMT (Unified Media Torrent)** — the download client that feeds the library (via the native automation layer)
 
 TMDB and OpenSubtitles are consumed as plain HTTP APIs (metadata and subtitles); everything else
 is in-process. The end goal is a single URL that handles the complete workflow: discover →
@@ -65,7 +65,7 @@ request → watch, with download status visible inline.
   system, subtitle system, and `indexers` table (managed only at `/admin/indexers`, seeded from
   the built-in catalog in `catalog.ts`) cover all of it. Plain Torznab rows can be added by hand
   for any tracker without a native adapter.
-- Not a torrent manager. qBittorrent's own WebUI still exists separately for power use.
+- Not a torrent manager. The download client's own WebUI still exists separately for power use.
 - Not a new backend in the cloud sense — all data is local.
 
 ---
@@ -95,7 +95,7 @@ chain on the pre-wipe server and is not in the rebuilt one — `*.<internal-doma
 only through Pi-hole, on the LAN and over the tailnet.
 
 The app calls backing services from **Next.js server components and API routes** — never directly
-from the browser. This keeps API keys and qBittorrent session cookies out of client code and avoids
+from the browser. This keeps API keys and UMT session cookies out of client code and avoids
 CORS entirely.
 
 ### Auth strategy (v0.4.0+)
@@ -143,14 +143,14 @@ All service-to-service calls run from Next.js server code. Credentials live in e
 
 | Service | Internal URL | Auth | Proxy route | Env |
 | ------- | ------------ | ---- | ----------- | --- |
-| qBittorrent | `http://gluetun:8080` (`/api/v2`) | cookie session (SID), held server-side | `/api/qbit/[...path]` (**`qbit`** with an `i`) | `UMT_URL`, `UMT_USERNAME`, `UMT_PASSWORD` |
+| UMT | `http://gluetun:8080` (`/api/v2`) | cookie session (SID), held server-side | `/api/qbit/[...path]` (**`qbit`** with an `i`) | `UMT_URL`, `UMT_USERNAME`, `UMT_PASSWORD` |
 
 **Indexers are fully native:** `/admin/indexers` (the `indexers` table) is the only indexer admin
 surface, seeded from the built-in catalog (`catalog.ts`) on boot — `INSERT OR IGNORE` protected by
 the `idx_indexers_name` unique index in `migrations.ts` (dedup + `CREATE UNIQUE INDEX`), so
 catalog re-seeds never double-insert and never touch rows an admin has disabled or edited.
 
-**qBittorrent (UMT layer):** the client abstraction is **UMT (Unified Media Torrent)**, configured
+**UMT layer:** the client abstraction is **UMT (Unified Media Torrent)**, configured
 via `UMT_*`. Cookie session is obtained by POSTing creds to `/api/v2/auth/login`; on 403,
 re-authenticate and retry once. See §7 for the v5 cookie-name gotcha and the `/api/qbit` vs `/api/qbt`
 typo trap. Full endpoint catalogue: `docs/features/torrent-system.md`.
@@ -168,7 +168,7 @@ typo trap. Full endpoint catalogue: `docs/features/torrent-system.md`.
 | Styling | Tailwind CSS v4 (no `tailwind.config.js`; `@tailwindcss/postcss`) + shadcn/ui |
 | Server state | TanStack Query (React Query) |
 | Client state | Zustand |
-| qBittorrent API | direct fetch via Next.js API routes |
+| UMT API | direct fetch via Next.js API routes |
 | Lint | ESLint + Prettier; react-hooks rules at **error** (see §7) |
 
 **Installed versions (v0.9.1 baseline):** `next ^16.2.7`, `react ^19.0.0`, `typescript ^6.0.3`,
@@ -187,7 +187,7 @@ app/app/
   library/page.tsx              # /library → owned-media grid
   library/[id]/page.tsx         # play-only detail (+ admin delete)
   requests/page.tsx             # /requests → request list
-  downloads/page.tsx            # /downloads → qBittorrent queue (+ TorrentDetailPanel)
+  downloads/page.tsx            # /downloads → UMT queue (+ TorrentDetailPanel)
   search/page.tsx               # /search → unified search (Library + Discover tabs)
   play/[id]/                    # video player route (chrome-suppressed)
   admin/…                       # monitoring, users/[id], indexers, automation, subtitles, media-server, quality-profiles
@@ -208,7 +208,7 @@ app/app/
 
 ## 6. Build Phases & Independence Build → see `docs/complete/FEATURES.md`
 
-The original five build phases (scaffolding → playback → requests → qBittorrent → unified UX) and
+The original five build phases (scaffolding → playback → requests → UMT → unified UX) and
 the seven-phase **Independence Build** (native indexer aggregation, download automation, request
 management, subtitle management, and media serving) are all shipped. The completed-phase tables,
 admin nav order, and independence-build env vars now live in `docs/complete/FEATURES.md`. The env
@@ -220,7 +220,7 @@ vars an agent needs day-to-day are in §8 below.
 
 These are the live "don't trip over this" rules. Kept in full because they're load-bearing.
 
-### qBittorrent
+### UMT (download client)
 - **Session auth (v5.2.1):** login returns `204` on success (code checks `res.ok`, fine). Cookie name
   changed `SID` → `QBT_SID_{port}`; both `session.ts` and `download-client/qbittorrent.ts` capture
   the pair via `/((?:QBT_SID_\d+|SID)=[^;]+)/`. On 403, re-auth + retry once. Flow stays server-side.
@@ -264,6 +264,13 @@ These are the live "don't trip over this" rules. Kept in full because they're lo
   only; it has no playable file. Never generate `/play/${id}` for `type = 'series'`. `play/[id]/page.tsx`
   redirects series IDs to `/browse/${id}` as a safety net, but upstream links must not produce them.
 - **Library vs Browse:** context determines destination (see §5).
+
+### Images
+- **TMDB images are protected by `next.config.ts` `images.remotePatterns`, not by any app route.**
+  `next/image` already same-origins every poster fetch through `/_next/image` and constrains the
+  upstream host/path via `remotePatterns` (`image.tmdb.org`, `www.themoviedb.org`, `/t/p/**`). Do not
+  add an image-proxy route — a dead one (`/api/media/image`) was deleted for exactly this reason; see
+  `docs/incomplete/open-issues.md` 2026-08-13.
 
 ### Automation scheduler
 - **node-cron 4.x swallows task errors into its own logger:** every `cron.schedule` body runs inside
@@ -316,7 +323,7 @@ Auth in dev is the same SQLite session system as prod — no header injection.
 
 ### `.env.local` (core keys)
 ```
-# UMT → qBittorrent
+# UMT (download client)
 UMT_URL=http://<lan-ip>:8080      UMT_USERNAME=<…>   UMT_PASSWORD=<…>
 # App + auth
 NEXT_PUBLIC_APP_URL=http://localhost:3001
@@ -431,7 +438,7 @@ cleanup job.
 
 ## 12. Unified Torrent System → see `docs/features/torrent-system.md`
 
-The full qBittorrent client UI (`/downloads` + `TorrentDetailPanel`), the `src/types/torrent.ts` type
+The full UMT client UI (`/downloads` + `TorrentDetailPanel`), the `src/types/torrent.ts` type
 catalogue (44-field `QbtTorrent`, 90-field `QbtPreferences`, etc.), the proxy multipart/query/re-auth
 fixes, the complete endpoint table (~40 ops), the 8-tab `/settings/torrent` page, the Files-tab piece
 map, and the create-torrent dialog are documented in `docs/features/torrent-system.md`. Live-page note:
@@ -440,7 +447,7 @@ map, and the create-torrent dialog are documented in `docs/features/torrent-syst
 
 **Downloads are admin-only:** `/downloads`, `/api/qbit` (GET+POST), `/settings/torrent`, the dashboard
 "Active Downloads" section, and the Downloads nav item are all gated to `role === 'admin'` — the GET
-proxy carries the server-side qBittorrent session cookie, so a regular authed user could otherwise
+proxy carries the server-side UMT session cookie, so a regular authed user could otherwise
 read the full queue/prefs via it. Detail: `docs/features/torrent-system.md`.
 
 ---

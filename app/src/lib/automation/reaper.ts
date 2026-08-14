@@ -22,15 +22,15 @@
  *     (preserves the original pile-up cleanup contract).
  *   - download stall class: ONLY a torrent linked to a still-'grabbed' monitored_item, ONLY in
  *     stalledDL / error / missingFiles, ONLY older than reaper_stall_minutes (default 120) measured
- *     from the LATER of grab_history.grabbed_at and qBit added_on. A 'downloading'/'forcedDL' torrent
+ *     from the LATER of grab_history.grabbed_at and UMT added_on. A 'downloading'/'forcedDL' torrent
  *     (actively moving, however slowly) never reaches this branch, and a completed/seeding torrent is
  *     in an UP state, so the importer's un-stick fallbacks are never disturbed.
  *
- * qBit access — the read stays a single raw qbitFetch because the normalized DownloadClient.Torrent
+ * UMT access — the read stays a single raw qbitFetch because the normalized DownloadClient.Torrent
  * omits peer counts and collapses stalledDL+stalledUP into one bucket, both of which this needs. No
  * NEW raw qbitFetch call is added; the destructive delete goes through DownloadClient.deleteTorrents.
  *
- * Called every 10 minutes by scheduler.ts (dynamic import keeps the qBit session module out of the
+ * Called every 10 minutes by scheduler.ts (dynamic import keeps the UMT session module out of the
  * initial server module graph). Non-fatal per item: one bad item logs and the loop continues.
  */
 
@@ -97,7 +97,7 @@ export async function reapStalledTorrents(): Promise<number> {
     const { qbitFetch } = await import('@/lib/qbittorrent/session')
     torrents = await qbitFetch<ReapTorrent[]>('/api/v2/torrents/info')
   } catch (err) {
-    process.stderr.write(`[reaper] qBittorrent unavailable: ${err instanceof Error ? err.message : String(err)}\n`)
+    process.stderr.write(`[reaper] UMT unavailable: ${err instanceof Error ? err.message : String(err)}\n`)
     return 0
   }
 
@@ -151,7 +151,7 @@ export async function reapStalledTorrents(): Promise<number> {
     const isStalledDownload = t.state === 'stalledDL'
     if (!isHardError && !isStalledDownload) continue
 
-    // Conservative age — require BOTH our grab time and qBit's add time older than the threshold
+    // Conservative age — require BOTH our grab time and UMT's add time older than the threshold
     // (start from the LATER of the two), so a freshly grabbed torrent is never reaped early.
     const start = Math.max(link.grabbedAt, addedMs)
     if (now - start <= stallThresholdMs) continue
@@ -179,7 +179,7 @@ export async function reapStalledTorrents(): Promise<number> {
     const safeName = t.name.replace(/[\r\n]/g, ' ')
     try {
       // Blocklist first (idempotent, local) so the failed release is gated out of the next search
-      // even if the qBit delete momentarily fails. Then remove the torrent via the DownloadClient
+      // even if the UMT delete momentarily fails. Then remove the torrent via the DownloadClient
       // interface — torrent-only (deleteFiles=false), the partial/zero data is abandoned.
       addToBlocklist(t.hash, safeName, reason)
       await client.deleteTorrents([t.hash], false)

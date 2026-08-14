@@ -257,13 +257,13 @@ export function deleteItem(id: number): boolean {
 // Recover a BitTorrent infohash from a magnet link's `xt=urn:btih:` parameter. Matches both the
 // 40-char hex (v1) and 32-char base32 forms. magnet/URL adds frequently don't surface the hash any
 // other way, and a hashless grab row strands the importer on its slower by-title fallback because it
-// can't query qBittorrent by hash (see importer.ts).
+// can't query UMT by hash (see importer.ts).
 const BTIH_RE = /urn:btih:([0-9a-fA-F]{40}|[2-7A-Z]{32})/i
 
 /**
  * Resolve the infohash to persist: prefer an explicit non-empty value, otherwise recover it from a
  * magnet in any of the provided URL sources. Returns '' only when no hash is available anywhere
- * (e.g. a .torrent download-URL whose hash qBittorrent only computes after the add) — those rows are
+ * (e.g. a .torrent download-URL whose hash UMT only computes after the add) — those rows are
  * handled by the importer's by-title fallback rather than a hash lookup.
  */
 function resolveInfoHash(

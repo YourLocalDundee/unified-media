@@ -1,4 +1,4 @@
-// qBittorrent API types — field names match the API response exactly so responses
+// UMT API types — field names match the API response exactly so responses
 // can be assigned without mapping.
 
 export type QbtTorrentState =

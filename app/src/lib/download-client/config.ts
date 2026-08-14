@@ -1,6 +1,6 @@
 // Configuration loader for the download client abstraction.
 // The active client type is chosen by the DOWNLOAD_CLIENT env var; it defaults
-// to 'umt' (qBittorrent). Each client reads its own *_URL / *_USERNAME / *_PASSWORD
+// to 'umt' (Unified Media Torrent). Each client reads its own *_URL / *_USERNAME / *_PASSWORD
 // vars, falling back to the UMT_* vars so a single-client deployment can keep using
 // the original UMT_* names regardless of which backend is selected.
 

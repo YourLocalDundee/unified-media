@@ -240,7 +240,7 @@ function DownloadProgress({ requestId }: { requestId: number }) {
     // A6-18: self-scheduling poll loop instead of a fixed setInterval so we can
     // (1) STOP once the item reaches a terminal state (complete/imported) and
     // (2) apply a modest backoff that grows the interval up to a cap while the
-    // download is still in progress, easing load on the qBit proxy.
+    // download is still in progress, easing load on the UMT proxy.
     let cancelled = false
     let timer: ReturnType<typeof setTimeout> | null = null
 
@@ -286,7 +286,7 @@ function DownloadProgress({ requestId }: { requestId: number }) {
     )
   }
 
-  // Torrent was grabbed but qBittorrent has no info yet (just submitted or already imported)
+  // Torrent was grabbed but UMT has no info yet (just submitted or already imported)
   if (data.progress === null && data.state === null) {
     return (
       <p className="text-xs text-zinc-400 mt-1">Grabbed — awaiting queue</p>

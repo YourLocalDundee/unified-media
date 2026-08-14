@@ -210,7 +210,7 @@ type FilterTab = 'all' | 'downloading' | 'seeding' | 'paused'
 
 function formatEta(eta: number, state: TorrentState): string {
   if (isTorrentComplete(state)) return 'Done'
-  // qBittorrent uses 8640000 (100 days) as the sentinel value for "unknown ETA"
+  // UMT uses 8640000 (100 days) as the sentinel value for "unknown ETA"
   if (eta < 0 || eta >= 8640000) return '∞'
   if (eta === 0) return 'Done'
   const h = Math.floor(eta / 3600)
@@ -1171,7 +1171,7 @@ export default function DownloadsPage() {
         <AddTorrentForm />
 
         {/* Create torrent (admin) — builds a .torrent from a local file/folder path via
-            qBittorrent's async torrent-creation task API. See CreateTorrentDialog. */}
+            UMT's async torrent-creation task API. See CreateTorrentDialog. */}
         <div className="mb-4">
           <button
             onClick={() => setShowCreateTorrent(true)}

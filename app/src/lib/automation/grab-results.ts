@@ -7,7 +7,7 @@ import type { GateReason } from './gates'
 export interface ScoredCandidate {
   result: TorznabResult
   score: number        // from scoreRelease(); 0 if 'Any' profile; null is converted to -1
-  selected: boolean    // true only for the result that was sent to qBittorrent
+  selected: boolean    // true only for the result that was sent to UMT
   // Hard-gate failures (feature 1). Empty/absent = passed all gates and is auto-grabbable.
   // A non-empty list means auto-pick skipped it; the interactive picker still lists it with
   // these reasons so the admin can see "why didn't this download" and override-grab anyway.

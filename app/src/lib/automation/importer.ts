@@ -1,19 +1,19 @@
 /**
- * Importer: bridges completed qBittorrent downloads into the native media library.
+ * Importer: bridges completed UMT downloads into the native media library.
  *
  * The gap this closes:
- *   - grabber.ts sends a torrent to qBittorrent
- *   - Primary path: use qBittorrent's setLocation API to move the completed torrent out of
+ *   - grabber.ts sends a torrent to UMT
+ *   - Primary path: use UMT's setLocation API to move the completed torrent out of
  *     the download directory and into the library, then trigger a scan so it appears
  *     immediately rather than waiting for the filesystem watcher.
- *   - Fallback path: if the torrent is no longer in qBittorrent (removed after completion),
+ *   - Fallback path: if the torrent is no longer in UMT (removed after completion),
  *     search the completed-downloads directory for a matching file/dir and hardlink/copy it
  *     into the library directly.
  *
  * PATH CONTRACT — read before changing any path in this file:
  *   Every container must mount the library tree at the SAME container path, and MEDIA_ROOTS
  *   must name the subdirectories inside it that the scanner indexes. Both are load-bearing.
- *   setLocation paths are resolved by qBittorrent, direct fs calls are resolved here, and the
+ *   setLocation paths are resolved by UMT, direct fs calls are resolved here, and the
  *   scanner only indexes MEDIA_ROOTS — so a path that is not spelled identically in all three
  *   places produces a silent failure, not an error: files land somewhere real but unwatched
  *   (or in a container's own writable layer, where they vanish on recreate) and the item never
@@ -21,8 +21,8 @@
  *   written out as literals, and why one function now serves both paths.
  *
  * Flow per item:
- *   grabbed monitored_item → find info_hash in grab_history → query qBit for torrent state
- *   → if complete → setLocation (qBit moves the file) → wait 2s → scanPath → mark imported
+ *   grabbed monitored_item → find info_hash in grab_history → query UMT for torrent state
+ *   → if complete → setLocation (UMT moves the file) → wait 2s → scanPath → mark imported
  *   → update media_requests to 'available'
  *
  * Called every 2 minutes by scheduler.ts.
@@ -35,13 +35,13 @@ import { updateItem } from './monitor'
 import { collectAvailableNotifications, notifyAll } from '@/lib/notify/available'
 import type { MonitoredItem } from './types'
 
-// qBit states that mean "download is complete, file is fully written"
+// UMT states that mean "download is complete, file is fully written"
 const COMPLETE_STATES = new Set([
   'uploading',
   'stalledUP',
   'forcedUP',
   'pausedUP',
-  'stoppedUP',   // qBit v5+
+  'stoppedUP',   // UMT v5+
   'queuedUP',
   'checkingUP',
 ])
@@ -54,7 +54,7 @@ const MEDIA_ROOTS = (process.env.MEDIA_ROOTS ?? '')
   .map((p) => path.resolve(p))
 
 // Where the download client leaves finished content, as seen from this container — and, per the
-// path contract above, from qBittorrent too. Override when the tree is mounted somewhere else.
+// path contract above, from UMT too. Override when the tree is mounted somewhere else.
 const DOWNLOADS_COMPLETE = path.resolve(
   process.env.DOWNLOADS_COMPLETE ?? '/srv/media/downloads/complete'
 )
@@ -74,7 +74,7 @@ function findMediaRoot(kind: 'movies' | 'tv'): string | undefined {
 }
 
 /**
- * Build the library directory a completed item belongs in. One function, because qBittorrent
+ * Build the library directory a completed item belongs in. One function, because UMT
  * and this container address the tree identically — see the path contract at the top.
  * Undefined means "no configured root for this media type"; do not substitute a default.
  */
@@ -103,7 +103,7 @@ async function scanPath(dirPath: string): Promise<void> {
   try {
     entries = fs.readdirSync(dirPath, { withFileTypes: true })
   } catch {
-    // Directory may not exist yet if qBit hasn't moved files yet — not fatal
+    // Directory may not exist yet if UMT hasn't moved files yet — not fatal
     return
   }
 
@@ -122,7 +122,7 @@ async function scanPath(dirPath: string): Promise<void> {
  *
  * For every monitored_item with status='grabbed':
  *   1. Find the most recent grab_history row to get info_hash
- *   2. Query qBit for that torrent's state
+ *   2. Query UMT for that torrent's state
  *   3. If complete, move it via setLocation and trigger a scan
  *   4. Mark item 'imported' and update media_requests
  */
@@ -159,7 +159,7 @@ export async function runImportCheck(): Promise<void> {
     hashByItemId.set(row.item_id, row.info_hash)
   }
 
-  // Query qBittorrent for all relevant hashes in one request
+  // Query UMT for all relevant hashes in one request
   let qbitTorrents: Array<{ hash: string; state: string; progress: number }> = []
   try {
     const { qbitFetch } = await import('@/lib/qbittorrent/session')
@@ -168,8 +168,8 @@ export async function runImportCheck(): Promise<void> {
       `/api/v2/torrents/info?hashes=${allHashes}`
     )
   } catch (err) {
-    // qBit unavailable — skip this cycle, will retry next tick
-    process.stderr.write(`[importer] qBittorrent unavailable: ${err}\n`)
+    // UMT unavailable — skip this cycle, will retry next tick
+    process.stderr.write(`[importer] UMT unavailable: ${err}\n`)
     return
   }
 
@@ -183,7 +183,7 @@ export async function runImportCheck(): Promise<void> {
 
   for (const item of grabbed) {
     // infoHash may be missing (no grab_history row) or the empty string (a magnet/URL add that never
-    // surfaced qBittorrent's infohash — recordGrab now recovers it from the magnet, but legacy rows
+    // surfaced UMT's infohash — recordGrab now recovers it from the magnet, but legacy rows
     // and .torrent-URL adds can still be hashless). Either way we can't look the torrent up by hash,
     // so leave `torrent` undefined and let the same fallbacks used for departed torrents handle it:
     // detect it already reached the library by tmdb_id, or match the completed file by title in
@@ -192,7 +192,7 @@ export async function runImportCheck(): Promise<void> {
     const infoHash = hashByItemId.get(item.id) ?? ''
     const torrent = infoHash ? torrentByHash.get(infoHash.toLowerCase()) : undefined
     if (!torrent) {
-      // Torrent no longer in qBittorrent (removed after completion or manually).
+      // Torrent no longer in UMT (removed after completion or manually).
       // Fallback 1: check if content already reached MEDIA_ROOTS (indexed by scanner).
       if (item.tmdb_id != null) {
         const mediaType = item.type === 'movie' ? 'movie' : 'tv'
@@ -335,7 +335,7 @@ export async function runImportCheck(): Promise<void> {
         body: new URLSearchParams({ hashes: infoHash, location: targetPath }),
       })
 
-      // Give qBittorrent 2 seconds to complete the filesystem move
+      // Give UMT 2 seconds to complete the filesystem move
       await new Promise<void>(resolve => setTimeout(resolve, 2000))
 
       // Scan the target directory so the media item appears in media_items immediately

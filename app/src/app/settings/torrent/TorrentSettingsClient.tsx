@@ -1,14 +1,14 @@
 /**
- * Full qBittorrent settings UI (tabs: Downloads, Connection, Speed, BitTorrent,
+ * Full UMT settings UI (tabs: Downloads, Connection, Speed, BitTorrent,
  * Queue, Privacy, Advanced, RSS, WebUI, Interface).
  *
- * The first 9 tabs read/write qBittorrent directly via GET /api/qbit/app/preferences
+ * The first 9 tabs read/write UMT directly via GET /api/qbit/app/preferences
  * and POST /api/qbit/app/setPreferences. Only the diff for the active tab's
  * fields is sent on save — not the entire preferences object — to avoid
  * accidentally overwriting settings changed by another client since load time.
  *
  * The "Interface" tab is localStorage-only (TorrentUIPreferences) and never
- * touches qBittorrent; it controls how the /downloads page renders locally.
+ * touches UMT; it controls how the /downloads page renders locally.
  */
 'use client'
 
@@ -478,7 +478,7 @@ export default function TorrentSettingsClient() {
     setSaveError(null)
     setSaveSuccess(false)
 
-    // Send only the changed fields in scope for the active tab; qBittorrent
+    // Send only the changed fields in scope for the active tab; UMT
     // accepts a partial JSON object and merges it into its preferences.
     const tabFields = TAB_FIELDS[activeTab] ?? []
     const diff: Record<string, unknown> = {}
@@ -496,7 +496,7 @@ export default function TorrentSettingsClient() {
     }
 
     try {
-      // qBittorrent's setPreferences endpoint expects form-urlencoded with a
+      // UMT's setPreferences endpoint expects form-urlencoded with a
       // single "json" field containing the stringified diff object.
       const body = new URLSearchParams({ json: JSON.stringify(diff) })
       const res = await fetch('/api/qbit/app/setPreferences', {

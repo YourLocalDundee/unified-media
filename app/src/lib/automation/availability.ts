@@ -10,7 +10,7 @@
  *   2. media_requests row (if any) is marked 'available' and auto_delete_at is set for quick requests
  *
  * auto_delete_at = download_completed_at + 48h (not library scan time).
- * download_completed_at is set by markCompletedDownloads() which polls qBit for seeding torrents.
+ * download_completed_at is set by markCompletedDownloads() which polls UMT for seeding torrents.
  *
  * This is the only place that writes to media_requests from the automation pipeline.
  */
@@ -24,14 +24,14 @@ import type { MonitoredItem } from './types'
 // Quick requests auto-delete 48 hours after DOWNLOAD COMPLETION (not library scan time)
 const AUTO_DELETE_MS = 48 * 60 * 60 * 1000
 
-// qBit states that indicate a torrent has finished downloading and is now seeding
+// UMT states that indicate a torrent has finished downloading and is now seeding
 const SEEDING_STATES = new Set([
   'uploading', 'stalledUP', 'queuedUP', 'forcedUP', 'pausedUP', 'checkingUP',
-  'stoppedUP',   // qBit v5+
+  'stoppedUP',   // UMT v5+
 ])
 
 /**
- * Cross-references grab_history (which has info_hash) against qBittorrent's torrent list.
+ * Cross-references grab_history (which has info_hash) against UMT's torrent list.
  * For each grabbed torrent that is now seeding, sets download_completed_at on the
  * corresponding monitored_item (once only — never overwritten once set).
  */
@@ -54,7 +54,7 @@ export async function markCompletedDownloads(): Promise<void> {
     const { qbitFetch } = await import('@/lib/qbittorrent/session')
     qbitTorrents = await qbitFetch<Array<{ hash: string; state: string }>>('/api/v2/torrents/info')
   } catch {
-    // qBit unavailable — skip; will retry on next cron run
+    // UMT unavailable — skip; will retry on next cron run
     return
   }
 
@@ -95,9 +95,9 @@ function isInNativeLibrary(item: MonitoredItem): boolean {
 export async function checkAvailability(): Promise<number> {
   const db = getDb()
 
-  // Mark downloads that have finished seeding in qBit (sets download_completed_at)
+  // Mark downloads that have finished seeding in UMT (sets download_completed_at)
   // This must run before the availability scan so the timestamp is ready.
-  await markCompletedDownloads().catch(() => { /* qBit down — not fatal */ })
+  await markCompletedDownloads().catch(() => { /* UMT down — not fatal */ })
 
   // Only check 'grabbed' items; 'wanted' items haven't been sent to the download client yet
   type GrabbedItem = MonitoredItem & { download_completed_at: number | null }
@@ -117,7 +117,7 @@ export async function checkAvailability(): Promise<number> {
       updateItem(item.id, { status: 'imported' })
 
       // 48h timer starts from download completion time, not library scan time.
-      // Falls back to now if qBit completion wasn't captured (avoids null auto_delete_at).
+      // Falls back to now if UMT completion wasn't captured (avoids null auto_delete_at).
       const completedAt = item.download_completed_at ?? Date.now()
       const autoDeleteAt = completedAt + AUTO_DELETE_MS
 

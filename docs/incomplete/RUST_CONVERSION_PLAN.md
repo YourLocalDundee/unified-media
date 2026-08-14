@@ -33,7 +33,7 @@ unified-media-rs/
     um-models      shared types, serde derives, DB row structs
     um-db          sqlx pool, queries, migrations
     um-config      env/config loading
-    um-clients     qBittorrent, TMDB, OpenSubtitles, indexer HTTP clients
+    um-clients     UMT, TMDB, OpenSubtitles, indexer HTTP clients
   services/
     um-indexer
     um-automation
@@ -74,7 +74,7 @@ Exit criteria. Shadow diff under agreed threshold, contract suite green, TS inde
 
 Grab pipeline, TV arc pipeline, stale torrent reaper, duplicate-grab prevention.
 
-2.1 qBittorrent client in um-clients (it is a simple cookie-auth HTTP API, no crate dependency worth taking).
+2.1 UMT client in um-clients (it is a simple cookie-auth HTTP API, no crate dependency worth taking).
 
 2.2 TMDB client including episode groups (type 5 handling for shows like One Piece). Golden-file tests from captured TMDB responses.
 
@@ -116,7 +116,7 @@ Everything remaining server-side. Auth integration (Authentik forward-auth heade
 
 4.2 Party play on axum's native WebSocket support, room state in a tokio task per room with mpsc channels, same message protocol so mid-migration clients keep working.
 
-4.3 deep-health endpoint aggregating DB, qBittorrent, indexer health, job recency, disk headroom. Wire into the existing Prometheus alerting.
+4.3 deep-health endpoint aggregating DB, UMT, indexer health, job recency, disk headroom. Wire into the existing Prometheus alerting.
 
 4.4 Cutover route group by route group at the BunkerWeb/Caddy layer, path-prefix routing shifting from the Next.js container to um-api. Next.js keeps serving pages and proxying nothing once this phase completes.
 

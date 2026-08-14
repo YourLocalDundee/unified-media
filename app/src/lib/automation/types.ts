@@ -1,7 +1,7 @@
 /**
  * Shared type definitions for the download automation pipeline.
  *
- * Data flows: monitored_items (wanted) → indexer search → qBittorrent grab →
+ * Data flows: monitored_items (wanted) → indexer search → UMT grab →
  * media_items availability check → auto-delete for quick requests.
  * These types are shared across monitor, grabber, parser, bridge, and availability modules.
  *
@@ -88,7 +88,7 @@ export interface GrabHistory {
   item_id: number
   indexer: string
   release_title: string
-  // info_hash is the torrent infohash; used to correlate with qBittorrent if needed
+  // info_hash is the torrent infohash; used to correlate with UMT if needed
   info_hash: string
   grabbed_at: number  // Unix ms
   import_status: ImportStatus

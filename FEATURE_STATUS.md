@@ -14,7 +14,7 @@ Legend:
 
 The 21-agent audit (`analysis/audit-2026-06-13/`, summary `00-SUMMARY.md`) found several items marked
 `[x]` in the phases below are broken, no-op, or insecure. Many were since remediated (2026-06-15 onward),
-including the qBittorrent-proxy auth, automation dedup, auto-delete safety, interactive picks, and watch
+including the UMT-proxy auth, automation dedup, auto-delete safety, interactive picks, and watch
 history. **For the reconciled current state, trust [`analysis/open-issues.md`](analysis/open-issues.md)**
 over the `[x]`/`[!]` flags in the phase checklist below (left as-written for history).
 
@@ -58,19 +58,19 @@ over the `[x]`/`[!]` flags in the phase checklist below (left as-written for his
 - [x] Discover page and DiscoverResults (`src/app/browse/discover/[mediaType]/[tmdbId]/page.tsx`, `DiscoverResults.tsx`)
 - [x] the old request app webhook endpoint (`/api/the old request app/webhook`) — implemented 2026-06-04. Handles MEDIA_APPROVED/REQUEST_APPROVED (creates monitored_item + fires immediate grab), MEDIA_AVAILABLE (updates request status), and ignores all other event types. HMAC-SHA256 signature verification when the retired webhook secret is set.
 
-### Phase 4 — qBittorrent Integration
-- [x] qBittorrent session manager (`src/lib/qbittorrent/session.ts`)
-- [x] qBittorrent API wrappers (`src/lib/qbittorrent/api.ts`, `hooks.ts`, `types.ts`)
-- [x] qBt proxy (`/api/qbit/[...path]/route.ts`) — multipart passthrough, query param forwarding, and re-auth on 403 all fixed
+### Phase 4 — UMT Integration
+- [x] UMT session manager (`src/lib/qbittorrent/session.ts`)
+- [x] UMT API wrappers (`src/lib/qbittorrent/api.ts`, `hooks.ts`, `types.ts`)
+- [x] UMT proxy (`/api/qbit/[...path]/route.ts`) — multipart passthrough, query param forwarding, and re-auth on 403 all fixed
 - [x] `/downloads` page with all components (`FilterSidebar`, `TorrentRow`, `DetailPanel`, `AddTorrentModal`)
 - [x] `/settings/torrent` page (8 tabs, `TorrentSettingsClient.tsx`)
-- [x] `src/types/torrent.ts` with all qBittorrent type definitions
+- [x] `src/types/torrent.ts` with all UMT type definitions
 - [ ] Separate `qbt/login/route.ts` — CLAUDE.md page map lists it; the login flow is handled entirely within `session.ts` and the catch-all proxy, no dedicated login route file exists
 
 ### Phase 4 — Download Client Registry
 - [x] Config loader (`src/lib/download-client/config.ts`) — `getDownloadClientConfig()` reads `DOWNLOAD_CLIENT` (default `umt`), `UMT_URL`, `UMT_USERNAME`, `UMT_PASSWORD`
 - [x] Registry (`src/lib/download-client/registry.ts`)
-- [x] qBittorrent client — fully implemented (`src/lib/download-client/qbittorrent.ts`)
+- [x] UMT client — fully implemented (`src/lib/download-client/qbittorrent.ts`)
 - [~] Transmission stub — exists but all methods throw `'not yet implemented'` (`src/lib/download-client/transmission.ts`)
 - [~] Deluge stub — exists but all methods throw `'not yet implemented'` (`src/lib/download-client/deluge.ts`)
 - [x] Types (`src/lib/download-client/types.ts`)
@@ -116,7 +116,7 @@ over the `[x]`/`[!]` flags in the phase checklist below (left as-written for his
 - [x] `src/lib/automation/availability.ts` — sets `auto_delete_at` on quick requests
 - [x] `/api/requests/route.ts` — POST accepts `requestType`, returns 429 on slot overflow; rate-limited 20/hr per userId
 - [x] `/api/requests/[id]/approve`, `decline`, `grab`, `grab-results` routes — approve/decline rate-limited 60/5min/IP
-- [x] `/api/requests/[id]/progress/route.ts` — live download progress: joins grab_history → qBittorrent by info_hash, returns progress/state/speed/eta
+- [x] `/api/requests/[id]/progress/route.ts` — live download progress: joins grab_history → UMT by info_hash, returns progress/state/speed/eta
 - [x] `src/components/media/RequestOptions.tsx` — two-button (Quick/Long-term) or single-button for new content; SeriesScopeModal wired in for TV requests — shows season/episode picker before submitting. Full Series / specific seasons / individual episodes. POST body includes scopeType, scopeSeasons, scopeEpisodes, monitorFuture.
 - [x] `RequestsTable.tsx` — `DownloadProgress` component polls `/api/requests/[id]/progress` every 5s; shows bar, MB/s, ETA, state; scope summary badge on TV requests (Full Series / Season 1,2 / S01E01–E03)
 - [x] `/admin/requests` page (`AdminRequestsClient.tsx`)
@@ -238,7 +238,7 @@ over the `[x]`/`[!]` flags in the phase checklist below (left as-written for his
 - [ ] **Download-to-browse linking** — no fuzzy torrent name → library item matching, no "View in library" link on downloads page
 - [~] **Keyboard shortcut reference** — `/settings/shortcuts` page exists as a static hardcoded table; backlog item calls for auto-generation from a centralized registry (which does not yet exist)
 - [x] **Rate limiting audit** — `checkRateLimit` applied to: login, register, verify-email, forgot-password, resend-verification, change-password, `POST /api/requests` (20/hr/userId), `POST /api/requests/[id]/approve` and `decline` (60/5min/IP), `PATCH`+`DELETE /api/admin/users/[id]` (30/10min/IP pooled). Added 2026-06-04.
-- [ ] **Torrent creation dialog** — no `createTorrent` call or dialog found; qBittorrent 5.0+ `POST /api/v2/torrents/createTorrent` not implemented
+- [ ] **Torrent creation dialog** — no `createTorrent` call or dialog found; UMT 5.0+ `POST /api/v2/torrents/createTorrent` not implemented
 - [ ] **Sequential download piece map** — `pieces_have` and `piece_range` fields are typed in `src/types/torrent.ts` and shown as a text count in `DetailPanel.tsx`, but no canvas visualization of piece availability exists
 - [ ] **Bandwidth quota** — no `bandwidth_usage` table in migrations, no quota tracking or display
 - [~] **Theme marketplace** — custom themes system exists (create/edit/delete via localStorage `unified-custom-themes`); export/import/share-string functionality described in the backlog is NOT implemented

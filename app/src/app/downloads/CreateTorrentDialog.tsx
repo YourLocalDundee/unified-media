@@ -1,7 +1,7 @@
 'use client'
 
 // Admin-only "Create torrent" dialog — builds a .torrent from a local file/folder path via
-// qBittorrent's async torrent-creation task API (5.0+). See useCreateTorrentTask in
+// UMT's async torrent-creation task API (5.0+). See useCreateTorrentTask in
 // @/lib/qbittorrent/hooks and the doc comments on CreateTorrentParams / TorrentCreationTask in
 // @/lib/qbittorrent/types for the endpoint contract. Styling mirrors AddTorrentForm/
 // DeleteConfirmModal on this page.
@@ -11,8 +11,8 @@ import { useFocusTrap } from '@/hooks/useFocusTrap'
 import { useCreateTorrentTask } from '@/lib/qbittorrent/hooks'
 import { formatBytes } from '@/lib/utils'
 
-// 0 = automatic (qBittorrent picks based on content size). The rest are the powers-of-two
-// qBittorrent's own torrent creator dialog offers, 16 KiB through 16 MiB.
+// 0 = automatic (the download client picks based on content size). The rest are the powers-of-two
+// the download client's own torrent creator dialog offers, 16 KiB through 16 MiB.
 const PIECE_SIZE_OPTIONS: { label: string; value: number }[] = [
   { label: 'Auto', value: 0 },
   ...[16384, 32768, 65536, 131072, 262144, 524288, 1048576, 2097152, 4194304, 8388608, 16777216].map(
@@ -138,7 +138,7 @@ export function CreateTorrentDialog({ onClose }: Props) {
                   autoFocus
                 />
                 <p className="mt-1 text-xs text-gray-400">
-                  A path qBittorrent itself can read — not a path in this browser.
+                  A path the download client itself can read — not a path in this browser.
                 </p>
               </div>
 
@@ -291,7 +291,7 @@ export function CreateTorrentDialog({ onClose }: Props) {
                   <p className="text-xs text-gray-500 dark:text-gray-400">
                     {typeof task?.progress === 'number'
                       ? `Hashing… ${(task.progress * 100).toFixed(0)}%`
-                      : 'Waiting for qBittorrent to start hashing…'}
+                      : 'Waiting for the download client to start hashing…'}
                     {' '}You can close this dialog — creation continues in the background.
                   </p>
                 </>

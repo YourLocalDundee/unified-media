@@ -40,7 +40,7 @@ export async function POST(
 
   if (body.magnetUrl) {
     // A6-12: validate the override URL before handing it to the download client. Even though this
-    // path is admin-gated, an unchecked `urls` value lets arbitrary schemes reach qBit. Accept only
+    // path is admin-gated, an unchecked `urls` value lets arbitrary schemes reach UMT. Accept only
     // magnet links and http(s) .torrent URLs.
     const url = body.magnetUrl.trim()
     if (!/^(magnet:\?|https?:\/\/)/i.test(url)) {

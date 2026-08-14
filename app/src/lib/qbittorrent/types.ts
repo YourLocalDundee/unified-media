@@ -1,5 +1,5 @@
-// Shared types for the qBittorrent Web API v2.
-// All interfaces match the JSON shapes returned by qBittorrent directly — no
+// Shared types for the UMT Web API v2.
+// All interfaces match the JSON shapes returned by the download client directly — no
 // field renaming — so API responses can be assigned without an adapter layer.
 // These are consumed by session.ts / api.ts (server-only) and hooks.ts (client).
 
@@ -54,7 +54,7 @@ export interface Torrent {
   amount_left: number     // bytes
   time_active: number     // seconds
   seeding_time: number    // seconds
-  // Extended fields (qBittorrent API v2)
+  // Extended fields (UMT API v2)
   magnet_uri: string
   availability: number
   super_seeding: boolean
@@ -77,7 +77,7 @@ export interface Torrent {
 }
 
 export interface TransferInfo {
-  // NOTE: qBittorrent's /transfer/info and /sync/maindata server_state use the UP_ prefix for
+  // NOTE: UMT's /transfer/info and /sync/maindata server_state use the UP_ prefix for
   // upload (up_info_speed / up_info_data / up_rate_limit), NOT ul_. Reading ul_* returned
   // undefined → the header showed "NaN undefined/s" (then "—" after a ?? 0 band-aid). (Bug 6)
   dl_info_speed: number   // bytes/s
@@ -123,21 +123,21 @@ export interface TorrentFile {
 
 // Parameters for /api/v2/torrents/add. All fields are optional — omit any that
 // should keep the server's default. `paused` and `stopped` are different param
-// names for the same intent across qBit versions; send both when targeting v4/v5.
+// names for the same intent across UMT versions; send both when targeting v4/v5.
 export interface AddTorrentParams {
   urls?: string           // newline-separated magnet/HTTP URLs
   savepath?: string
   category?: string
   tags?: string           // comma-separated
   rename?: string
-  paused?: boolean        // qBit v4 — stop on add
-  stopped?: boolean       // qBit v5 — stop on add
+  paused?: boolean        // UMT v4 — stop on add
+  stopped?: boolean       // UMT v5 — stop on add
   firstLastPiecePrio?: boolean
   sequentialDownload?: boolean
 }
 
 // ---------------------------------------------------------------------------
-// Torrent creation (qBittorrent 5.0+, Web API v2.10.4) — async task API
+// Torrent creation (UMT 5.0+, Web API v2.10.4) — async task API
 // ---------------------------------------------------------------------------
 // Creating a .torrent from a local file/folder is asynchronous: POST
 // /torrentcreator/addTask queues a task and returns only {taskID}; the actual
@@ -174,8 +174,8 @@ export interface TorrentCreationTask {
 }
 
 // Parameters accepted by POST /torrentcreator/addTask. sourcePath is the only
-// required field — it must be a path qBittorrent's own process can read (this
-// runs on the qBit host, not the browser or this app's server). trackers/
+// required field — it must be a path the download client's own process can read
+// (this runs on the UMT host, not the browser or this app's server). trackers/
 // urlSeeds are sent newline-joined on the wire. startSeeding defaults server-
 // side to true when no torrentFilePath is given (we never send one), so the
 // created torrent is added and seeded automatically unless explicitly disabled.

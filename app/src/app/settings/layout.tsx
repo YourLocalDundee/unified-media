@@ -17,7 +17,7 @@ const USER_NAV = [
   { href: '/settings/shortcuts', label: 'Shortcuts' },
 ]
 
-// Admin-only tabs: qBittorrent prefs are download infrastructure (the /settings/torrent page and the
+// Admin-only tabs: UMT prefs are download infrastructure (the /settings/torrent page and the
 // /api/qbit proxy are both admin-gated), so the Torrent tab is hidden from regular users.
 const ADMIN_NAV = [{ href: '/settings/torrent', label: 'Torrent' }]
 

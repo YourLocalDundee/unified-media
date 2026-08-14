@@ -92,7 +92,7 @@ export async function purgeMediaItem(id: string): Promise<PurgeSummary | null> {
         summary.torrentsDeleted = list.length
       }
     } catch (e) {
-      // qBit unreachable or hash gone — report, don't abort the rest of the purge.
+      // UMT unreachable or hash gone — report, don't abort the rest of the purge.
       summary.errors.push(`torrent: ${msg(e)}`)
     }
   }

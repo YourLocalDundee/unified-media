@@ -1,6 +1,6 @@
 // Manual indexer search — a debug tool, not a library-import flow.
 // Fans out an arbitrary query across every enabled indexer via the existing /api/torznab/search
-// route and lists raw results. "Grab" posts the release straight to qBittorrent
+// route and lists raw results. "Grab" posts the release straight to UMT
 // (/api/qbit/torrents/add) — it deliberately bypasses monitored_items/quality profiles/gates,
 // since the point is answering "does this tracker return results for X", not managing a library.
 'use client'
@@ -108,7 +108,7 @@ export default function ManualSearchPage() {
         <h1 className="text-2xl font-bold text-foreground">Manual Search</h1>
         <p className="text-sm text-muted-foreground mt-1">
           Debug tool — searches every enabled indexer directly. Grab bypasses quality profiles and
-          gates and adds the raw release straight to qBittorrent.
+          gates and adds the raw release straight to the download client.
         </p>
       </div>
 

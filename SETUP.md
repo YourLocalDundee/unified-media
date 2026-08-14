@@ -1,7 +1,7 @@
 # Unified Frontend — Setup Guide
 
 Self-hosted single-pane-of-glass for the minime media stack. A fully native media server for
-browsing and playback, integrated with the old request app (requests) and qBittorrent (downloads), with its own
+browsing and playback, integrated with the old request app (requests) and UMT (downloads), with its own
 SQLite-backed auth. No the old media server dependency.
 
 ---
@@ -33,8 +33,8 @@ Required variables:
 | `a retired env var` | `http://the old request app:5055` (container name on compose_default) |
 | `a retired env var` | `/opt/docker/configs/the old request app/settings.json` → `main.apiKey` |
 | `QBIT_URL` | `http://qbittorrent:8080` |
-| `QBIT_USERNAME` | qBittorrent web UI credentials |
-| `QBIT_PASSWORD` | qBittorrent web UI credentials |
+| `QBIT_USERNAME` | UMT web UI credentials |
+| `QBIT_PASSWORD` | UMT web UI credentials |
 | `NEXT_PUBLIC_APP_URL` | `https://<app-host>` (production) |
 | `ADMIN_USERNAME` | Choose a username for the admin account |
 | `ADMIN_PASSWORD` | Must meet password policy (see below) |

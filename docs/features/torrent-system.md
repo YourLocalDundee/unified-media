@@ -2,7 +2,7 @@
 
 ## Types file
 
-All qBittorrent API types live at `src/types/torrent.ts`, using exact qBittorrent field names so
+All UMT API types live at `src/types/torrent.ts`, using exact UMT field names so
 responses assign directly without mapping:
 
 - `QbtTorrentState` — union of 19 state strings
@@ -33,7 +33,7 @@ Three gaps were found and fixed:
 
 ## Downloads page (`/downloads`)
 
-Full qBittorrent client UI.
+Full UMT client UI.
 
 | Component | File |
 | --------- | ---- |
@@ -50,7 +50,7 @@ Calls go to `/api/qbit/...` (note the **`qbit`** spelling — `/api/qbt` 404s).
 > are a **dead alternate UI** from an earlier draft — not wired into the live page (see the 2026-06-13
 > audit dead-code list). The live UI is `page.tsx` + `TorrentDetailPanel.tsx`.
 
-### qBittorrent endpoints used
+### UMT endpoints used
 
 | Endpoint | Purpose |
 | -------- | ------- |
@@ -78,7 +78,7 @@ Calls go to `/api/qbit/...` (note the **`qbit`** spelling — `/api/qbt` 404s).
 
 ## Torrent settings page (`/settings/torrent`)
 
-Eight tabs — first 7 read/write qBittorrent via `/app/preferences` → `/app/setPreferences` (sends only
+Eight tabs — first 7 read/write UMT via `/app/preferences` → `/app/setPreferences` (sends only
 changed fields as a JSON diff). Tab 8 is localStorage only.
 
 | Tab | Coverage |
@@ -96,7 +96,7 @@ changed fields as a JSON diff). Tab 8 is localStorage only.
 
 `/downloads`, `/api/qbit` (GET **and** POST), `/settings/torrent`, and the dashboard "Active Downloads"
 section are all gated to `role === 'admin'`. The GET proxy used to be `requireAuth` — since it carries
-the server-side qBittorrent session cookie, any authed user could read the full queue/save-paths/prefs;
+the server-side UMT session cookie, any authed user could read the full queue/save-paths/prefs;
 it now matches the write path's `requireAdmin`. The Sidebar/MobileNav "Downloads" nav item and the
 `/settings/torrent` tab are hidden for non-admins. Non-admins lose nothing they could previously mutate
 — torrent actions were already admin-only.
@@ -105,7 +105,7 @@ it now matches the write path's `requireAdmin`. The Sidebar/MobileNav "Downloads
 
 `PieceMap.tsx` renders a canvas strip in the Files tab showing per-piece download state (missing /
 downloading / downloaded), with thin dividers at file boundaries (`QbtFileInfo.piece_range`). Data comes
-from `GET /api/qbit/torrents/pieceStates?hash=` (returns qBittorrent's `pieces_states` per-piece array;
+from `GET /api/qbit/torrents/pieceStates?hash=` (returns UMT's `pieces_states` per-piece array;
 `0`=missing, `1`=downloading, `2`=downloaded), fetched alongside `QbtTorrentProperties.pieces_num`.
 
 **Pixel-column binning:** torrents can have tens of thousands of pieces but the strip has only a few
@@ -123,11 +123,11 @@ Admin-only (part of the Files tab, which is behind `/downloads`'s admin gate).
 
 ## Create-torrent dialog (admin)
 
-`CreateTorrentDialog.tsx` builds a `.torrent` from a local file/folder path via qBittorrent 5.x's
+`CreateTorrentDialog.tsx` builds a `.torrent` from a local file/folder path via UMT 5.x's
 **async** torrent-creation task API (scope `torrentcreator`, not `torrents`):
 
 1. `POST /api/qbit/torrentcreator/addTask` queues the job server-side and returns `{taskID}` —
-   hashing happens on the qBittorrent side, not synchronously in the request.
+   hashing happens on the UMT side, not synchronously in the request.
 2. `useCreateTorrentTask()` (`src/lib/qbittorrent/hooks.ts`) polls `GET
    /torrentcreator/status?taskID=` every 1.5s until `status` is `Finished` or `Failed`.
 3. On `Finished`, the dialog offers a download link to `GET

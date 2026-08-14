@@ -1,4 +1,4 @@
-// Server-side qBittorrent API helpers.
+// Server-side UMT API helpers.
 // All functions call qbitFetch, which handles SID cookie auth and automatic
 // re-auth on 403. These must only be called from Next.js API routes or server
 // components — never imported into client components.
@@ -57,9 +57,9 @@ export async function getTorrentFiles(hash: string): Promise<TorrentFile[]> {
 // ---------------------------------------------------------------------------
 
 /**
- * Stop (pause) torrents. Uses the qBit 5+ /stop endpoint.
+ * Stop (pause) torrents. Uses the UMT 5+ /stop endpoint.
  * Multiple hashes are joined with | (pipe). Pass 'all' to stop everything.
- * Note: qBit v4 used /torrents/pause — this codebase targets v5.
+ * Note: UMT v4 used /torrents/pause — this codebase targets v5.
  */
 export async function pauseTorrents(hashes: string[]): Promise<void> {
   await qbitFetch<string>('/api/v2/torrents/stop', {
@@ -69,7 +69,7 @@ export async function pauseTorrents(hashes: string[]): Promise<void> {
 }
 
 /**
- * Start (resume) torrents. Uses the qBit 5+ /start endpoint.
+ * Start (resume) torrents. Uses the UMT 5+ /start endpoint.
  */
 export async function resumeTorrents(hashes: string[]): Promise<void> {
   await qbitFetch<string>('/api/v2/torrents/start', {
@@ -106,7 +106,7 @@ export async function addTorrent(params: AddTorrentParams): Promise<void> {
   if (params.category !== undefined) body.set('category', params.category)
   if (params.tags !== undefined) body.set('tags', params.tags)
   if (params.rename !== undefined) body.set('rename', params.rename)
-  // Support both qBit 4 (paused) and qBit 5 (stopped)
+  // Support both UMT 4 (paused) and UMT 5 (stopped)
   if (params.paused !== undefined) body.set('paused', String(params.paused))
   if (params.stopped !== undefined) body.set('stopped', String(params.stopped))
   if (params.firstLastPiecePrio !== undefined)

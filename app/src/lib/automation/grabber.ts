@@ -5,7 +5,7 @@
  *   - Build Torznab search params from the item's title and media type
  *   - Fan out to all enabled indexers via searchAllIndexers
  *   - Score each result against the item's quality profile and pick the best
- *   - Push the winner to the active download client (qBittorrent by default)
+ *   - Push the winner to the active download client (UMT by default)
  *   - Record the grab in grab_history and transition the item status to 'grabbed'
  *
  * The scheduler calls grabItem() for every wanted item on a 15-minute cron.

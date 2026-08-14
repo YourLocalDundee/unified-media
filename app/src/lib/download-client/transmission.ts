@@ -9,7 +9,7 @@
 // Transmission has no incremental-sync endpoint, so pollMaindata() returns a full
 // snapshot each call (isFullUpdate = true, removed = []) — the maindata consumer
 // replaces its state wholesale on a full update, so this is correct, just less terse
-// than qBittorrent's rid-based deltas.
+// than UMT's rid-based deltas.
 
 // This file runs only on the server (used only in API routes / server actions)
 
@@ -193,7 +193,7 @@ export class TransmissionClient implements DownloadClient {
       await this.rpc('torrent-add', args)
     } catch (err) {
       // A duplicate add reports result "duplicate torrent" — treat as a no-op success,
-      // mirroring the qBittorrent 409 handling so the grabber doesn't retry forever.
+      // mirroring the UMT 409 handling so the grabber doesn't retry forever.
       if (err instanceof Error && /duplicate/i.test(err.message)) return
       throw err
     }

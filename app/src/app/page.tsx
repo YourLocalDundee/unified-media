@@ -1,6 +1,6 @@
 // Home dashboard page — the landing screen after login.
 // Aggregates data from four independent sources (native media server, native requests,
-// qBittorrent) into a single-page view. Each section is wrapped in its own Suspense
+// UMT) into a single-page view. Each section is wrapped in its own Suspense
 // boundary so one slow/failing data source doesn't block the rest from rendering.
 
 import { Suspense } from 'react'

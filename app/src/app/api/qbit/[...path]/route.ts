@@ -1,8 +1,8 @@
-// Transparent proxy to qBittorrent's Web API (/api/v2/...).
+// Transparent proxy to the UMT Web API (/api/v2/...).
 // Kept for backward compatibility with client-side hooks (useMainData and action
 // hooks in src/lib/qbittorrent/hooks.ts) which call /api/qbit/... from the browser.
 // Auth is cookie-based (SID), held server-side by @/lib/qbittorrent/session — the
-// browser never sees qBittorrent credentials. Do not import from the download-client
+// browser never sees UMT credentials. Do not import from the download-client
 // registry here; this route manages its own session directly.
 //
 // Three fixed gaps vs. a naïve proxy:
@@ -25,8 +25,8 @@ const UMT_URL = process.env.UMT_URL ?? 'http://qbittorrent:8080'
 type Params = { params: Promise<{ path: string[] }> }
 
 export async function GET(req: NextRequest, { params }: Params) {
-  // Admin-only: the download queue and qBittorrent prefs are visible to admins only. This proxy
-  // attaches qBittorrent's server-side SID, so any authed caller could otherwise read the full
+  // Admin-only: the download queue and UMT prefs are visible to admins only. This proxy
+  // attaches UMT's server-side SID, so any authed caller could otherwise read the full
   // queue/save-paths/prefs with our credentials. Reads are gated to admin to match the write path
   // and keep the Downloads page + Torrent settings admin-only end to end.
   await requireAdmin()
@@ -45,7 +45,7 @@ export async function GET(req: NextRequest, { params }: Params) {
         qbtRes = await fetch(`${UMT_URL}${endpoint}${search}`, { headers: { Cookie: newSid } })
       }
       if (!qbtRes.ok) {
-        return NextResponse.json({ error: `qBittorrent GET ${endpoint}: ${qbtRes.status}` }, { status: qbtRes.status })
+        return NextResponse.json({ error: `UMT GET ${endpoint}: ${qbtRes.status}` }, { status: qbtRes.status })
       }
       const buf = await qbtRes.arrayBuffer()
       return new NextResponse(buf, {
@@ -68,7 +68,7 @@ export async function GET(req: NextRequest, { params }: Params) {
 }
 
 export async function POST(req: NextRequest, { params }: Params) {
-  // A-3: qBittorrent POST is the write surface (add/delete torrents, setPreferences, speed limits)
+  // A-3: the UMT POST proxy is the write surface (add/delete torrents, setPreferences, speed limits)
   // over shared download infrastructure, so it requires admin — not just any authenticated user.
   // GET (viewing the queue) stays open to authed users so the downloads page still renders for them.
   if (!verifyOrigin(req)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
@@ -82,7 +82,7 @@ export async function POST(req: NextRequest, { params }: Params) {
     let responseData: unknown
 
     if (contentType.includes('multipart/form-data')) {
-      // Pass the raw body through to qBittorrent.
+      // Pass the raw body through to UMT.
       // Must forward the Content-Type header including the boundary parameter.
       const sid = await getQbitSession()
 

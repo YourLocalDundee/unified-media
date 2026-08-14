@@ -1,12 +1,12 @@
 // Deluge implementation of the DownloadClient interface.
 //
 // Deluge-web exposes a single JSON-RPC endpoint (`/json`) speaking `{ method, params, id }`.
-// Auth is a two-step handshake unlike qBittorrent:
+// Auth is a two-step handshake unlike UMT:
 //   1. auth.login(password) → sets a `_session_id` cookie we must echo back.
 //   2. web.connected() → if the WebUI isn't attached to a daemon yet, web.get_hosts()
 //      then web.connect(hostId). Without this every core.* call fails "not connected".
 // The session cookie + connected state are cached on the instance and re-established on
-// any auth failure, mirroring the qBittorrent client's single-retry-on-auth-loss pattern.
+// any auth failure, mirroring the UMT client's single-retry-on-auth-loss pattern.
 //
 // Deluge has no incremental sync; web.update_ui returns a full torrent map + stats each
 // call, so pollMaindata() returns a full snapshot (isFullUpdate = true, removed = []).
@@ -210,7 +210,7 @@ export class DelugeClient implements DownloadClient {
     try {
       await this.rpc(method, [uri, options])
     } catch (err) {
-      // Deluge raises on an already-added torrent — treat as a no-op success (parity with qBit 409).
+      // Deluge raises on an already-added torrent — treat as a no-op success (parity with the UMT 409 handling).
       if (err instanceof Error && /already/i.test(err.message)) return
       throw err
     }

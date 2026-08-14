@@ -122,9 +122,9 @@ export function initScheduler(): void {
     }
   })
 
-  // Import check: polls qBittorrent for completed grabbed torrents and moves them
+  // Import check: polls UMT for completed grabbed torrents and moves them
   // into the library path via setLocation, then triggers a media scan.
-  // 2-minute interval keeps import lag short without hammering qBit.
+  // 2-minute interval keeps import lag short without hammering UMT.
   safeCron('*/2 * * * *', 'import', async () => {
     await runImportCheck()
     // Finish any upgrade whose replacement has now imported: delete the old torrent + old file.
@@ -167,7 +167,7 @@ export function initScheduler(): void {
   // blocklisted + removed (DownloadClient), and its monitored_item is reset to 'wanted' to re-search
   // the next-best candidate — or parked at 'failed' after 'reaper_max_grab_attempts' (default 3).
   // Torrent-only delete; an actively downloading or seeding torrent is never touched. Dynamic import
-  // keeps the qBit session module out of the initial graph.
+  // keeps the UMT session module out of the initial graph.
   safeCron('*/10 * * * *', 'reaper', async () => {
     const { reapStalledTorrents } = await import('./reaper')
     const count = await reapStalledTorrents()

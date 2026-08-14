@@ -1,7 +1,7 @@
 'use client'
 
-// Client-side React hooks for qBittorrent.
-// These hit the Next.js API proxy routes (/api/qbit/...) — never the qBit daemon
+// Client-side React hooks for UMT.
+// These hit the Next.js API proxy routes (/api/qbit/...) — never the UMT daemon
 // directly. The browser never sees credentials or the SID cookie.
 // useMainData is the primary hook: it polls /api/qbit/sync/maindata and maintains
 // an in-memory torrent map that is patched via incremental deltas. The poll
@@ -110,7 +110,7 @@ export function useMainData(): {
 
   useEffect(() => {
     // A7-13: configurable interval + pause while the tab is hidden so a
-    // backgrounded downloads page does not poll qBit (and the proxy) every tick.
+    // backgrounded downloads page does not poll UMT (and the proxy) every tick.
     let interval: ReturnType<typeof setInterval> | null = null
 
     const start = () => {
@@ -156,7 +156,7 @@ export function useMainData(): {
 // ---------------------------------------------------------------------------
 
 // Reusable primitive for torrent actions.
-// Posts to the Next.js proxy route; the proxy forwards to qBit with the SID.
+// Posts to the Next.js proxy route; the proxy forwards to UMT with the SID.
 // isPending can drive loading spinners. A7-04: the response is now checked for
 // res.ok — a non-2xx throws so the caller can surface it (error is also exposed
 // here). execute re-throws so callers awaiting it can branch on success/failure.
@@ -274,7 +274,7 @@ export function useAddTorrent() {
 }
 
 // ---------------------------------------------------------------------------
-// useCreateTorrentTask — qBittorrent 5.x async torrent-creation task
+// useCreateTorrentTask — UMT 5.x async torrent-creation task
 // ---------------------------------------------------------------------------
 // POST /torrentcreator/addTask only queues the job and returns {taskID}; the
 // actual hashing happens server-side. We poll GET /torrentcreator/status?
@@ -298,7 +298,7 @@ async function fetchTaskStatus(taskId: string): Promise<TorrentCreationTask> {
   if (!res.ok) throw new Error(`Status check failed (HTTP ${res.status})`)
   const data = (await res.json()) as TorrentCreationTask[] | TorrentCreationTask
   const task = Array.isArray(data) ? data[0] : data
-  if (!task) throw new Error('Task not found — it may have expired on the qBittorrent side.')
+  if (!task) throw new Error('Task not found — it may have expired on the download client side.')
   return task
 }
 
@@ -366,7 +366,7 @@ export function useCreateTorrentTask() {
         throw new Error(errJson?.error ?? errJson?.message ?? `Create failed (HTTP ${res.status})`)
       }
       const data = (await res.json()) as { taskID?: string }
-      if (!data.taskID) throw new Error('qBittorrent did not return a task ID.')
+      if (!data.taskID) throw new Error('The download client did not return a task ID.')
       setTaskId(data.taskID)
     } catch (e) {
       setUIStatus('error')

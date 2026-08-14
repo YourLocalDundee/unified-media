@@ -1,6 +1,6 @@
 // GET /api/admin/server-status
 // Aggregates health data from three sources: the local SQLite DB, the Node.js process
-// itself, and the qBittorrent service. Each check fails gracefully — a timeout or
+// itself, and the UMT service. Each check fails gracefully — a timeout or
 // unreachable service returns {ok: false} rather than a 500.
 
 import { NextResponse } from 'next/server'
@@ -21,7 +21,7 @@ async function checkService(url: string): Promise<{ ok: boolean; version: string
     const text = await res.text()
     try {
       const json = JSON.parse(text) as Record<string, unknown>
-      // Try common version field names across different services (qBittorrent uses plain string).
+      // Try common version field names across different services (UMT uses a plain string).
       const version = (json.Version ?? json.version ?? json.data ?? null) as string | null
       return { ok: true, version: typeof version === 'string' ? version : null }
     } catch {

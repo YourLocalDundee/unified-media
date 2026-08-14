@@ -1,5 +1,5 @@
-// Server-only qBittorrent session manager.
-// qBittorrent uses cookie-based auth (SID), not API keys. The SID must be
+// Server-only UMT session manager.
+// UMT uses cookie-based auth (SID), not API keys. The SID must be
 // obtained by POSTing credentials and then sent as a Cookie header on every
 // subsequent request. This module caches the SID in a module-level variable so
 // the full login round-trip only happens once per 25-minute TTL window.
@@ -17,8 +17,8 @@ interface SessionCache {
 }
 
 // Module-level singleton — intentional. One SID is shared across all requests
-// in the same Node.js worker process, which is fine because qBit sessions are
-// not user-scoped (there is only one qBittorrent account in use here).
+// in the same Node.js worker process, which is fine because UMT sessions are
+// not user-scoped (there is only one UMT account in use here).
 let sessionCache: SessionCache | null = null
 
 async function login(): Promise<string> {
@@ -33,18 +33,18 @@ async function login(): Promise<string> {
     body,
   })
 
-  if (!res.ok) throw new Error(`qBittorrent login failed: ${res.status}`)
+  if (!res.ok) throw new Error(`UMT login failed: ${res.status}`)
 
-  // qBittorrent returns 200 with body "Fails." on wrong credentials
+  // UMT returns 200 with body "Fails." on wrong credentials
   const text = await res.text()
   if (text.trim() === 'Fails.') {
-    throw new Error('qBittorrent login failed: invalid credentials')
+    throw new Error('UMT login failed: invalid credentials')
   }
 
   const setCookie = res.headers.get('set-cookie') ?? ''
   // qBittorrent v5 uses QBT_SID_{port}=..., v4 uses SID=...
   const sidMatch = setCookie.match(/((?:QBT_SID_\d+|SID)=[^;]+)/)
-  if (!sidMatch) throw new Error('qBittorrent login: no SID in response')
+  if (!sidMatch) throw new Error('UMT login: no SID in response')
 
   return sidMatch[1]   // returns full "QBT_SID_8080=VALUE" or "SID=VALUE" string
 }
@@ -82,7 +82,7 @@ export async function qbitFetch<T = unknown>(
   })
 
   if (res.status === 403) {
-    // qBittorrent evicts sessions on restart or after the server-side idle timeout.
+    // UMT evicts sessions on restart or after the server-side idle timeout.
     // Clear and re-login exactly once; if the retry still fails, let it throw.
     clearSession()
     const newSid = await getQbitSession()
@@ -101,7 +101,7 @@ export async function qbitFetch<T = unknown>(
       // request re-authenticates from scratch instead of reusing this bad cached SID,
       // hitting 403, and re-logging-in on every single call (a login storm).
       clearSession()
-      throw new Error(`qBittorrent ${method} ${path}: ${retryRes.status}`)
+      throw new Error(`UMT ${method} ${path}: ${retryRes.status}`)
     }
     const ct = retryRes.headers.get('content-type') ?? ''
     return ct.includes('application/json')
@@ -109,9 +109,9 @@ export async function qbitFetch<T = unknown>(
       : (retryRes.text() as unknown as T)
   }
 
-  if (!res.ok) throw new Error(`qBittorrent ${method} ${path}: ${res.status}`)
+  if (!res.ok) throw new Error(`UMT ${method} ${path}: ${res.status}`)
 
-  // qBittorrent action endpoints (pause, resume, delete, add) return plain text
+  // UMT action endpoints (pause, resume, delete, add) return plain text
   // "Ok." on success, not JSON. Check Content-Type before attempting to parse.
   const ct = res.headers.get('content-type') ?? ''
   return ct.includes('application/json')

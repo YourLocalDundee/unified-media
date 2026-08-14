@@ -1,7 +1,7 @@
 // API route: GET /api/requests/[id]/progress
 // Returns real-time download progress for a given request by:
 //   1. Finding the latest grab_history row linked to any monitored_items row for this request
-//   2. Querying qBittorrent for current torrent state using the info_hash
+//   2. Querying UMT for current torrent state using the info_hash
 
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth } from '@/lib/dal'
@@ -84,7 +84,7 @@ export async function GET(
     return NextResponse.json(empty)
   }
 
-  // Query qBittorrent for the specific torrent.
+  // Query UMT for the specific torrent.
   let torrent: QbtTorrentInfo | null = null
   try {
     const list = await qbitFetch<QbtTorrentInfo[]>(
@@ -92,7 +92,7 @@ export async function GET(
     )
     torrent = Array.isArray(list) && list.length > 0 ? list[0] : null
   } catch {
-    // qBittorrent unreachable or torrent not found — return grabbed:true with null progress
+    // UMT unreachable or torrent not found — return grabbed:true with null progress
     // so the UI can show "Grabbed / searching" rather than "Searching..."
     return NextResponse.json({
       grabbed: true,
@@ -107,7 +107,7 @@ export async function GET(
   }
 
   if (!torrent) {
-    // Hash not found in qBittorrent (may have been imported and removed already).
+    // Hash not found in UMT (may have been imported and removed already).
     return NextResponse.json({
       grabbed: true,
       hash: grab.info_hash,
@@ -126,7 +126,7 @@ export async function GET(
     progress: torrent.progress,
     state: torrent.state,
     dlspeed: torrent.dlspeed,
-    // qBittorrent uses 8640000 as a sentinel for "unknown ETA"
+    // UMT uses 8640000 as a sentinel for "unknown ETA"
     eta: torrent.eta === 8640000 ? null : torrent.eta,
     indexer: grab.indexer,
     releaseTitle: grab.release_title,

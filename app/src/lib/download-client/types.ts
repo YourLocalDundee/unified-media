@@ -1,5 +1,5 @@
 // Shared types for the download client abstraction layer.
-// TorrentState is a normalized enum that collapses the many qBittorrent-specific
+// TorrentState is a normalized enum that collapses the many UMT-specific
 // state strings into the UI-relevant buckets. Each concrete client maps its own
 // raw states into this enum so the rest of the app stays client-agnostic.
 // The DownloadClient interface is what the rest of the app talks to; concrete

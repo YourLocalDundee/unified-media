@@ -37,7 +37,7 @@ HOW I WORK HERE (carry this the whole session):
   in CLAUDE.md). If a gotcha is now enforced by lint/a hook, delete its prose from CLAUDE.md §7.
 - Code constraints: react-hooks rules are at ERROR (no eslint-disable) — defer setState in effects via
   setTimeout(fn,0); better-sqlite3 is synchronous; Next 16 dynamic route params are Promise<{...}>
-  (await them); the qBittorrent proxy is /api/qbit (with an i), /api/qbt 404s.
+  (await them); the UMT proxy is /api/qbit (with an i), /api/qbt 404s.
 - Comms: direct, peer-level. No em dashes / colons / semicolons as pauses.
 
 WHAT'S DONE (index: docs/complete/FEATURES.md; chronology: CHANGELOG.md):
