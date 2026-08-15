@@ -12,7 +12,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
-import { checkRateLimit } from '@/lib/rate-limit'
+import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit'
 import { getClientIp } from '@/lib/client-ip'
 import { getDb } from '@/lib/db/index'
 
@@ -21,7 +21,7 @@ export const dynamic = 'force-dynamic'
 export async function GET(req: NextRequest) {
   const ip = getClientIp(req)
   const rl = checkRateLimit(`check-username:${ip}`, 20, 60 * 1000)
-  if (!rl.allowed) return NextResponse.json({ error: 'Too many requests' }, { status: 429 })
+  if (!rl.allowed) return rateLimitResponse(rl)
 
   const username = req.nextUrl.searchParams.get('username')
   if (!username || !/^[a-zA-Z0-9_]{3,20}$/.test(username)) return NextResponse.json({ available: false })

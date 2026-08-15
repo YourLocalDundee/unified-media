@@ -7,17 +7,27 @@
  * create a pending_email_changes record instead of writing directly to users.
  *
  * 409 Conflict is returned (not 400) so the client can distinguish "already
- * in use" from other validation errors and show an appropriate message.
+ * in use" from other validation errors and show an appropriate message. That 409 is also an
+ * account-enumeration oracle — it confirms whether an arbitrary address belongs to an existing
+ * user — which is why this route is rate-limited. GET /api/auth/check-username carries a
+ * dedicated limiter for the same reason; this is its missing counterpart.
  */
 
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth } from '@/lib/dal'
 import { verifyOrigin } from '@/lib/csrf'
+import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit'
 import { getDb } from '@/lib/db/index'
 
 export async function PATCH(req: NextRequest) {
   if (!verifyOrigin(req)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   const session = await requireAuth()
+
+  // Keyed by userId, not IP: the caller is authenticated, and an attacker probing addresses
+  // would otherwise just rotate IPs. Changing your own email is a rare action, so 10/hr is
+  // generous for real use and useless as an enumeration loop.
+  const rl = checkRateLimit(`profile-email:${session.userId}`, 10, 60 * 60 * 1000)
+  if (!rl.allowed) return rateLimitResponse(rl, 'Too many attempts. Try again later.')
 
   let body: { email?: unknown }
   try { body = await req.json() as typeof body }

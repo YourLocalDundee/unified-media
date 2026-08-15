@@ -5,9 +5,7 @@
 import { qbitFetch } from './session'
 import type {
   AddTorrentParams,
-  MainData,
   Torrent,
-  TorrentFile,
   TransferInfo,
 } from './types'
 
@@ -35,21 +33,6 @@ export async function getTorrents(
  */
 export async function getTransferInfo(): Promise<TransferInfo> {
   return qbitFetch<TransferInfo>('/api/v2/transfer/info')
-}
-
-/**
- * Get the incremental sync payload. Pass rid=0 (or omit) for a full update.
- * Subsequent calls should pass the rid from the previous response.
- */
-export async function getMainData(rid = 0): Promise<MainData> {
-  return qbitFetch<MainData>(`/api/v2/sync/maindata?rid=${rid}`)
-}
-
-/**
- * Get the file list for a single torrent.
- */
-export async function getTorrentFiles(hash: string): Promise<TorrentFile[]> {
-  return qbitFetch<TorrentFile[]>(`/api/v2/torrents/files?hash=${hash}`)
 }
 
 // ---------------------------------------------------------------------------
@@ -117,12 +100,3 @@ export async function addTorrent(params: AddTorrentParams): Promise<void> {
   await qbitFetch<string>('/api/v2/torrents/add', { method: 'POST', body })
 }
 
-/**
- * Force a hash recheck on the given torrents.
- */
-export async function recheckTorrents(hashes: string[]): Promise<void> {
-  await qbitFetch<string>('/api/v2/torrents/recheck', {
-    method: 'POST',
-    body: new URLSearchParams({ hashes: hashes.join('|') }),
-  })
-}

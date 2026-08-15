@@ -16,7 +16,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getDb } from '@/lib/db/index'
 import { validatePassword, hashPassword } from '@/lib/password'
-import { checkRateLimit } from '@/lib/rate-limit'
+import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit'
 import { getClientIp } from '@/lib/client-ip'
 import { sendEmail, buildVerificationEmail } from '@/lib/email'
 import { createSession, logEvent } from '@/lib/dal'
@@ -87,9 +87,7 @@ export async function POST(req: NextRequest) {
   if (!verifyOrigin(req)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   const ip = getClientIp(req)
   const rl = checkRateLimit(`register:${ip}`, 10, 15 * 60 * 1000)
-  if (!rl.allowed) {
-    return NextResponse.json({ error: 'Too many registration attempts. Try again later.' }, { status: 429 })
-  }
+  if (!rl.allowed) return rateLimitResponse(rl, 'Too many registration attempts. Try again later.')
 
   let body: {
     username?: string; email?: string; password?: string; confirmPassword?: string

@@ -18,8 +18,9 @@ import { cookies } from 'next/headers'
 import { getDb } from '@/lib/db/index'
 import { makeId } from '@/lib/dal'
 import { verifyOrigin } from '@/lib/csrf'
-import { checkRateLimit } from '@/lib/rate-limit'
+import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit'
 import { getClientIp } from '@/lib/client-ip'
+import { deviceNameFromUserAgent } from '@/lib/device-name'
 import { getActivePartyByCode, upsertMember } from '@/lib/party/db'
 
 export const dynamic = 'force-dynamic'
@@ -31,9 +32,7 @@ export async function POST(req: NextRequest) {
 
   const ip = getClientIp(req)
   const rl = checkRateLimit(`guest-join:${ip}`, 10, 15 * 60 * 1000)
-  if (!rl.allowed) {
-    return NextResponse.json({ error: 'Too many attempts. Try again later.' }, { status: 429 })
-  }
+  if (!rl.allowed) return rateLimitResponse(rl, 'Too many attempts. Try again later.')
 
   const body = await req.json().catch(() => null) as { joinCode?: string; displayName?: string } | null
   if (!body?.joinCode) {
@@ -57,11 +56,24 @@ export async function POST(req: NextRequest) {
      VALUES (?, ?, '', 'user', ?, ?, 1, ?, 1)`
   ).run(userId, username, now, now, displayName)
 
+  // This inserts directly rather than calling createSession(), because a guest session has an
+  // 8h TTL instead of the standard 30 days. user_agent/device_name are populated to match what
+  // createSession() writes, so a guest row is not a hole in the sessions table.
+  const userAgent = req.headers.get('user-agent')
   const sessionId = makeId(32)
   db.prepare(
-    `INSERT INTO sessions (id, user_id, ip_address, created_at, expires_at, last_seen)
-     VALUES (?, ?, ?, ?, ?, ?)`
-  ).run(sessionId, userId, ip, now, now + GUEST_SESSION_TTL_MS, now)
+    `INSERT INTO sessions (id, user_id, ip_address, user_agent, device_name, created_at, expires_at, last_seen)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    sessionId,
+    userId,
+    ip,
+    userAgent,
+    deviceNameFromUserAgent(userAgent),
+    now,
+    now + GUEST_SESSION_TTL_MS,
+    now
+  )
 
   upsertMember(party.id, userId)
 

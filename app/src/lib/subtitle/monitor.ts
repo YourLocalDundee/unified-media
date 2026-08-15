@@ -119,15 +119,6 @@ export function updateSubtitleStatus(
   }
 }
 
-export function markSkipped(media_item_id: string, language: string): void {
-  const db = getDb()
-  db.prepare(
-    `UPDATE subtitle_wants
-     SET status = 'skipped', updated_at = ?
-     WHERE media_item_id = ? AND language = ?`
-  ).run(Date.now(), media_item_id, language)
-}
-
 // media_items rows are not stable across a rename/reorganize — a rescan of a moved file
 // creates a fresh row with a new id rather than updating the old one in place, orphaning
 // any subtitle_wants row still pointing at the old id. Left alone these silently burn

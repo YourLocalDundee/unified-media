@@ -10,6 +10,24 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- **Party-guest accounts are now cleaned up.** `pruneGuestUsers()` runs on the existing hourly tick
+  right after the auth-table prune. A guest's throwaway `users` row used to outlive its 8-hour session
+  forever. Deletion is conservative because `foreign_keys=ON` and `users(id)` has two FK referrers: a
+  guest goes only when it has no sessions left, hosts no party (ended parties are history and their
+  `host_user_id` must keep resolving), is in no active party, and has no `media_requests` rows. The
+  `DELETE` re-checks `is_guest=1` itself so it can never remove a real account. Chat turned out not to
+  be a blocker at all — it is an in-memory ring buffer, not a table.
+- **Real device labels on the session list.** New `app/src/lib/device-name.ts` turns a `User-Agent`
+  into a short label ("Chrome on Windows", "Safari on iPhone", "Android app" for the Capacitor
+  wrapper), written to `sessions.device_name` at `createSession()`. This finally populates the only
+  column in the schema that nothing wrote and nothing read. The session list in `/settings/profile`
+  previously derived its label client-side from five lines of regex that tested `/Mobile/` first, so
+  every phone showed as "Mobile" and every desktop Chrome as "Chrome" — two sessions in the same
+  browser were indistinguishable, which made "revoke this one" guesswork. The new parser orders its
+  tests so Edge and Opera are not Chrome and Chrome is not Safari, and it degrades to "Unknown device"
+  rather than throwing. 12 unit tests over real UA strings. Sessions predating the change derive the
+  same label on read instead of being backfilled. The party guest-session route, which inserted
+  sessions directly and stored no `user_agent` at all, now writes both columns.
 - **`docs/features/scheduling.md` — one reference for every scheduled and background process.** The
   three `node-cron` schedulers (automation 8 jobs, subtitle 3, media-server enrichment 1) with a full
   job catalogue giving each job's cadence, overlap guard and failure behaviour; the party server's two
@@ -133,6 +151,45 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `/play/{id}?party={code}` URL are intercepted in the proxy and sent to `/join?code={code}`.
 
 ### Fixed
+- **`Retry-After` now on every rate-limited route, via one helper.** New `rateLimitResponse()` in
+  `lib/rate-limit.ts` is the single way to answer a breached limit. `resetAt` was already on the
+  limiter's result so the header cost nothing — it was simply never read by 17 of the 19 routes. All
+  24 rate-limited routes now go through it. Two deliberate exceptions: `forgot-password` still answers
+  200 on breach so it can't be used to work out which addresses are registered, and the request-slot
+  429 in `POST /api/requests` is a quota rather than a rate limit, so it has no reset time to send.
+- **Five routes that spend external resources had no ceiling.** `POST /api/subtitle/download` (10/hr)
+  is the one admin route that burns a finite *external* quota — a run works through every wanted
+  subtitle against OpenSubtitles' 1000/day VIP allowance, so a stuck retry loop in the UI would spend
+  the day as effectively as an attacker. The admin grab-trigger family — `requests/:id/grab`,
+  `automation/items/:id/grab`, `grab/season` — now shares one `admin-grab` bucket at 30/5min, tighter
+  than approve/decline because each call costs an indexer fan-out rather than a DB write.
+  `POST /api/admin/notify/test` (10/hr) fires a real webhook per call. `POST /api/automation/profiles`
+  (20/hr) had no cap on how many profiles one user could create.
+- **`CUSTOM_FORMAT_FLAGS` is finally wired to the admin UI it was exported for.** The flag list is now
+  a dropdown in the quality-profile custom-format editor instead of a free text box. The reason it was
+  never wired is worth recording: `lib/automation/quality.ts` imports `getDb`, so importing the
+  constant from there would pull better-sqlite3 into the client bundle. The flag regexes and key list
+  moved to a new dependency-free `lib/automation/flags.ts` that both sides can import. The
+  hand-maintained list of flag names in the input's placeholder — which had drifted to 12 of the 18
+  real flags — is gone.
+- **`VIP_DAILY_DOWNLOAD_CEILING` now does the job its comment claimed.** It documented itself as
+  driving low-quota warnings while the warning actually compared against a bare `20` with no stated
+  relationship to it. The threshold is now derived from the ceiling (2%, which is the same 20) and the
+  warning quotes both numbers, so the two cannot drift apart.
+- **Rate limiting: one unthrottled user-reachable grab, one enumeration oracle, three mis-keyed admin
+  limiters.** Full audit of all 77 state-mutating handlers is in
+  `docs/analysis/rate-limit-audit-2026-08-15.md`.
+  - `POST /api/grab/confirm` had no limit at all. It is gated by `requireAuth` with an ownership check
+    rather than `requireAdmin`, so any authenticated user could reach it, and every call searches every
+    enabled indexer and then writes to the download client. It was the only route where a non-admin
+    could drive unbounded external requests. Now 20/hr/userId, matching the sibling grab routes.
+  - `PATCH /api/auth/profile/email` returns 409 when an address is already taken, which tells any
+    authenticated caller whether an arbitrary email belongs to an existing account. `check-username`
+    has a dedicated limiter for exactly this; email had none. Now 10/hr/userId.
+  - `admin-users`, `admin-approve` and `admin-decline` keyed their limiters on the client IP despite
+    the actor being a logged-in admin, which fails both ways: two admins behind one NAT throttle each
+    other, while one admin switching networks gets a fresh bucket every time. All three now key on
+    `session.userId`, matching every other authenticated route.
 - **Three stale cron-cadence comments.** `app/src/lib/automation/grabber.ts:11` and
   `app/src/app/api/automation/items/[id]/grab/route.ts:4` both claimed a 15-minute grab cron; the real
   cadence has been `*/5` for some time (`scheduler.ts:105`). Same drift already recorded against
@@ -147,6 +204,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   fresh ones.
 
 ### Removed
+- **24 genuinely dead exports, after re-deriving the audit's "45" correctly.** Full analysis in
+  `docs/analysis/dead-exports-2026-08-15.md`. Counting same-file callers drops the figure from 45 to
+  24: **111 symbols** have zero cross-file references but live same-file callers, so roughly 45% of
+  what the original criterion flags is real code. That includes a second instance of the near-miss
+  pattern the original audit missed (`processOnePending` in `lib/subtitle/downloader.ts`).
+  Deleted: `isPushConfigured`, `isDownloadClientImplemented`, `getEnabledIndexers`,
+  `getPendingIndexers`, `getMainData`, `getTorrentFiles`, `recheckTorrents`, `updateImportStatus`,
+  `isBlocklisted`, `markSkipped`, all of `components/ui/Card.tsx`, and the dead duplicate torrent
+  types `QbtTorrent`/`QbtTransferInfo` plus the orphans they left (`QbtTorrentState`, `TorrentFile`).
+  `WatchPartyMemberRow`, `PartyEvents` and `PlaybackRate` had their `export` dropped rather than being
+  deleted. `CUSTOM_FORMAT_FLAGS`, `VIP_DAILY_DOWNLOAD_CEILING` and `ABLoopState` were left alone —
+  their comments state why they are exported, and the first two are unfinished wiring, now backlog
+  items.
 - **`docs/WHATS-NEXT-PROMPT.md`.** The session-planning prompt had gone stale in a way that would
   actively mislead a fresh session: it declared `STATE: app at v0.10.2`, listed roughly nine
   already-shipped features (Web Push, mobile PWA, theme marketplace, piece map, torrent-create,

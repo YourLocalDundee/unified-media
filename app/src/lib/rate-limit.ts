@@ -8,10 +8,33 @@
  * DB. The signature is unchanged, so every call site is untouched. better-sqlite3 is
  * synchronous, so this stays synchronous too.
  */
+import { NextResponse } from 'next/server'
 import { getDb } from './db/index'
 
 interface BucketRow { count: number; reset_at: number }
-type RateLimitResult = { allowed: boolean; remaining: number; resetAt: number }
+export type RateLimitResult = { allowed: boolean; remaining: number; resetAt: number }
+
+/**
+ * The standard 429 for a breached limit. Use this rather than hand-rolling the response, so
+ * every rate-limited route sends `Retry-After` and a caller always knows when to retry.
+ *
+ * `resetAt` is already on the result, so the header costs nothing — it was simply missing from
+ * 17 of the 19 rate-limited routes before this helper existed. Seconds, floored at 1, because
+ * `Retry-After: 0` reads as "retry immediately" which is the opposite of what a 429 means.
+ *
+ * Not for `forgot-password`, which deliberately answers 200 on breach so it can't be used to
+ * work out which addresses are registered. That exception is documented in its own route.
+ */
+export function rateLimitResponse(
+  rl: RateLimitResult,
+  message = 'Too many requests. Try again later.'
+): NextResponse {
+  const retryAfter = Math.max(1, Math.ceil((rl.resetAt - Date.now()) / 1000))
+  return NextResponse.json(
+    { error: message },
+    { status: 429, headers: { 'Retry-After': String(retryAfter) } }
+  )
+}
 
 // Expired buckets are swept opportunistically and throttled, so we don't scan the
 // table on every single call.

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAdmin } from '@/lib/dal'
 import { verifyOrigin } from '@/lib/csrf'
+import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit'
 import { getRequestById } from '@/lib/requests/monitor'
 import { recordGrab, updateItem } from '@/lib/automation/monitor'
 import { resolveMonitoredItemForRequest } from '@/lib/automation/grab-results'
@@ -14,7 +15,14 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   if (!verifyOrigin(req)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
-  await requireAdmin()
+  const session = await requireAdmin()
+
+  // The admin grab-trigger family (this, automation/items/[id]/grab, grab/season) all drive
+  // indexer searches and download-client writes. Tighter than approve/decline's 60/5min because
+  // each call costs an external fan-out rather than a DB write.
+  const rl = checkRateLimit(`admin-grab:${session.userId}`, 30, 5 * 60 * 1000)
+  if (!rl.allowed) return rateLimitResponse(rl)
+
   const { id: idStr } = await params
   const id = parseInt(idStr, 10)
   if (isNaN(id)) return NextResponse.json({ error: 'Invalid id' }, { status: 400 })

@@ -14,7 +14,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getDb } from '@/lib/db/index'
 import { validatePassword, hashPassword } from '@/lib/password'
-import { checkRateLimit } from '@/lib/rate-limit'
+import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit'
 import { getClientIp } from '@/lib/client-ip'
 import { createHash } from 'crypto'
 import { verifyOrigin } from '@/lib/csrf'
@@ -26,9 +26,7 @@ export async function POST(req: NextRequest) {
   if (!verifyOrigin(req)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   const ip = getClientIp(req)
   const rl = checkRateLimit(`reset-password:${ip}`, 10, 15 * 60 * 1000)
-  if (!rl.allowed) {
-    return NextResponse.json({ error: 'Too many attempts. Try again later.' }, { status: 429 })
-  }
+  if (!rl.allowed) return rateLimitResponse(rl, 'Too many attempts. Try again later.')
 
   let body: { token?: string; password?: string; confirmPassword?: string }
   try { body = await req.json() as typeof body }

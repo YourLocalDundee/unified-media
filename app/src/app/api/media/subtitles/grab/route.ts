@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth } from '@/lib/dal'
 import { verifyOrigin } from '@/lib/csrf'
-import { checkRateLimit } from '@/lib/rate-limit'
+import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit'
 import { getItemById } from '@/lib/media-server/library'
 import { upsertSubtitleWant, updateSubtitleStatus, normalizeSubtitleLang } from '@/lib/subtitle/monitor'
 import { getDownloadLink } from '@/lib/subtitle/opensubtitles'
@@ -67,12 +67,7 @@ export async function POST(req: NextRequest) {
   // quota itself — 20 grabs per hour per user. The real quota is surfaced to the UI via
   // `remaining` on each grab.
   const limit = checkRateLimit(`subtitle-grab:${session.userId}`, 20, 60 * 60 * 1000)
-  if (!limit.allowed) {
-    return NextResponse.json(
-      { error: 'Too many subtitle downloads — try again later.' },
-      { status: 429 }
-    )
-  }
+  if (!limit.allowed) return rateLimitResponse(limit, 'Too many subtitle downloads — try again later.')
 
   if (!process.env.OPENSUBTITLES_API_KEY) {
     return NextResponse.json(

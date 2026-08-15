@@ -8,22 +8,10 @@ map — are in `docs/complete/FEATURES.md`, not here.)
 
 ## Buildable
 
-- **Rate limiting audit** — confirm all state-mutating routes (profile mutations, admin actions, the old request app
-  request creation) match the login handler's 10/15min/IP policy.
-- **Prune expired `pending_registrations` and `sessions` rows** — neither table is ever swept. Expiry
-  is enforced lazily at use time, so expired rows are inert but accumulate forever. The hourly
-  `auto-delete` job already prunes `login_attempts` and `audit_log` via `pruneAuthTables()`
-  (`scheduler.ts:34`); these two are simply not in its scope. Small addition to an existing job, not a
-  new one. See `docs/features/scheduling.md` → "Known gaps".
 - **Notification retry** — Discord, ntfy and Web Push sends are single-attempt with an 8s timeout and
   no backoff, queue, or dead-letter record. A transient outage silently drops that event's alert.
   Decide whether a retry is worth the complexity for a household-scale instance before building it.
   See `docs/features/scheduling.md` → "Known gaps".
-- **Re-derive the wiring audit's "45 dead exports" list** with same-file callers counted before
-  acting on any of it — the current figure conflates over-wide `export` keywords with actual dead
-  code. See `docs/incomplete/open-issues.md` "OPEN — Medium / Low remainder", 2026-08-15, and its
-  2026-08-15 Closed entry for the near-miss (`findSeasonPackCandidates`/`findArcPackCandidates`)
-  that prompted this.
 
 ## Operational / manual (not headless-doable)
 
@@ -50,10 +38,6 @@ map — are in `docs/complete/FEATURES.md`, not here.)
   `src/lib/media-server/index.ts`; either route the other 58 through it or delete the barrel and its
   stated (and currently false) "import from here" contract. See `docs/incomplete/open-issues.md`
   "OPEN — Medium / Low remainder", 2026-08-15.
-- **`sessions.device_name` column** — written by nobody, read by nobody. Populate it from the
-  `User-Agent` at `createSession()` (makes the existing session-revoke UI usable — see CLAUDE.md
-  §11) or drop the column. See `docs/incomplete/open-issues.md` "OPEN — Medium / Low remainder",
-  2026-08-15.
 
 ## Open from the 2026-06-13 audit (P2)
 

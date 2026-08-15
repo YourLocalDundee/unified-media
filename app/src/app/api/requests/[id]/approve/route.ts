@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAdmin } from '@/lib/dal'
 import { verifyOrigin } from '@/lib/csrf'
-import { checkRateLimit } from '@/lib/rate-limit'
-import { getClientIp } from '@/lib/client-ip'
+import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit'
 import { getRequestById, updateRequestStatus } from '@/lib/requests/monitor'
 import { createItem } from '@/lib/automation/monitor'
 import { resolveMonitoredItemForRequest } from '@/lib/automation/grab-results'
@@ -53,7 +52,7 @@ function firePreferredGrab(
       }
 
       // D3: atomically claim the row ('wanted'→'grabbing') before adding the torrent so this
-      // non-awaited preferred grab cannot race the 15-min cron grabbing the same row. If the
+      // non-awaited preferred grab cannot race the grab cron grabbing the same row. If the
       // cron already claimed/grabbed it (changes===0), bail and let the cron's grab stand.
       const { getDb } = await import('@/lib/db/index')
       const claim = getDb()
@@ -112,13 +111,11 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   if (!verifyOrigin(req)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
-  await requireAdmin()
+  const session = await requireAdmin()
 
-  const ip = getClientIp(req)
-  const rl = checkRateLimit(`admin-approve:${ip}`, 60, 5 * 60 * 1000)
-  if (!rl.allowed) {
-    return NextResponse.json({ error: 'Too many requests. Try again later.' }, { status: 429 })
-  }
+  // Keyed by the acting admin, not their IP — see the note in api/admin/users/[id]/route.ts.
+  const rl = checkRateLimit(`admin-approve:${session.userId}`, 60, 5 * 60 * 1000)
+  if (!rl.allowed) return rateLimitResponse(rl)
 
   const { id: idStr } = await params
 

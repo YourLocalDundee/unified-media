@@ -34,7 +34,9 @@ export interface WatchPartyRow {
   control_locked: number // 0 | 1
 }
 
-export interface WatchPartyMemberRow {
+// Not exported: the membership row shape is internal to this module's own queries. Widen
+// again only if a consumer outside src/lib/party actually needs it.
+interface WatchPartyMemberRow {
   id: number
   party_id: string
   user_id: string

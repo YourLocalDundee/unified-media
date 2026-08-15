@@ -85,7 +85,8 @@ mechanism noted in the "Overlap guard" column.
 | `import-lists` | Every 6 h, `:20` past | `20 */6 * * *` | `scheduler.ts:149` → `import-lists.ts` `syncAllImportLists` | Pulls each enabled Trakt list or RSS feed, resolves titles to TMDB ids, and auto-adds new items as long-term (never quick, never auto-deleted) monitored items. A per-list ledger (`import_list_items`, `UNIQUE(list_id, tmdb_id, media_type)`) means an item is added at most once per list even after it's later removed from the library. Capped at 100 items per list per sync. Offset 20 minutes past the hour specifically so it doesn't contend with `upgrade-scan` on the same tick. | Ledger `INSERT OR IGNORE` makes a re-add a no-op. | Per-list try/catch (`import-lists.ts:248`); a list's fetch error is recorded on that list's row (`last_error`) and the sync continues to the next list. |
 | `collections` | Daily, 03:40 | `40 3 * * *` | `scheduler.ts:158` → `collections.ts` `syncAllCollections` | For each enabled monitored TMDB collection, re-fetches the collection and auto-adds any film not yet in the per-collection ledger (`collection_items`) as a long-term monitored item — picks up sequels added to the franchise after the collection was first monitored. | Ledger `INSERT OR IGNORE`, same pattern as import-lists. | Per-collection try/catch (`collections.ts:148`); one collection's error is logged, the rest still sync. |
 | `reaper` | Every 10 min | `*/10 * * * *` | `scheduler.ts:171` → `reaper.ts` `reapStalledTorrents` | See "The reaper" below. | None explicit — re-derives its candidate list from live UMT + DB state every tick, so a double-run just reaps the same (already-blocklisted, already-removed) hash a second time as a no-op. | Per-torrent try/catch (`reaper.ts:211`); one torrent's delete/reset error is logged, the rest still process. Whole-tick UMT-unreachable returns 0 early (`reaper.ts:100`). |
-| `auto-delete` | Hourly, top of hour | `0 * * * *` | `scheduler.ts:181` → `auto-delete.ts` `runAutoDelete` + `pruneAuthTables` | Two things on one tick: (1) deletes files/DB rows for quick requests whose 48h `auto_delete_at` has passed (with an ownership guard so files another still-active request depends on are never removed — see `auto-delete.ts:62`); (2) prunes `login_attempts` older than 24h and `audit_log` older than 90 days (`scheduler.ts:34`, `pruneAuthTables`). | None explicit; deletion order (files → DB rows → status) means a crash mid-run safely re-attempts next hour at the cost of re-trying already-gone file deletes. | Per-request try/catch in `runAutoDelete` (`auto-delete.ts:142`); the auth-table prune wraps its own body in try/catch (`scheduler.ts:47`). |
+| `auto-delete` | Hourly, top of hour | `0 * * * *` | `scheduler.ts:181` → `auto-delete.ts` `runAutoDelete` + `pruneAuthTables` | Two things on one tick: (1) deletes files/DB rows for quick requests whose 48h `auto_delete_at` has passed (with an ownership guard so files another still-active request depends on are never removed — see `auto-delete.ts:62`); (2) `pruneAuthTables` prunes four tables: `login_attempts` older than 24h, `audit_log` older than 90 days, `sessions` more than 7 days past their own `expires_at`, and `pending_registrations` more than 24h past theirs; then (3) `pruneGuestUsers` deletes party-guest
+    accounts that are safely finished with — see "Guest users" below. | None explicit; deletion order (files → DB rows → status) means a crash mid-run safely re-attempts next hour at the cost of re-trying already-gone file deletes. | Per-request try/catch in `runAutoDelete` (`auto-delete.ts:142`); the auth-table prune wraps its own body in try/catch (`scheduler.ts:47`). |
 
 Cadence summary in plain English: two jobs run every couple of minutes (`import` at 2, `grab` at 5),
 two more run every 10–30 minutes (`reaper`, `availability`), two run twice a day (`upgrade-scan` and
@@ -332,21 +333,56 @@ job** — all three are enforced only when a session is actually used on a reque
   in the code's own comment (`dal.ts:90`, "Absolute TTL enforced here because rotation resets
   created_at"). Enforced the same lazy way as the other two — at request time, in `getSession()`.
 
-Nothing prunes expired `sessions` rows from the table. `login_attempts` (24h) and `audit_log` (90 days)
-*are* actively pruned, but by the unrelated hourly `auto-delete` cron's `pruneAuthTables()` step
-(`scheduler.ts:34`) — `sessions` itself is not in that prune's scope. An expired session row is inert
-(it just fails the `expires_at > ?` filter forever) but is never deleted. See "Known gaps."
+Lazy enforcement is what decides whether a session is *valid*. Deleting the row is separate, and is
+handled by the hourly `auto-delete` cron's `pruneAuthTables()` step (`scheduler.ts:41`), which drops
+`sessions` rows more than 7 days past their own `expires_at`. The 7-day tail is deliberate: an expired
+row is already unusable, so the delay costs nothing and keeps a recently-ended session visible while
+someone is investigating. Added 2026-08-15 — before that, expired rows were never deleted at all.
 
-## `pending_registrations` — no cleanup job
+## `pending_registrations` — lazy expiry, hourly prune
 
 The `pending_registrations` table (`app/src/lib/db/migrations.ts:126`) holds two-step-registration
 state with a 10-minute `expires_at` (set at insert time by the registration route, not shown in the
 migration itself). Verified by reading every reader of the table
 (`app/src/app/api/auth/check-username/route.ts`, `resend-verification/route.ts`, `register/route.ts`,
 `verify-email/route.ts`): the only expiry check is a plain `if (Date.now() > pending.expires_at)` guard
-inside `verify-email/route.ts` (line 68), run when a user submits their verification code. **There is no
-scheduled job anywhere that deletes expired `pending_registrations` rows.** An abandoned registration
-(a code that's never entered) sits in the table forever, inert but present. See "Known gaps."
+inside `verify-email/route.ts` (line 68), run when a user submits their verification code. Nothing
+consults `expires_at` anywhere else, so an abandoned registration is inert from the 10-minute mark
+onward regardless of whether the row still exists.
+
+Since 2026-08-15 the hourly `pruneAuthTables()` step deletes rows more than 24h past `expires_at`
+(`scheduler.ts:41`). Before that they accumulated forever. The 24h grace is longer than it needs to be
+for correctness and exists only so a support question about a failed signup can still be answered the
+next morning.
+
+## Guest users — pruned since 2026-08-15
+
+A party guest gets a throwaway `users` row (`is_guest=1`) plus an 8-hour session
+(`app/src/app/api/party/guest-session/route.ts`). The session was pruned from the first pass; the
+user row it belonged to was not, so every guest who ever joined a party stayed forever.
+`pruneGuestUsers()` now runs on the same hourly tick, immediately after `pruneAuthTables()` so a
+guest whose session row is dropped on that tick becomes eligible in the same pass rather than an
+hour later.
+
+`foreign_keys=ON` is set per connection (`lib/db/index.ts:32`) and `users(id)` has exactly two
+declared FK referrers, `watch_parties.host_user_id` and `watch_party_members.user_id`, so a bare
+delete would either fail or strand history. A guest is deleted only when all four hold:
+
+| Condition | Why |
+| --------- | --- |
+| No `sessions` rows at all | The sessions prune runs at `expires_at + 7 days` and a guest session lives 8 hours, so this alone means the guest has been gone about a week |
+| Hosts no party, ended or active | Ended parties are kept as history and their `host_user_id` FK has to keep resolving. A guest hosting is an edge case; skipping it costs one stale row and avoids having to decide what an ownerless party means |
+| Not a member of any still-active party | Obvious, but worth stating: membership of a *finished* party is fine and its row is cleaned up with the user |
+| No `media_requests` rows | A request represents real library work rather than a throwaway viewing session |
+
+`watch_events`, `media_watch_state` and `push_subscriptions` carry a `user_id` with no declared FK,
+so they would not block the delete, but they are cleared anyway rather than left orphaned. The
+`DELETE` re-checks `is_guest = 1` itself, so the statement can never remove a real account even if
+the selecting query were later loosened by mistake.
+
+The chat backlog is not a consideration despite appearing to be one: it is an in-memory ring buffer
+(`CHAT_RING_BUFFER_SIZE`), not a table, so it dies with the party and holds no reference to a user
+row.
 
 ## Notification retries — none
 
@@ -413,12 +449,6 @@ schedule — they exist entirely to keep an open browser tab's UI current.
 
 Scheduling work that does not exist today but a reader familiar with similar systems might expect:
 
-- **No `pending_registrations` cleanup job.** Abandoned two-step registrations accumulate in the table
-  forever (rows are inert — expiry is enforced only at verification time — but never deleted).
-  Consequence: unbounded (if slow) table growth on a long-lived instance; no functional bug.
-- **No `sessions` cleanup job.** Expired session rows are never deleted, only ever ignored by the
-  `expires_at > ?` filter. Consequence: same as above — slow, unbounded table growth, not a functional
-  bug since expired rows can never authenticate anything.
 - **No notification retry/queue.** A single failed/timed-out Discord, ntfy, or Web Push send for a
   "now available" event is permanently lost — there is no backoff, no dead-letter table, no re-send.
   Consequence: a transient outage in a notification channel silently drops that event's alert with no

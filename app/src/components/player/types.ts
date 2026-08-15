@@ -2,7 +2,9 @@
 // Centralised here so MediaToolsPanel and each sub-tool import from one place
 // instead of duplicating declarations.
 
-export type PlaybackRate = 0.25 | 0.5 | 0.75 | 1 | 1.25 | 1.5 | 1.75 | 2 | 3 | 4
+// Not exported: MediaSpeedControl implements speed switching without referencing this union,
+// so nothing consumes it. Kept as the written-down set of allowed rates.
+type PlaybackRate = 0.25 | 0.5 | 0.75 | 1 | 1.25 | 1.5 | 1.75 | 2 | 3 | 4
 
 // Used to pass A/B loop state up to a parent if needed; the component manages
 // it internally via useState, so this type exists for potential future lifting.

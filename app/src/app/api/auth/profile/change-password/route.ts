@@ -15,7 +15,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth, logEvent } from '@/lib/dal'
 import { verifyPassword, validatePassword, hashPassword } from '@/lib/password'
 import { getDb } from '@/lib/db/index'
-import { checkRateLimit } from '@/lib/rate-limit'
+import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit'
 import { verifyOrigin } from '@/lib/csrf'
 
 interface UserRow { password_hash: string }
@@ -27,9 +27,7 @@ export async function POST(req: NextRequest) {
   // Rate limit keyed on userId (not IP) so users behind shared NAT don't block
   // each other, and so a user cannot evade the limit by switching IPs.
   const rl = checkRateLimit(`change-password:${session.userId}`, 5, 15 * 60 * 1000)
-  if (!rl.allowed) {
-    return NextResponse.json({ error: 'Too many attempts. Please try again later.' }, { status: 429 })
-  }
+  if (!rl.allowed) return rateLimitResponse(rl, 'Too many attempts. Please try again later.')
 
   let body: { currentPassword?: unknown; newPassword?: unknown; confirmPassword?: unknown }
   try { body = await req.json() as typeof body }

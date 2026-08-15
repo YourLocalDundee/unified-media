@@ -5,7 +5,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth } from '@/lib/dal'
 import { verifyOrigin } from '@/lib/csrf'
-import { checkRateLimit } from '@/lib/rate-limit'
+import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit'
 import type { RequestStatus } from '@/lib/requests/types'
 import {
   getAllRequests,
@@ -40,9 +40,7 @@ export async function POST(req: NextRequest) {
   const session = await requireAuth()
 
   const rl = checkRateLimit(`create-request:${session.userId}`, 20, 60 * 60 * 1000)
-  if (!rl.allowed) {
-    return NextResponse.json({ error: 'Too many requests. Try again later.' }, { status: 429 })
-  }
+  if (!rl.allowed) return rateLimitResponse(rl)
 
   let body: {
     tmdbId?: number

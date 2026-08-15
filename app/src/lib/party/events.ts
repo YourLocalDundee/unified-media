@@ -12,7 +12,11 @@
  */
 import { EventEmitter } from 'node:events'
 
-export interface PartyEvents {
+// Not exported, and not applied to the emitter either — the emitter below is a plain
+// EventEmitter, so this is documentation of the event surface rather than a type that
+// constrains anything. Applying it would mean the tuple form (`EventEmitter<{ ended: [string] }>`),
+// which is a separate change from narrowing the export.
+interface PartyEvents {
   /** Emitted with the partyId when a party is ended in-process. */
   ended: (partyId: string) => void
 }

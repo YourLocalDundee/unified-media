@@ -45,15 +45,6 @@ function relativeTime(ms: number): string {
   return `${days} day${days === 1 ? '' : 's'} ago`
 }
 
-function inferDevice(userAgent: string | null): string {
-  if (!userAgent) return 'Unknown'
-  if (/Mobile/i.test(userAgent)) return 'Mobile'
-  if (/Firefox/i.test(userAgent)) return 'Firefox'
-  if (/Chrome/i.test(userAgent)) return 'Chrome'
-  if (/Safari/i.test(userAgent)) return 'Safari'
-  return 'Unknown'
-}
-
 // ---------------------------------------------------------------------------
 // Password rule checker (mirrors validatePassword logic from password.ts)
 // ---------------------------------------------------------------------------
@@ -146,6 +137,9 @@ interface SessionRow {
   id: string
   ip_address: string | null
   user_agent: string | null
+  // Always populated by GET /api/auth/profile/sessions — written at session creation, or
+  // derived from user_agent on read for rows that predate device_name being written.
+  device_name: string
   created_at: number
   last_seen: number
   expires_at: number
@@ -246,7 +240,7 @@ function SessionsSection({ currentSessionId }: { currentSessionId: string }) {
               <div key={s.id} className="flex items-center justify-between py-3 gap-4">
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium">{inferDevice(s.user_agent)}</span>
+                    <span className="text-sm font-medium">{s.device_name}</span>
                     {isCurrent && (
                       <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
                         Current

@@ -14,6 +14,59 @@ Severity tags mirror the audit (S = security, D = data/engine, F = functional, A
 
 ## Closed (verify when convenient, then delete from this list)
 
+**2026-08-15 — the "45 dead exports" figure re-derived: 45 → 24, and the survivors acted on**
+- Full write-up: `docs/analysis/dead-exports-2026-08-15.md`. **111 symbols** have zero cross-file
+  references and live same-file callers, so the original criterion mislabels roughly 45% of what it
+  flags. A **second instance of the same near-miss pattern** turned up that the original audit missed:
+  `processOnePending` (`lib/subtitle/downloader.ts:260`), exported in a trailing `export { … }` list,
+  zero cross-file references, three same-file callers.
+- Deleted (zero references anywhere, each verified by hand): `isPushConfigured`,
+  `isDownloadClientImplemented`, `getEnabledIndexers`, `getPendingIndexers`, `getMainData`,
+  `getTorrentFiles`, `recheckTorrents`, `updateImportStatus`, `isBlocklisted`, `markSkipped`, and the
+  whole of `components/ui/Card.tsx`.
+- Deleted as dead *duplicates* rather than merely unreferenced: `QbtTorrent` and `QbtTransferInfo`
+  (superseded by `Torrent`/`TransferInfo` in `lib/qbittorrent/types.ts`), plus the second-order
+  orphans they left behind — `QbtTorrentState` and `TorrentFile`. There are two torrent type modules
+  and the split is now documented in `docs/features/torrent-system.md`.
+- Narrowed rather than deleted, per the agreed remediation: `WatchPartyMemberRow`, `PartyEvents`,
+  `PlaybackRate`.
+- **Deliberately untouched:** `CUSTOM_FORMAT_FLAGS`, `VIP_DAILY_DOWNLOAD_CEILING` and `ABLoopState`
+  all carry comments stating why they are exported. The first two are unfinished wiring rather than
+  dead code and are now backlog items; the third is labelled scaffolding.
+- **Two methodology lessons recorded.** A naive reference count manufactures false *liveness* too, not
+  just false deadness — `Card` appeared to have three external references, all of which were the
+  English word "Card" in unrelated comments. And deleting a function orphans what it imported: three
+  type imports were left dangling and **eslint did not flag them**, because its unused-vars rule does
+  not catch type-only imports here.
+- **Verified.** `tsc --noEmit` clean, `eslint` clean, 69 vitest tests pass, `npm run build` compiles.
+  Note a green build is necessary but not sufficient here, since zero-reference symbols cannot break
+  one; the per-symbol manual check is the actual evidence.
+
+**2026-08-15 — `sessions.device_name` populated, and the two unswept auth tables now pruned**
+- `device_name` was the schema's only column written by nobody and read by nobody. It is now written
+  at `createSession()` (`src/lib/dal.ts`) from the `User-Agent`, via a new pure
+  `deviceNameFromUserAgent()` in `src/lib/device-name.ts` (12 unit tests).
+- **The open item's premise was partly wrong and this is the useful part to remember.** It claimed the
+  session list "has no way to tell one session from another." It did — `ProfileClient.tsx` had a
+  five-line client-side `inferDevice(user_agent)`. The real defect was that the five lines were bad:
+  they tested `/Mobile/` first, so every phone rendered as "Mobile" regardless of browser, and every
+  desktop Chrome rendered as "Chrome", so two sessions in the same browser were still indistinguishable
+  — which is the symptom the item described. The server-side parser orders its tests so Edge and Opera
+  aren't Chrome, Chrome isn't Safari, and the Capacitor WebView reads as "Android app". `inferDevice`
+  is deleted; the client renders `s.device_name`.
+- Rows predating the change derive the same label on read (`api/auth/profile/sessions/route.ts`) rather
+  than being backfilled in a migration — same pure function, and old rows age out within the 30-day TTL.
+- The guest-session route inserted sessions directly, bypassing `createSession()`, and stored no
+  `user_agent` at all. It now writes both columns so guest rows aren't a hole in the table.
+- Separately, `pruneAuthTables()` (`scheduler.ts:41`, hourly) gained two more tables: `sessions` past
+  `expires_at` + 7 days, and `pending_registrations` past `expires_at` + 24h. Both previously grew
+  without bound because expiry is enforced lazily at use time and nothing ever deleted the rows.
+- **Left open, newly found:** guest `users` rows (`is_guest=1`) still outlive their 8h session forever.
+  Not fixed here because a guest row can still be referenced by `watch_party_members` and chat history.
+  Tracked in `docs/incomplete/BACKLOG.md`.
+- **Verified.** `tsc --noEmit` clean, `eslint` clean on all changed files, 69 vitest tests pass (57
+  before, 12 new). Full scheduling context: `docs/features/scheduling.md`.
+
 **2026-08-15 — Wiring-audit cleanup pass: dead code deleted, open-redirect guard consolidated —
 plus a correction to the audit's dead-export methodology (commit `53caca8`)**
 - Net −1083/+30 across 7 files. Deleted, all superseded by code that already shipped:
@@ -54,9 +107,8 @@ plus a correction to the audit's dead-export methodology (commit `53caca8`)**
     unreliable and must be re-derived with same-file callers included before anything else is
     deleted on their say-so. The audit's headline figure of "45 exported symbols never referenced
     outside their own file" is exactly that flawed measure — it's a list of over-wide `export`
-    keywords, **not** a list of dead code. Now tracked as its own open item — see "OPEN — Medium /
-    Low remainder" below ("Wiring-audit '45 dead exports' figure must be re-derived before anything
-    is deleted").
+    keywords, **not** a list of dead code. **Re-derived 2026-08-15** — the corrected figure is 24, not
+    45, and the full list is `docs/analysis/dead-exports-2026-08-15.md`.
 - **Verified.** `tsc --noEmit` clean, `eslint` clean on all changed files, 57 vitest tests pass, image
   rebuilt via compose, container recreated healthy. Post-deploy smoke test: `/api/auth/login`,
   `/library`, `/requests`, `/admin/requests`, `/login` all 200.
@@ -406,32 +458,6 @@ remediation was inverted: the route was deleted, not wired in**
     stated boundary real. Mechanical but wide-reaching; touches many files for no behavioural change.
   - **Delete the barrel and its claim** — accept direct module imports as the actual convention and
     remove a file whose documented contract is fiction. Smaller, and arguably more honest.
-
-- **Wiring-audit "45 dead exports" figure must be re-derived before anything is deleted** — currently
-  only a caveat buried inside the 2026-08-15 Closed entry above ("Wiring-audit cleanup pass…");
-  promoted here so it's tracked as actionable work rather than a footnote. That audit's detector
-  counted **cross-file references only**, so a symbol exported and consumed within its own module
-  read as zero references — exactly how it wrongly flagged `findSeasonPackCandidates` /
-  `findArcPackCandidates` as dead and nearly shipped a deletion that would have broken the season/arc
-  grab-confirmation preview (caught before it shipped — see that entry for the full story).
-  1. The audit's headline "45 exported symbols never referenced outside their own file" is a list of
-     **over-wide `export` keywords**, **not** a list of dead code.
-  2. It must be **re-derived with same-file callers counted** before any of the 45 are acted on.
-  3. For whatever survives re-derivation as genuinely unreferenced, the correct remediation is to
-     **drop the `export` keyword** (narrowing the module's public surface) — **not** to delete the
-     function.
-
-- **`sessions.device_name` column is written by nobody and read by nobody** — verified 2026-08-15: of
-  the schema's 194 columns, `device_name` is the only one that appears nowhere outside
-  `src/lib/db/migrations.ts:688` (`ALTER TABLE sessions ADD COLUMN device_name TEXT`). Nothing
-  populates it at session creation and nothing reads it. Two options:
-  - **Populate it** — set it from the `User-Agent` header in `createSession()` (`src/lib/dal.ts`).
-    The more useful option: a session-management surface already exists and would benefit —
-    `GET /api/auth/profile/sessions` lists active sessions, `DELETE /api/auth/profile/sessions/:id`
-    revokes one, `POST /api/auth/profile/sessions/revoke-others` revokes the rest (CLAUDE.md §11) —
-    and right now that list has no way to tell one session from another, which makes "revoke this
-    one" close to guesswork for the user. A small genuine feature, not just cleanup.
-  - **Drop the column** in a migration if the session list is never going to show device names.
 
 - **A7-10** two parallel qBit SID caches — left separate by design (different lifetimes/credential
   sourcing); the `clearSession`-on-failed-retry fix (A7-11) was applied to both. Unify only if revisited.

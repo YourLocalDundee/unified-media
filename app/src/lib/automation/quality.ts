@@ -13,6 +13,7 @@
 
 import { getDb } from '@/lib/db/index'
 import { parseReleaseName } from './parser'
+import { FLAG_PATTERNS } from './flags'
 import type { ReleaseMeta } from './types'
 
 // ── types ─────────────────────────────────────────────────────────────────────
@@ -32,33 +33,9 @@ export interface CustomFormatSpec {
   negate: boolean
 }
 
-// Named release flags → detection regex. The 'flag' spec value is one of these keys; an unknown
-// key falls back to a word-boundary match of the value itself so new tags still work.
-const FLAG_PATTERNS: Record<string, RegExp> = {
-  proper: /\bproper\b/i,
-  repack: /\brepack\b/i,
-  internal: /\binternal\b/i,
-  real: /\breal\b/i,
-  extended: /\bextended\b/i,
-  uncut: /\buncut\b/i,
-  remux: /\bremux\b/i,
-  hybrid: /\bhybrid\b/i,
-  hdr10plus: /\bhdr10\+|\bhdr10plus\b/i,
-  hdr: /\bhdr\b/i,
-  dv: /\b(?:dv|dovi|dolby[\s.]?vision)\b/i,
-  atmos: /\batmos\b/i,
-  imax: /\bimax\b/i,
-  // Edition flags — dotted scene titles use [._\s-] as separators, so patterns must match across them
-  directors_cut: /\bdirectors?'?[._\s-]?cut\b/i,
-  theatrical:    /\btheatrical(?:[._\s-]?(?:cut|edition|version))?\b/i,
-  remastered:    /\bre-?master(?:ed)?\b/i,
-  unrated:       /\bunrated(?:[._\s-]?(?:cut|edition))?\b/i,
-  // Hardcoded (burned-in) subtitle flag — de-prioritize or reject these releases
-  hc: /\b(?:HC|HCSUB|KORSUB|RUSUB|HardSub|HardCoded)\b/i,
-}
-
-// Known flag keys, exported so the admin UI can offer them as a dropdown.
-export const CUSTOM_FORMAT_FLAGS = Object.keys(FLAG_PATTERNS)
+// Flag patterns and the CUSTOM_FORMAT_FLAGS key list live in ./flags, which has no imports and
+// is therefore safe for a client component. Import them from there, not through this module —
+// this one pulls in getDb and would drag better-sqlite3 into any client bundle that touched it.
 
 // Match a size against a "min-max" GB range. Empty endpoints are open (min-only / max-only).
 function sizeMatches(value: string, sizeBytes: number | undefined): boolean {

@@ -137,14 +137,6 @@ export function loadBlocklist(): Set<string> {
   return new Set(rows.map((r) => r.info_hash.toLowerCase()))
 }
 
-export function isBlocklisted(infoHash: string): boolean {
-  if (!infoHash) return false
-  const row = getDb()
-    .prepare('SELECT 1 FROM grab_blocklist WHERE info_hash = ?')
-    .get(infoHash.toLowerCase())
-  return row !== undefined
-}
-
 /** Idempotent — re-blocking an existing hash just refreshes the title/reason/timestamp. */
 export function addToBlocklist(infoHash: string, title: string | null, reason: string): void {
   if (!infoHash) return

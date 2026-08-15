@@ -21,12 +21,6 @@ export function getAllIndexers(): Indexer[] {
     .all() as Indexer[]
 }
 
-export function getEnabledIndexers(): Indexer[] {
-  return getDb()
-    .prepare('SELECT * FROM indexers WHERE enabled = 1 ORDER BY name')
-    .all() as Indexer[]
-}
-
 // ── Health / backoff ──────────────────────────────────────────────────────────
 // One flaky tracker should not degrade every search, so a torznab indexer that fails
 // HEALTH_FAILURE_THRESHOLD searches in a row enters exponential backoff and is skipped by the
@@ -221,12 +215,6 @@ export function updateIndexerCaps(id: number, categoriesJson: string): void {
   getDb()
     .prepare('UPDATE indexers SET caps_categories = ?, caps_checked_at = ? WHERE id = ?')
     .run(categoriesJson, Date.now(), id)
-}
-
-export function getPendingIndexers(): Indexer[] {
-  return getDb()
-    .prepare('SELECT * FROM indexers WHERE requires_auth = 1 AND enabled = 0 ORDER BY name')
-    .all() as Indexer[]
 }
 
 export function activateIndexer(id: number, torznab_url: string, api_key: string): void {

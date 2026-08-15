@@ -15,7 +15,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { getDb } from '@/lib/db/index'
-import { checkRateLimit } from '@/lib/rate-limit'
+import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit'
 import { getClientIp } from '@/lib/client-ip'
 import { createSession, logEvent } from '@/lib/dal'
 import { cookies } from 'next/headers'
@@ -45,9 +45,7 @@ export async function POST(req: NextRequest) {
   if (!verifyOrigin(req)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   const ip = getClientIp(req)
   const rl = checkRateLimit(`verify-email:${ip}`, 10, 15 * 60 * 1000)
-  if (!rl.allowed) {
-    return NextResponse.json({ error: 'Too many verification attempts. Try again later.' }, { status: 429 })
-  }
+  if (!rl.allowed) return rateLimitResponse(rl, 'Too many verification attempts. Try again later.')
 
   let body: { pendingId?: string; code?: string }
   try { body = await req.json() as typeof body }

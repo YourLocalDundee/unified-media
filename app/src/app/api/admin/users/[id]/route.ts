@@ -5,8 +5,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAdmin, logEvent } from '@/lib/dal'
-import { checkRateLimit } from '@/lib/rate-limit'
-import { getClientIp } from '@/lib/client-ip'
+import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit'
 import { getDb } from '@/lib/db/index'
 import { verifyOrigin } from '@/lib/csrf'
 
@@ -16,11 +15,11 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
   if (!verifyOrigin(req)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 }) // S2: CSRF
   const session = await requireAdmin()
 
-  const ip = getClientIp(req)
-  const rl = checkRateLimit(`admin-users:${ip}`, 30, 10 * 60 * 1000)
-  if (!rl.allowed) {
-    return NextResponse.json({ error: 'Too many requests. Try again later.' }, { status: 429 })
-  }
+  // Keyed by the acting admin, not their IP. IP-keying was wrong in both directions here:
+  // two admins behind one NAT shared a bucket, while one admin moving between networks got a
+  // fresh bucket each time. The actor is authenticated, so key on the actor.
+  const rl = checkRateLimit(`admin-users:${session.userId}`, 30, 10 * 60 * 1000)
+  if (!rl.allowed) return rateLimitResponse(rl)
 
   const { id } = await params
   // Prevent the acting admin from deleting their own account.
@@ -42,11 +41,11 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   if (!verifyOrigin(req)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 }) // S2: CSRF
   const session = await requireAdmin()
 
-  const ip = getClientIp(req)
-  const rl = checkRateLimit(`admin-users:${ip}`, 30, 10 * 60 * 1000)
-  if (!rl.allowed) {
-    return NextResponse.json({ error: 'Too many requests. Try again later.' }, { status: 429 })
-  }
+  // Keyed by the acting admin, not their IP. IP-keying was wrong in both directions here:
+  // two admins behind one NAT shared a bucket, while one admin moving between networks got a
+  // fresh bucket each time. The actor is authenticated, so key on the actor.
+  const rl = checkRateLimit(`admin-users:${session.userId}`, 30, 10 * 60 * 1000)
+  if (!rl.allowed) return rateLimitResponse(rl)
 
   const { id } = await params
   let body: { role?: string; is_active?: number; force_pw_change?: number }

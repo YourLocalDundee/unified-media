@@ -10,15 +10,6 @@ import { QBittorrentClient } from './qbittorrent'
 import { TransmissionClient } from './transmission'
 import { DelugeClient } from './deluge'
 
-// All three backends now implement the DownloadClient interface. Kept as the single
-// gate so UI/behaviour can still cheaply ask "is the configured client real?" before
-// showing a torrent-management surface that assumes a working backend.
-const IMPLEMENTED_CLIENTS = new Set(['umt', 'transmission', 'deluge'])
-
-export function isDownloadClientImplemented(): boolean {
-  return IMPLEMENTED_CLIENTS.has(getDownloadClientConfig().type)
-}
-
 function createClient(): DownloadClient {
   const config = getDownloadClientConfig()
 

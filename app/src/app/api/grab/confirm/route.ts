@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth } from '@/lib/dal'
 import { verifyOrigin } from '@/lib/csrf'
+import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit'
 import { getItemById } from '@/lib/automation/monitor'
 import { resolveMonitoredItemForRequest, recordGrabResults, type ScoredCandidate } from '@/lib/automation/grab-results'
 import { searchCandidatesForItem, grabSpecificRelease } from '@/lib/automation/grabber'
@@ -33,6 +34,13 @@ const releaseKey = (r: TorznabResult) => r.infoHash || r.title
 export async function POST(req: NextRequest) {
   if (!verifyOrigin(req)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   const session = await requireAuth()
+
+  // This is the only route where a non-admin can drive external indexer searches and
+  // download-client writes, so it needs a ceiling. 20/hr/userId matches the two sibling
+  // user-initiated grab routes (POST /api/requests, POST /api/media/subtitles/grab) —
+  // far above what walking a confirmation modal costs, far below a useful abuse loop.
+  const rl = checkRateLimit(`grab-confirm:${session.userId}`, 20, 60 * 60 * 1000)
+  if (!rl.allowed) return rateLimitResponse(rl, 'Too many grab attempts. Try again later.')
 
   const body = await req.json().catch(() => null) as {
     itemId?: number

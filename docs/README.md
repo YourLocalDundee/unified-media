@@ -19,6 +19,8 @@ Documentation for the unified-frontend / unified-media project. `CLAUDE.md` at t
 | Path | What |
 | ---- | ---- |
 | `analysis/audit-2026-06-13-summary.md` | The 21-agent audit (closed) + remediation status |
+| `analysis/rate-limit-audit-2026-08-15.md` | All 77 state-mutating handlers: what is limited, what is deliberately not, what is still open |
+| `analysis/dead-exports-2026-08-15.md` | The "45 dead exports" figure re-derived correctly (45 → 24), what was deleted, and the two ways a naive reference count lies |
 | `complete/FEATURES.md` | Shipped-feature index: build phases, independence build, party play, subtitle search, request system |
 | `incomplete/BACKLOG.md` | Remaining work + future ideas |
 | `player/player-tools.md` | Player tool components + Web Audio chain |

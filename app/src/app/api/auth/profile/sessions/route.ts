@@ -12,6 +12,7 @@
 import { NextResponse } from 'next/server'
 import { requireAuth } from '@/lib/dal'
 import { getDb } from '@/lib/db/index'
+import { deviceNameFromUserAgent } from '@/lib/device-name'
 
 export const dynamic = 'force-dynamic'
 
@@ -19,6 +20,7 @@ interface SessionRow {
   id: string
   ip_address: string | null
   user_agent: string | null
+  device_name: string | null
   created_at: number
   last_seen: number
   expires_at: number
@@ -28,11 +30,19 @@ export async function GET() {
   const session = await requireAuth()
   const db = getDb()
   const sessions = db.prepare(
-    `SELECT id, ip_address, user_agent, created_at, last_seen, expires_at
+    `SELECT id, ip_address, user_agent, device_name, created_at, last_seen, expires_at
      FROM sessions
      WHERE user_id = ?
      ORDER BY last_seen DESC`
   ).all(session.userId) as SessionRow[]
 
-  return NextResponse.json({ sessions, currentSessionId: session.sessionId })
+  // device_name is only written from createSession() onwards, so sessions that predate that
+  // have it NULL. Derive on read rather than backfilling in a migration: the same pure
+  // function produces the same label either way, and old rows age out within the 30-day TTL.
+  const withDevice = sessions.map((s) => ({
+    ...s,
+    device_name: s.device_name ?? deviceNameFromUserAgent(s.user_agent),
+  }))
+
+  return NextResponse.json({ sessions: withDevice, currentSessionId: session.sessionId })
 }

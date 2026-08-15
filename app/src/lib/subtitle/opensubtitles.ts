@@ -22,9 +22,15 @@ import type {
 const DEFAULT_HOST = 'api.opensubtitles.com'
 const USER_AGENT = 'unified-frontend/1.0'
 
-// VIP daily download ceiling — the documented default for a VIP consumer. The live
-// value is read from /infos/user at runtime; this is only used for low-quota warnings.
-export const VIP_DAILY_DOWNLOAD_CEILING = 1000
+// VIP daily download ceiling — the documented default for a VIP consumer. The live value is
+// read from /infos/user at runtime; this is only used to derive the low-quota warning point.
+const VIP_DAILY_DOWNLOAD_CEILING = 1000
+
+// Warn once the remaining allowance falls below this share of the ceiling. 2% of 1000 is the
+// bare `20` that used to be hardcoded at the call site with no stated connection to the
+// ceiling; expressing it as a relationship means the two can't drift apart if the ceiling
+// changes, and it makes the constant above do the job its comment claims.
+const LOW_QUOTA_WARN_THRESHOLD = Math.ceil(VIP_DAILY_DOWNLOAD_CEILING * 0.02)
 
 // Re-login this far before the ~24h JWT expiry to avoid mid-request token death.
 const TOKEN_TTL_MS = 23 * 60 * 60 * 1000
@@ -207,8 +213,10 @@ async function getDownloadLink(fileId: number): Promise<OSDownloadResponse> {
   const response = (await res.json()) as OSDownloadResponse
   if (response.remaining <= 0) {
     console.warn('[opensubtitles] Daily download limit reached')
-  } else if (response.remaining < 20) {
-    console.warn(`[opensubtitles] Low daily quota: ${response.remaining} downloads remaining`)
+  } else if (response.remaining < LOW_QUOTA_WARN_THRESHOLD) {
+    console.warn(
+      `[opensubtitles] Low daily quota: ${response.remaining} of ~${VIP_DAILY_DOWNLOAD_CEILING} downloads remaining`,
+    )
   }
   return response
 }

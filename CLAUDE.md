@@ -435,14 +435,21 @@ Former §10 / §10a / §10b are consolidated under `docs/player/` (see §9).
 **DB (v0.5.2/0.5.3):** additive `ALTER TABLE users ADD COLUMN display_name/first_name/last_name/bio/
 location` (try/catch wrapped) + `pending_registrations` table (id, username, email, password_hash,
 demographics, 6-digit code, attempts, 10-min `expires_at`). Expiry is enforced lazily at verification
-time and there is no cleanup job — same for expired `sessions` rows. See `docs/features/scheduling.md`.
+time; the hourly prune deletes the rows a day later. Same for expired `sessions` rows, at 7 days. See
+`docs/features/scheduling.md`.
+
+**Session device labels:** `sessions.device_name` is written at `createSession()` from the
+`User-Agent` via `deviceNameFromUserAgent()` (`src/lib/device-name.ts`) — "Chrome on Windows",
+"Android app". Rows predating it fall back to deriving the same label on read. Never parse a UA
+inline in a component; that's what the old five-line `inferDevice` in `ProfileClient.tsx` did, and it
+labelled every phone "Mobile".
 
 ---
 
 ## 12. Unified Torrent System → see `docs/features/torrent-system.md`
 
 The full UMT client UI (`/downloads` + `TorrentDetailPanel`), the `src/types/torrent.ts` type
-catalogue (44-field `QbtTorrent`, 90-field `QbtPreferences`, etc.), the proxy multipart/query/re-auth
+catalogue (90-field `QbtPreferences`, `QbtFileInfo`, `QbtPeerInfo`, etc.), the proxy multipart/query/re-auth
 fixes, the complete endpoint table (~40 ops), the 8-tab `/settings/torrent` page, the Files-tab piece
 map, and the create-torrent dialog are documented in `docs/features/torrent-system.md`. Live-page note:
 `src/app/downloads/components/*` is a **dead alternate UI** — the live UI is `page.tsx` +

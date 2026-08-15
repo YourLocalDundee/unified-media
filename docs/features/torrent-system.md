@@ -5,17 +5,23 @@
 All UMT API types live at `src/types/torrent.ts`, using exact UMT field names so
 responses assign directly without mapping:
 
-- `QbtTorrentState` — union of 19 state strings
-- `QbtTorrent` — full torrent list item (44 fields)
 - `QbtTorrentProperties` — per-torrent detail from `/torrents/properties` (33 fields)
 - `QbtTrackerInfo`, `QbtPeerInfo`, `QbtFileInfo` — detail panel data
-- `QbtTransferInfo` — global speeds + disk space
 - `QbtPreferences` — all 90 app preference fields from `/app/preferences`
 - `TorrentUIPreferences` — localStorage-only UI settings (`unified-torrent-prefs`)
 
-The legacy `Torrent` interface in `src/lib/qbittorrent/types.ts` is extended with the extra fields
-(`magnet_uri`, `availability`, `super_seeding`, `force_start`, `seq_dl`, `f_l_piece_prio`, …) to remain
-compatible with existing hooks.
+**There are two torrent type modules and only one of them is live for the list view.** The `Torrent`
+interface in `src/lib/qbittorrent/types.ts` is what `app/downloads/page.tsx` and the hooks actually
+import; it carries the extra fields (`magnet_uri`, `availability`, `super_seeding`, `force_start`,
+`seq_dl`, `f_l_piece_prio`, …). `types/torrent.ts` supplies the detail-panel shapes instead
+(`QbtFileInfo` and friends, used by `TorrentDetailPanel.tsx` and `PieceMap.tsx`).
+
+That split is why three types here were dead and were deleted on 2026-08-15: `QbtTorrent` (44 fields)
+and `QbtTransferInfo` were duplicates of `Torrent`/`TransferInfo` in the other module and had no
+importers, `QbtTorrentState` existed only to type `QbtTorrent`, and `TorrentFile` in
+`lib/qbittorrent/types.ts` was a duplicate of `QbtFileInfo` used only by a dead API wrapper. Before
+adding a torrent shape, check which of the two modules the consumer imports from. See
+`docs/analysis/dead-exports-2026-08-15.md`.
 
 ## Proxy audit findings (`src/app/api/qbit/[...path]/route.ts`)
 

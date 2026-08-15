@@ -13,6 +13,7 @@ import { requireAdmin } from '@/lib/dal'
 import { getItemById } from '@/lib/automation/monitor'
 import { grabItem } from '@/lib/automation/grabber'
 import { verifyOrigin } from '@/lib/csrf'
+import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit'
 
 export const dynamic = 'force-dynamic'
 
@@ -21,7 +22,11 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   if (!verifyOrigin(req)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 }) // S2: CSRF
-  await requireAdmin()
+  const session = await requireAdmin()
+
+  // Shared ceiling with the rest of the admin grab-trigger family — see requests/[id]/grab.
+  const rl = checkRateLimit(`admin-grab:${session.userId}`, 30, 5 * 60 * 1000)
+  if (!rl.allowed) return rateLimitResponse(rl)
 
   const { id: idStr } = await params
   const id = parseInt(idStr, 10)

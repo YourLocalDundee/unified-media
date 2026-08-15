@@ -15,7 +15,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getDb } from '@/lib/db/index'
 import { verifyPassword } from '@/lib/password'
-import { checkRateLimit } from '@/lib/rate-limit'
+import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit'
 import { getClientIp } from '@/lib/client-ip'
 import { createSession, logEvent } from '@/lib/dal'
 import { cookies } from 'next/headers'
@@ -39,12 +39,7 @@ export async function POST(req: NextRequest) {
   if (!verifyOrigin(req)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   const ip = getClientIp(req)
   const rl = checkRateLimit(`login:${ip}`, 10, 15 * 60 * 1000)
-  if (!rl.allowed) {
-    return NextResponse.json(
-      { error: 'Too many attempts. Please wait before trying again.' },
-      { status: 429, headers: { 'Retry-After': '900' } }
-    )
-  }
+  if (!rl.allowed) return rateLimitResponse(rl, 'Too many attempts. Please wait before trying again.')
 
   let body: { username?: string; password?: string }
   try { body = await req.json() as { username?: string; password?: string } }

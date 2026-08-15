@@ -3,7 +3,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth } from '@/lib/dal'
-import { checkRateLimit } from '@/lib/rate-limit'
+import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit'
 import { verifyOrigin } from '@/lib/csrf'
 import { getPartyStore } from '@/lib/party/state-store'
 import { JOIN_RATE_LIMIT, RATE_LIMIT_WINDOW_MS } from '@/lib/party/constants'
@@ -16,9 +16,7 @@ export async function POST(req: NextRequest) {
   const session = await requireAuth()
 
   const rl = checkRateLimit(`party-join:${session.userId}`, JOIN_RATE_LIMIT, RATE_LIMIT_WINDOW_MS)
-  if (!rl.allowed) {
-    return NextResponse.json({ error: 'Too many join attempts. Try again later.' }, { status: 429 })
-  }
+  if (!rl.allowed) return rateLimitResponse(rl, 'Too many join attempts. Try again later.')
 
   const body = await req.json().catch(() => null) as { joinCode?: string; partyId?: string } | null
   if (!body || (!body.joinCode && !body.partyId)) {
@@ -32,9 +30,7 @@ export async function POST(req: NextRequest) {
     // Count a failed attempt against a separate bucket so a brute-force scan of
     // the 6-char join code (~36^6) is throttled without burning the normal join quota.
     const fail = checkRateLimit(`party-join-fail:${session.userId}`, 10, RATE_LIMIT_WINDOW_MS)
-    if (!fail.allowed) {
-      return NextResponse.json({ error: 'Too many failed join attempts. Try again later.' }, { status: 429 })
-    }
+    if (!fail.allowed) return rateLimitResponse(fail, 'Too many failed join attempts. Try again later.')
     return NextResponse.json({ error: 'Party not found or already ended' }, { status: 404 })
   }
 

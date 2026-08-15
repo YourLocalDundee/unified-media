@@ -3,6 +3,9 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useFocusTrap } from '@/hooks/useFocusTrap'
 import type { QualityProfileFull, QualityTier, CustomFormatSpec } from '@/lib/automation/quality'
+// From lib/automation/flags, not lib/automation/quality — quality.ts imports getDb, so importing
+// the value (rather than a type) from it would pull better-sqlite3 into this client bundle.
+import { CUSTOM_FORMAT_FLAGS } from '@/lib/automation/flags'
 import type { QualityCondition } from '@/lib/automation/types'
 
 type FormatEntry = { format_id: number; name: string; specs: string; score: number }
@@ -129,7 +132,9 @@ const SPEC_VALUE_HINT: Record<CustomFormatSpec['type'], string> = {
   language: 'ISO code: en, fr, ja…',
   release_group: 'scene group, e.g. NTb',
   size: 'GB range: 2-8, -25, 4-',
-  flag: 'hc, proper, repack, hdr, dv, atmos, imax, extended, directors_cut, theatrical, remastered, unrated…',
+  // 'flag' has no hint because it renders a dropdown of CUSTOM_FORMAT_FLAGS instead of a free
+  // text box. This used to be a hand-written list of flag names that had drifted to 12 of 18.
+  flag: '',
 }
 
 function AddFormatModal({
@@ -192,12 +197,25 @@ function AddFormatModal({
               >
                 {SPEC_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
               </select>
-              <input
-                value={spec.value}
-                onChange={e => updateSpec(i, { value: e.target.value })}
-                placeholder={SPEC_VALUE_HINT[spec.type] ?? 'value…'}
-                className="flex-1 rounded bg-zinc-800 px-2 py-1.5 text-xs text-white outline-none"
-              />
+              {spec.type === 'flag' ? (
+                // The flag set is a closed list, so pick from it rather than typing a key that
+                // silently falls through to a word-boundary match on whatever was typed.
+                <select
+                  value={spec.value}
+                  onChange={e => updateSpec(i, { value: e.target.value })}
+                  className="flex-1 rounded bg-zinc-800 px-2 py-1.5 text-xs text-white outline-none"
+                >
+                  <option value="">select a flag…</option>
+                  {CUSTOM_FORMAT_FLAGS.map(f => <option key={f} value={f}>{f}</option>)}
+                </select>
+              ) : (
+                <input
+                  value={spec.value}
+                  onChange={e => updateSpec(i, { value: e.target.value })}
+                  placeholder={SPEC_VALUE_HINT[spec.type] ?? 'value…'}
+                  className="flex-1 rounded bg-zinc-800 px-2 py-1.5 text-xs text-white outline-none"
+                />
+              )}
               <label className="flex items-center gap-1 text-xs text-zinc-400 whitespace-nowrap">
                 <input type="checkbox" checked={spec.negate} onChange={e => updateSpec(i, { negate: e.target.checked })} />
                 NOT

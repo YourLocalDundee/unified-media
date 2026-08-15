@@ -5,6 +5,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth } from '@/lib/dal'
 import { verifyOrigin } from '@/lib/csrf'
+import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit'
 import { getAllProfiles } from '@/lib/automation/quality'
 import { getDb } from '@/lib/db/index'
 import type { QualityCondition } from '@/lib/automation/types'
@@ -26,6 +27,12 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   if (!verifyOrigin(req)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   const session = await requireAuth()
+
+  // requireAuth is correct here and must stay: profiles are user-owned by design (GET returns
+  // shared profiles plus the caller's own, and getAllProfiles() filters on user_id). What was
+  // missing is a ceiling on how many a single user can create.
+  const rl = checkRateLimit(`create-profile:${session.userId}`, 20, 60 * 60 * 1000)
+  if (!rl.allowed) return rateLimitResponse(rl, 'Too many quality profiles created. Try again later.')
 
   let body: { name?: unknown; conditions?: unknown } = {}
   try { body = await req.json() } catch { return NextResponse.json({ error: 'Invalid request' }, { status: 400 }) }

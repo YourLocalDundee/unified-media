@@ -14,7 +14,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSession, logEvent } from '@/lib/dal'
 import { verifyOrigin } from '@/lib/csrf'
-import { checkRateLimit } from '@/lib/rate-limit'
+import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit'
 import { validatePassword, verifyPassword, hashPassword } from '@/lib/password'
 import { getDb } from '@/lib/db/index'
 
@@ -33,12 +33,7 @@ export async function POST(req: NextRequest) {
   // Throttle online guessing of the admin-issued temp password (A1-007), mirroring
   // the profile change-password limiter: 5 attempts per 15 minutes per user.
   const rl = checkRateLimit(`change-password:${session.userId}`, 5, 15 * 60 * 1000)
-  if (!rl.allowed) {
-    return NextResponse.json(
-      { error: 'Too many attempts. Please wait before trying again.' },
-      { status: 429, headers: { 'Retry-After': '900' } }
-    )
-  }
+  if (!rl.allowed) return rateLimitResponse(rl, 'Too many attempts. Please wait before trying again.')
 
   let body: { currentPassword?: string; newPassword?: string }
   try { body = await req.json() as typeof body }

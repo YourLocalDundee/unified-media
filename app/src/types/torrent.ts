@@ -1,74 +1,6 @@
 // UMT API types — field names match the API response exactly so responses
 // can be assigned without mapping.
 
-export type QbtTorrentState =
-  | 'error'
-  | 'missingFiles'
-  | 'uploading'
-  | 'pausedUP'
-  | 'queuedUP'
-  | 'stalledUP'
-  | 'checkingUP'
-  | 'forcedUP'
-  | 'allocating'
-  | 'downloading'
-  | 'metaDL'
-  | 'pausedDL'
-  | 'queuedDL'
-  | 'stalledDL'
-  | 'checkingDL'
-  | 'forcedDL'
-  | 'checkingResumeData'
-  | 'moving'
-  | 'unknown'
-
-export interface QbtTorrent {
-  hash: string
-  name: string
-  magnet_uri: string
-  size: number
-  progress: number          // 0–1
-  dlspeed: number           // bytes/s
-  upspeed: number           // bytes/s
-  priority: number
-  num_seeds: number
-  num_complete: number
-  num_leechs: number
-  num_incomplete: number
-  ratio: number
-  eta: number               // seconds
-  state: QbtTorrentState
-  seq_dl: boolean
-  f_l_piece_prio: boolean
-  category: string
-  tags: string              // comma-separated
-  super_seeding: boolean
-  force_start: boolean
-  save_path: string
-  content_path: string
-  added_on: number          // unix timestamp
-  completion_on: number
-  tracker: string
-  trackers_count: number
-  downloaded: number
-  uploaded: number
-  downloaded_session: number
-  uploaded_session: number
-  amount_left: number
-  time_active: number
-  seeding_time: number
-  last_activity: number
-  seen_complete: number
-  total_size: number
-  reannounce: number
-  infohash_v1: string
-  infohash_v2: string
-  ratio_limit: number
-  seeding_time_limit: number
-  auto_tmm: boolean
-  availability: number
-}
-
 export interface QbtTorrentProperties {
   save_path: string
   creation_date: number
@@ -147,20 +79,6 @@ export interface QbtFileInfo {
   is_seed: boolean
   piece_range: [number, number]
   availability: number
-}
-
-export interface QbtTransferInfo {
-  dl_info_speed: number
-  dl_info_data: number
-  up_info_speed: number
-  up_info_data: number
-  dl_rate_limit: number
-  up_rate_limit: number
-  dht_nodes: number
-  connection_status: string
-  alltime_dl: number
-  alltime_ul: number
-  free_space_on_disk: number
 }
 
 export interface QbtPreferences {

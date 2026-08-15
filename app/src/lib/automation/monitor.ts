@@ -16,7 +16,6 @@ import { getDb } from '@/lib/db/index'
 import { computeScopeKey } from './scope-key'
 import type {
   GrabHistory,
-  ImportStatus,
   ItemStatus,
   MediaType,
   MonitoredItem,
@@ -330,12 +329,4 @@ export function getGrabHistory(itemId?: number): GrabHistory[] {
   return db
     .prepare('SELECT * FROM grab_history ORDER BY grabbed_at DESC LIMIT 100')
     .all() as GrabHistory[]
-}
-
-export function updateImportStatus(id: number, status: ImportStatus): void {
-  const db = getDb()
-  db.prepare('UPDATE grab_history SET import_status = ? WHERE id = ?').run(
-    status,
-    id
-  )
 }

@@ -28,6 +28,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAdmin } from '@/lib/dal'
 import { verifyOrigin } from '@/lib/csrf'
+import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit'
 import { getProfileById, createItem, recordGrab, updateItem } from '@/lib/automation/monitor'
 import { createRequest, updateRequestStatus, getRequestByTmdb } from '@/lib/requests/monitor'
 import { findCoveringPacks } from '@/lib/automation/grabber'
@@ -117,6 +118,10 @@ function recordGrabRequest(
 export async function POST(req: NextRequest) {
   const session = await requireAdmin()
   if (!verifyOrigin(req)) return NextResponse.json({ error: 'Invalid origin' }, { status: 403 })
+
+  // Shared ceiling with the rest of the admin grab-trigger family — see requests/[id]/grab.
+  const rl = checkRateLimit(`admin-grab:${session.userId}`, 30, 5 * 60 * 1000)
+  if (!rl.allowed) return rateLimitResponse(rl)
 
   const body = (await req.json().catch(() => null)) as {
     tmdbId?: number

@@ -110,17 +110,6 @@ export interface MainData {
   }>
 }
 
-export interface TorrentFile {
-  index: number
-  name: string
-  size: number
-  progress: number
-  priority: number
-  is_seed: boolean
-  piece_range: [number, number]
-  availability: number
-}
-
 // Parameters for /api/v2/torrents/add. All fields are optional — omit any that
 // should keep the server's default. `paused` and `stopped` are different param
 // names for the same intent across UMT versions; send both when targeting v4/v5.

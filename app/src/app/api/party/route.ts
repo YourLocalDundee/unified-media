@@ -3,7 +3,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth, makeId, logEvent } from '@/lib/dal'
-import { checkRateLimit } from '@/lib/rate-limit'
+import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit'
 import { verifyOrigin } from '@/lib/csrf'
 import { getDb } from '@/lib/db/index'
 import { getPartyStore } from '@/lib/party/state-store'
@@ -17,9 +17,7 @@ export async function POST(req: NextRequest) {
   const session = await requireAuth()
 
   const rl = checkRateLimit(`party-create:${session.userId}`, CREATE_RATE_LIMIT, RATE_LIMIT_WINDOW_MS)
-  if (!rl.allowed) {
-    return NextResponse.json({ error: 'Too many parties created. Try again later.' }, { status: 429 })
-  }
+  if (!rl.allowed) return rateLimitResponse(rl, 'Too many parties created. Try again later.')
 
   const body = await req.json().catch(() => null) as { mediaId?: string } | null
   const mediaId = body?.mediaId

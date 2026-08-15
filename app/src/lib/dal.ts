@@ -21,6 +21,7 @@ import { cookies } from 'next/headers'
 import { redirect } from 'next/navigation'
 import { getDb } from './db/index'
 import { getCountryFromIP } from './geo'
+import { deviceNameFromUserAgent } from './device-name'
 
 export interface SessionData {
   userId: string
@@ -159,9 +160,18 @@ export async function createSession(
   const id = makeId(32)
   const now = Date.now()
   getDb().prepare(
-    `INSERT INTO sessions (id, user_id, ip_address, user_agent, created_at, expires_at, last_seen)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`
-  ).run(id, userId, ip ?? null, userAgent ?? null, now, now + SESSION_TTL_MS, now)
+    `INSERT INTO sessions (id, user_id, ip_address, user_agent, device_name, created_at, expires_at, last_seen)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    id,
+    userId,
+    ip ?? null,
+    userAgent ?? null,
+    deviceNameFromUserAgent(userAgent),
+    now,
+    now + SESSION_TTL_MS,
+    now
+  )
   return id
 }
 
