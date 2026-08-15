@@ -17,18 +17,7 @@ import { useState, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { Eye, EyeOff, Loader2 } from 'lucide-react'
 import { useAuth } from '@/context/AuthContext'
-
-// Validates the post-login redirect target to prevent open-redirect attacks.
-// Blocks protocol-relative URLs (//evil.com), absolute URLs (contains ':'),
-// and circular redirects back to auth pages. Mirrors src/lib/safe-redirect.ts
-// but inlined here to avoid pulling a server-only module into a client component.
-function getSafeRedirect(from: string | null): string {
-  if (!from) return '/'
-  if (!from.startsWith('/') || from.startsWith('//')) return '/'
-  if (from.includes(':')) return '/'
-  if (from.startsWith('/login') || from.startsWith('/register')) return '/'
-  return from
-}
+import { getSafeRedirectUrl } from '@/lib/safe-redirect'
 
 function LoginForm() {
   const [username, setUsername] = useState('')
@@ -73,7 +62,7 @@ function LoginForm() {
 
       // Refresh context so the nav and any server components see the new session.
       await refresh()
-      router.push(getSafeRedirect(searchParams.get('from')))
+      router.push(getSafeRedirectUrl(searchParams.get('from')))
     } catch {
       setError('An unexpected error occurred. Please try again.')
     } finally {

@@ -324,7 +324,7 @@ export function splitTiers(scored: ScoredCandidate[]): TieredCandidates {
 }
 
 // ---------------------------------------------------------------------------
-// findSeasonPack — availability probe for the admin season-grab (no side effects)
+// Season/arc pack probes for the admin season-grab (no side effects)
 // ---------------------------------------------------------------------------
 
 export interface PackCandidatesResult {
@@ -367,7 +367,7 @@ function scorePackPool(
  * pool alongside the single best release (or null if no pack qualifies). Pack-only: releases
  * naming the season but NOT an individual S##E## episode (mirrors the pack-preference in
  * filterByScope). Read-only — used by the grab-confirmation candidates preview and by
- * findSeasonPack below to decide pack vs. episode fallback before anything is grabbed.
+ * searchCandidatesForItem to decide pack vs. episode fallback before anything is grabbed.
  */
 export async function findSeasonPackCandidates(
   title: string,
@@ -384,23 +384,13 @@ export async function findSeasonPackCandidates(
   return scorePackPool(packs, profile, language, audioMode)
 }
 
-/** Thin wrapper over findSeasonPackCandidates for callers that only need the winner. */
-export async function findSeasonPack(
-  title: string,
-  seasonNumber: number,
-  profile: QualityProfile,
-  language = 'any',
-  audioMode = 'any',
-): Promise<TorznabResult | null> {
-  return (await findSeasonPackCandidates(title, seasonNumber, profile, language, audioMode)).best
-}
 
 /**
  * Search indexers for an ARC PACK covering a TMDB-episode-group arc (Bug 7), e.g. One Piece
  * "Impel Down" = absolute eps 422–456. Anime arcs are released as absolute-numbered range packs
  * ("One Piece 422-456"), so we query the range and the start episode, then keep releases that
  * reference an overlapping numeric range (or, failing that, any of the arc's episode numbers).
- * Read-only — returns the full scored+gated pool; findArcPack (below) takes just the winner.
+ * Read-only — returns the full scored+gated pool; callers take `.best` for a single winner.
  */
 export async function findArcPackCandidates(
   title: string,
@@ -442,23 +432,6 @@ export async function findArcPackCandidates(
   return scorePackPool(pool, profile, language, audioMode)
 }
 
-/** Thin wrapper over findArcPackCandidates for callers that only need the winner. */
-export async function findArcPack(
-  title: string,
-  episodes: Array<{ s: number; e: number }>,
-  profile: QualityProfile,
-  language = 'any',
-  audioMode = 'any',
-): Promise<TorznabResult | null> {
-  return (await findArcPackCandidates(title, episodes, profile, language, audioMode)).best
-}
-
-// ---------------------------------------------------------------------------
-// findCoveringPacks — prefer-pack fan-out (Regression 1)
-// ---------------------------------------------------------------------------
-
-// A real pack names a numeric range in its title ("One Piece 422-458"). 2-4 digit endpoints, not
-// adjacent to other digits, so a CRC tag or resolution doesn't read as a range.
 const PACK_RANGE_RE = /(?<![0-9])(\d{2,4})\s*[-–~]\s*(\d{2,4})(?![0-9])/
 
 /**
@@ -503,7 +476,7 @@ export function selectCoveringPacks<T>(
 
 /**
  * Search indexers for PACKS that cover a requested absolute-episode range and select a minimal
- * covering set (Regression 1). Mirrors findArcPack's queries but returns a SET of packs plus the
+ * covering set (Regression 1). Mirrors findArcPackCandidates' queries but returns a SET of packs plus the
  * episode numbers they cover, so the episode fan-out can grab the packs and only queue singles for
  * the uncovered gaps. Read-only.
  */
