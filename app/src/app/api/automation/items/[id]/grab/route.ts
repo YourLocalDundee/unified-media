@@ -2,7 +2,7 @@
  * POST /api/automation/items/[id]/grab
  *
  * Triggers an immediate grab attempt for a single monitored item, bypassing the
- * 15-minute cron schedule. Used by the "Grab Now" button on the admin automation page.
+ * 5-minute cron schedule. Used by the "Grab Now" button on the admin automation page.
  *
  * Returns { result: 'grabbed' | 'not_found' | 'error' } — the same values grabItem() returns.
  * The item does not have to be in 'wanted' status; admin can force-grab any item.

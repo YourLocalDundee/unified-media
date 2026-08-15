@@ -10,6 +10,15 @@ map — are in `docs/complete/FEATURES.md`, not here.)
 
 - **Rate limiting audit** — confirm all state-mutating routes (profile mutations, admin actions, the old request app
   request creation) match the login handler's 10/15min/IP policy.
+- **Prune expired `pending_registrations` and `sessions` rows** — neither table is ever swept. Expiry
+  is enforced lazily at use time, so expired rows are inert but accumulate forever. The hourly
+  `auto-delete` job already prunes `login_attempts` and `audit_log` via `pruneAuthTables()`
+  (`scheduler.ts:34`); these two are simply not in its scope. Small addition to an existing job, not a
+  new one. See `docs/features/scheduling.md` → "Known gaps".
+- **Notification retry** — Discord, ntfy and Web Push sends are single-attempt with an 8s timeout and
+  no backoff, queue, or dead-letter record. A transient outage silently drops that event's alert.
+  Decide whether a retry is worth the complexity for a household-scale instance before building it.
+  See `docs/features/scheduling.md` → "Known gaps".
 - **Re-derive the wiring audit's "45 dead exports" list** with same-file callers counted before
   acting on any of it — the current figure conflates over-wide `export` keywords with actual dead
   code. See `docs/incomplete/open-issues.md` "OPEN — Medium / Low remainder", 2026-08-15, and its

@@ -78,11 +78,8 @@ The file is the constant baseline; *session sprawl* is what actually blows budge
   to A) fills context with irrelevant material. After **two** failed corrections on the same issue,
   `/clear` and rewrite the prompt with what you learned — a clean session with a better prompt beats a
   long polluted one almost every time.
-- **Use subagents for investigation.** "Use subagents to investigate X" explores in a *separate*
-  context and reports a summary, keeping the main conversation clean. This is the single biggest
-  context lever Anthropic calls out. But **cap parallelism** — runaway subagent fan-out is the
-  documented cause of the worst surprise bills (a 23-subagent run reportedly burned $47k over 3 days).
-  State a parallelism cap in the prompt and never leave subagent chains running unattended.
+- **Use subagents for investigation.** The single biggest context lever Anthropic calls out. Full
+  rules for this repo are in "Subagents" below.
 - **Give Claude a check it can run.** Tests, a build exit code, a lint pass, a screenshot diff. With a
   check, the loop closes on its own and you can walk away; without one, "looks done" is the only signal
   and you become the verification loop. This repo's check is `npx tsc --noEmit` + `npx eslint <files>`
@@ -96,6 +93,37 @@ The file is the constant baseline; *session sprawl* is what actually blows budge
 - **Pin the Claude Code version in CI/onboarding.** Documented March-2026 incidents (prompt-cache
   bugs, a bad release inflating rate-limit consumption 3–50×) mean a silent team-wide upgrade can spike
   costs overnight. Pin, and check release notes first if a bill suddenly looks wrong.
+
+## Subagents
+
+The rule used to live in two places (here and the old `WHATS-NEXT-PROMPT.md` session prompt, deleted
+2026-08-15). This is now the single source.
+
+**What they're for: investigation, not construction.** "Use a subagent to find every call site of
+`X`", "use a subagent to map the party WS message-handling + membership-check + per-type rate-limit
+code and report back." The subagent burns its own context reading the codebase and returns a
+summary; the main conversation never carries the file dumps. Reading is the expensive part of most
+sessions, and this is the lever that removes it.
+
+**What they're bad at: multi-file edits.** A subagent starts cold, re-derives context you already
+have, and can't see decisions made in the main thread. Investigate in a subagent, then build in the
+main one.
+
+**Cap parallelism at 3 concurrent.** Runaway fan-out is the documented cause of the worst surprise
+bills (a 23-subagent run reportedly burned $47k over 3 days). Three is enough to parallelise a
+"check these areas" sweep and small enough that a mistake is cheap. State the cap in the prompt —
+"use at most 3 subagents" — because the default is unbounded.
+
+**Never leave a subagent chain running unattended.** No subagent that spawns subagents.
+
+**Match the model to the job.** Investigation and doc drafting don't need the top model — dispatch
+those to a cheaper one (`sonnet`, or `haiku` for mechanical passes) and keep the expensive model for
+the work that needs judgment. A doc rewrite delegated to a cheap model is one of the better
+token-per-value trades available here.
+
+**Exception — don't delegate what you've already read.** If the main thread already holds the
+material, writing it up directly is cheaper than paying a fresh agent to re-read the same files.
+Delegation saves tokens only when it saves *reading*.
 
 ## Compaction note for this project
 

@@ -186,8 +186,8 @@ over the `[x]`/`[!]` flags in the phase checklist below (left as-written for his
 - [x] Indexer aggregation (`src/lib/indexer/` — catalog, config, discovery, flaresolverr, types, adapters: eztv, nyaa, yts)
 - [x] Download automation (`src/lib/automation/` — grabber, monitor, parser, quality, scheduler, types)
 - [x] Request bridge (`src/lib/automation/bridge.ts`)
-- [x] Subtitle management (`src/lib/subtitle/` — downloader, monitor, opensubtitles, scanner, scheduler, types); graceful no-op when `OPENSUBTITLES_API_KEY` unset; `SUBTITLE_MEDIA_ROOT=/media` set in `.env.local`; cron callbacks wrapped in try/catch
-- [x] Instrumentation / background job startup (`src/instrumentation.ts`)
+- [x] Subtitle management (`src/lib/subtitle/` — downloader, monitor, opensubtitles, scanner, scheduler, types); graceful no-op when `OPENSUBTITLES_API_KEY` unset; `SUBTITLE_MEDIA_ROOT=/media` set in `.env.local`
+- [x] Instrumentation / background job startup (`src/instrumentation.ts`) — full job catalogue: `docs/features/scheduling.md`
 - [x] External service proxy routes — the TV automation suite (`/api/the TV automation suite`), the movie automation suite (`/api/the movie automation suite`), the indexer bridge (`/api/the indexer bridge`), the subtitle automation suite (`/api/the subtitle automation suite`)
 - [x] Torrent search (`/api/torrent-search/route.ts`, `/api/torznab/search/route.ts`)
 - [x] Automation API routes (`/api/automation/bridge`, `items`, `profiles`, `queue`, `sync`)

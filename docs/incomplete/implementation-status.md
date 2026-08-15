@@ -171,10 +171,10 @@ CREATE TABLE grab_history (
 ```
 
 ### Scheduled jobs
-| Schedule | Job | File |
-|---|---|---|
-| `*/15 * * * *` | Scan Torznab for `wanted` items, grab best match | `scheduler.ts` |
-| `*/30 * * * *` | Check native media server (`media_items` table) for `grabbed` items, mark `imported` | `scheduler.ts` → `availability.ts` |
+
+*The as-built table here (two jobs, `*/15` grab, `*/30` availability) is a 2026-05-30 snapshot and is
+now wrong on both count and cadence. The automation scheduler runs eight jobs and the grab loop is
+every 5 minutes. Current catalogue: `docs/features/scheduling.md`.*
 
 ### Release scoring
 `parseReleaseName()` extracts: resolution, codec, source, release group, season/episode, year, title.
@@ -272,6 +272,9 @@ CREATE TABLE subtitle_wants (
 |---|---|
 | `0 3 * * *` | Scan native media DB for items missing subtitles → create subtitle_wants |
 | `30 3 * * *` | Download pending subtitle_wants from OpenSubtitles |
+
+*A third subtitle job (`30 2 * * 0`, weekly skipped→wanted re-check) was added later and is not in this
+snapshot. Current catalogue: `docs/features/scheduling.md`.*
 
 ### New env vars
 | Variable | Required | Purpose |

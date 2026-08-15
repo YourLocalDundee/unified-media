@@ -10,6 +10,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- **`docs/features/scheduling.md` — one reference for every scheduled and background process.** The
+  three `node-cron` schedulers (automation 8 jobs, subtitle 3, media-server enrichment 1) with a full
+  job catalogue giving each job's cadence, overlap guard and failure behaviour; the party server's two
+  `setInterval` timers and the complete `party/constants.ts` timing table; the boot sequence in
+  `instrumentation.ts`; indexer health/backoff, per-indexer token buckets and daily caps; the
+  chokidar watcher versus on-demand `scanAll()`; and the things that look scheduled but are lazy
+  (session TTL/rotation/absolute max, `pending_registrations` expiry, indexer daily-counter reset).
+  Includes a "Known gaps" section and an explicit list of client-side polling excluded from scope so
+  it isn't re-audited.
+
 - **Native phone/TV apps (Capacitor), Phase 1 of 6 — Android phone wrapper.** New `native/`
   directory (sibling to `app/`, outside the Docker build context) holding a Capacitor project whose
   WebView loads the live `https://<app-host>` directly (`server.url` mode) instead of a
@@ -123,6 +133,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `/play/{id}?party={code}` URL are intercepted in the proxy and sent to `/join?code={code}`.
 
 ### Fixed
+- **Three stale cron-cadence comments.** `app/src/lib/automation/grabber.ts:11` and
+  `app/src/app/api/automation/items/[id]/grab/route.ts:4` both claimed a 15-minute grab cron; the real
+  cadence has been `*/5` for some time (`scheduler.ts:105`). Same drift already recorded against
+  `scheduler.ts`'s own header in the 2026-08-13 A17-4 entry.
 - **`indexers.name` had no unique constraint, despite every insert path assuming one.**
   `discoverthe indexer bridge()` and manual "Add Indexer" both rely on `INSERT OR IGNORE` to prevent
   duplicate rows, but the original `CREATE TABLE indexers` never declared `name` unique — caught
@@ -133,6 +147,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   fresh ones.
 
 ### Removed
+- **`docs/WHATS-NEXT-PROMPT.md`.** The session-planning prompt had gone stale in a way that would
+  actively mislead a fresh session: it declared `STATE: app at v0.10.2`, listed roughly nine
+  already-shipped features (Web Push, mobile PWA, theme marketplace, piece map, torrent-create,
+  Collections, bulk session revoke, audit CSV export, download-to-browse linking) as remaining
+  backlog, and pointed at `analysis/open-issues.md`, which had moved to `docs/incomplete/`. Its
+  voice-chat spec was already superseded by `docs/incomplete/voice-chat-plan.md`, its working
+  conventions live in `CLAUDE.md` and `docs/README.md`, and its subagent rule moved to
+  `docs/CLAUDE-MD-GUIDE.md`.
 - **the external automation services fully removed (2026-07-09).** `lib/the TV automation suite/`, `lib/the movie automation suite/`, `lib/the subtitle automation suite/`
   and every caller (the `/browse/[id]` monitored-status badge, the old `/settings/media` TV/Movies/
   Subtitles tabs) are gone — no proxy routes ever existed for them despite older docs implying
@@ -178,6 +200,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   out of scope.
 
 ### Changed
+- **Scheduling prose consolidated into one doc.** `CLAUDE.md` §7/§11/§18,
+  `docs/features/grab-confirmation.md`, `FEATURE_STATUS.md` and
+  `docs/incomplete/implementation-status.md` no longer restate cron cadences or scheduler behaviour;
+  each now points at `docs/features/scheduling.md`. `FEATURE_STATUS.md`'s "cron callbacks wrapped in
+  try/catch" claim was dropped as misleading — node-cron 4.x already catches, and `safeCron()` only
+  adds a job label.
+- **`docs/CLAUDE-MD-GUIDE.md` gained a `## Subagents` section**, merging the rule that previously
+  lived in both that guide and the deleted `WHATS-NEXT-PROMPT.md`: investigation not construction, a
+  stated parallelism cap of 3 concurrent, never unattended, match the model to the job, and don't
+  delegate what the main thread has already read.
 - **Downloads are now admin-only.** `/downloads`, `/api/qbit` (GET+POST), `/settings/torrent`, the
   dashboard "Active Downloads" section, and the Downloads nav item are all gated to `role === 'admin'`.
   The GET proxy used to be `requireAuth`; since it carries the server-side qBittorrent session cookie,

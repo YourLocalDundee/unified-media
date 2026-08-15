@@ -2,8 +2,9 @@
 
 Every user-initiated auto-pick action shows the release it would grab and lets the user Grab it /
 walk to the Next best / drop to the interactive picker / Cancel, instead of firing straight to the
-download client. The 5-minute background cron (`scheduler.ts`) and the the old request app webhook path are
-**untouched** — confirmation only applies where there's a live user session to show a modal to.
+download client. The background `grab` cron and the old request app webhook path are **untouched** —
+confirmation only applies where there's a live user session to show a modal to. Cadence and the
+scheduler's side of that split: `docs/features/scheduling.md`.
 
 **Core split** (`src/lib/automation/grabber.ts`): `grabItem` used to do everything inline. It's now
 `searchAndScoreItem` (search + scope-filter + gate-partition + score — no side effects besides the

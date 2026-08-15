@@ -8,7 +8,7 @@
  *   - Push the winner to the active download client (UMT by default)
  *   - Record the grab in grab_history and transition the item status to 'grabbed'
  *
- * The scheduler calls grabItem() for every wanted item on a 15-minute cron.
+ * The scheduler calls grabItem() for every wanted item on a 5-minute cron.
  * The admin API at /api/automation/items/[id]/grab also calls it for on-demand grabs.
  */
 

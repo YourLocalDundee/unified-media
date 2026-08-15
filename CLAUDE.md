@@ -38,6 +38,7 @@ automation, and subtitle management — a fully self-contained media stack.
 | Grab confirmation flow | pointer §18 | `docs/features/grab-confirmation.md` |
 | Mobile PWA + Web Push notifications | pointer §19 | `docs/features/pwa-notifications.md` |
 | Native phone/TV apps (Capacitor) | pointer §20 | `docs/features/native-apps.md` |
+| Scheduling: cron jobs, timers, background work | pointer §7 | `docs/features/scheduling.md` |
 
 ---
 
@@ -273,12 +274,10 @@ These are the live "don't trip over this" rules. Kept in full because they're lo
   `docs/incomplete/open-issues.md` 2026-08-13.
 
 ### Automation scheduler
-- **node-cron 4.x swallows task errors into its own logger:** every `cron.schedule` body runs inside
-  node-cron's internal try/catch; an unhandled rejection in a tick does **not** escape as an
-  `unhandledRejection` — it's logged as `[NODE-CRON][ERROR]` with no job identity. Task bodies don't
-  need defensive try/catch for survival. `src/lib/automation/scheduler.ts`'s `safeCron()` wrapper exists
-  only to attach a job label to the log line, not to prevent a crash (see `docs/incomplete/open-issues.md`
-  2026-08-13, A17-4).
+- **node-cron 4.x swallows task errors into its own logger** — a throwing tick can't escape as an
+  `unhandledRejection`, so task bodies don't need defensive try/catch for survival, and `safeCron()`
+  buys attribution, not crash protection. Full detail, plus the complete job catalogue (12 cron jobs
+  across three schedulers) and every timer in the app: `docs/features/scheduling.md`.
 - **`grabber.ts` exports functions consumed only within its own module** (`findSeasonPackCandidates`,
   `findArcPackCandidates` — called by `searchCandidatesForItem` in the same file). A cross-file-only
   reference search reports these as dead; they aren't. See `docs/incomplete/open-issues.md` 2026-08-15
@@ -435,8 +434,8 @@ Former §10 / §10a / §10b are consolidated under `docs/player/` (see §9).
 **Avatar:** initials-based; hue derived by hashing username (`h = h*31 + c` → `% 360`), stable per user.
 **DB (v0.5.2/0.5.3):** additive `ALTER TABLE users ADD COLUMN display_name/first_name/last_name/bio/
 location` (try/catch wrapped) + `pending_registrations` table (id, username, email, password_hash,
-demographics, 6-digit code, attempts, 10-min `expires_at`). Expiry enforced at verification time; no
-cleanup job.
+demographics, 6-digit code, attempts, 10-min `expires_at`). Expiry is enforced lazily at verification
+time and there is no cleanup job — same for expired `sessions` rows. See `docs/features/scheduling.md`.
 
 ---
 
@@ -518,8 +517,9 @@ and AKA fallback details: `docs/features/decision-engine.md`.
 
 Every user-initiated auto-pick action shows the release it would grab and lets the user Grab it /
 walk to the Next best / drop to the interactive picker / Cancel, instead of firing straight to the
-download client. The 5-minute background cron path is **untouched** —
-confirmation only applies where there's a live user session to show a modal to. Core split
+download client. The background cron path is **untouched** — confirmation only applies where there's
+a live user session to show a modal to (cadence and the rest of the scheduling picture:
+`docs/features/scheduling.md`). Core split
 (`searchAndScoreItem` → `grabSpecificRelease`), the tiered candidate API (`GET /api/grab/candidates`,
 `POST /api/grab/confirm`), the shared `<GrabConfirmModal>` client, and the Vitest setup notes are in
 `docs/features/grab-confirmation.md`.
