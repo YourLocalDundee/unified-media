@@ -14,6 +14,54 @@ Severity tags mirror the audit (S = security, D = data/engine, F = functional, A
 
 ## Closed (verify when convenient, then delete from this list)
 
+**2026-08-15 — Wiring-audit cleanup pass: dead code deleted, open-redirect guard consolidated —
+plus a correction to the audit's dead-export methodology (commit `53caca8`)**
+- Net −1083/+30 across 7 files. Deleted, all superseded by code that already shipped:
+  - `app/src/app/admin/requests/AdminRequestsClient.tsx` — 962 lines, imported by nothing.
+    `admin/requests/page.tsx` is now seven lines that `requireAdmin()` then `redirect('/requests')`.
+  - `app/src/app/library/LibraryCard.tsx` (28 lines) and `app/src/app/requests/ApproveButton.tsx`
+    (21 lines) — never imported.
+  - The Zustand store's modal-player slice in `app/src/store/index.ts`: `openPlayer`, `closePlayer`,
+    `currentItemId`, `isPlayerOpen`, `playerStartTicks`. Playback moved to the `/play/[id]` route;
+    only the sidebar half (`sidebarOpen`/`toggleSidebar`/`setSidebarOpen`, used by
+    `components/layout/Sidebar.tsx`) was ever read. Header comment updated to say so.
+  - `app/src/lib/automation/grabber.ts`: `findSeasonPack` and `findArcPack` — thin wrappers that just
+    returned `.best` from their `*Candidates` counterpart, called by nothing.
+- **The open-redirect guard was consolidated, not deleted.** `app/src/app/login/page.tsx` carried its
+  own copy of `getSafeRedirect`, annotated "mirrors `src/lib/safe-redirect.ts` but inlined here to
+  avoid pulling a server-only module into a client component." That reason didn't hold —
+  `safe-redirect.ts` is a pure function with no imports and nothing server-only. Result: the lib copy
+  was dead while the inline copy did the work, i.e. two versions of a security check free to drift.
+  The inline copy was the stricter of the two (rejected any colon; the lib version only rejected one
+  before the first slash), so the lib version adopted the stricter blunt rule — with a comment
+  documenting the trade (it also rejects an otherwise-legal path whose query string contains a colon;
+  acceptable because redirect targets here are plain in-app paths, and it drops all position/ordering
+  logic that could be subtly wrong). `login/page.tsx` now imports `getSafeRedirectUrl`; the inline
+  copy is gone. CLAUDE.md's auth table already listed `src/lib/safe-redirect.ts` as the mechanism —
+  that's now actually true.
+- **IMPORTANT — a correction to the audit that prompted this work.** The wiring audit claimed all
+  **four** grabber pack-finders (`findSeasonPack`, `findSeasonPackCandidates`, `findArcPack`,
+  `findArcPackCandidates`) were dead, ~120 lines. **That was wrong.**
+  `findSeasonPackCandidates`/`findArcPackCandidates` each have two live call sites *inside
+  `grabber.ts` itself* — one from their wrapper, one from `searchCandidatesForItem`, which the
+  season/arc grab-confirmation preview depends on. Deleting them was attempted and caught before it
+  shipped. Only the two wrappers were genuinely unused; `scorePackPool` (non-exported helper) also
+  stays because the surviving `*Candidates` functions call it. Four comments pointing at the removed
+  wrappers were repointed rather than left dangling.
+  - **Root cause:** the audit's detector counted references from **other files only**, so a symbol
+    exported and consumed within its own module read as zero references.
+  - **This is broader than this one case.** Any remaining "dead export" counts from this audit are
+    unreliable and must be re-derived with same-file callers included before anything else is
+    deleted on their say-so. The audit's headline figure of "45 exported symbols never referenced
+    outside their own file" is exactly that flawed measure — it's a list of over-wide `export`
+    keywords, **not** a list of dead code. (No tracked doc in this repo currently restates that
+    figure as an actionable item — checked `docs/incomplete/open-issues.md` and
+    `docs/incomplete/BACKLOG.md`, neither has one — so there is nothing else to annotate; this note
+    is the record in case one is added later from the same audit report.)
+- **Verified.** `tsc --noEmit` clean, `eslint` clean on all changed files, 57 vitest tests pass, image
+  rebuilt via compose, container recreated healthy. Post-deploy smoke test: `/api/auth/login`,
+  `/library`, `/requests`, `/admin/requests`, `/login` all 200.
+
 **2026-08-15 — Wiring-audit no-op settings, part 1: `sidebarLabels` and `hwAccel` wired; `skipIntro`
 remains open (see the OPEN section below)**
 - A wiring audit found three user-facing settings that rendered a control, persisted a value, and had

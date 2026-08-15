@@ -279,6 +279,10 @@ These are the live "don't trip over this" rules. Kept in full because they're lo
   need defensive try/catch for survival. `src/lib/automation/scheduler.ts`'s `safeCron()` wrapper exists
   only to attach a job label to the log line, not to prevent a crash (see `docs/incomplete/open-issues.md`
   2026-08-13, A17-4).
+- **`grabber.ts` exports functions consumed only within its own module** (`findSeasonPackCandidates`,
+  `findArcPackCandidates` — called by `searchCandidatesForItem` in the same file). A cross-file-only
+  reference search reports these as dead; they aren't. See `docs/incomplete/open-issues.md` 2026-08-15
+  for the audit finding this caught before a real deletion shipped.
 
 ### Video player
 - **`<video>` errors don't bubble as React events:** keep `onError={handleVideoError}` wired or a
