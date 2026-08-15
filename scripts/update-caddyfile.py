@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-Replaces the <old-app-host> block in the live Caddyfile with the
+Replaces the <app-host> block in the live Caddyfile with the
 simple version (plain reverse_proxy, no forward_auth).
 """
 import re
 import sys
 
 CADDYFILE = '/opt/docker/configs/caddy/Caddyfile'
-NEW_BLOCK = '''<old-app-host> {
+NEW_BLOCK = '''<app-host> {
     import compressed
     reverse_proxy unified-frontend:3001
 }'''
@@ -30,15 +30,15 @@ def main():
     with open(CADDYFILE, 'r') as f:
         content = f.read()
 
-    marker = '<old-app-host> {'
+    marker = '<app-host> {'
     idx = content.find(marker)
     if idx == -1:
-        print('ERROR: <old-app-host> block not found in Caddyfile')
+        print('ERROR: <app-host> block not found in Caddyfile')
         sys.exit(1)
 
     end = find_block_end(content, idx)
     if end == -1:
-        print('ERROR: Could not find end of <old-app-host> block')
+        print('ERROR: Could not find end of <app-host> block')
         sys.exit(1)
 
     # Preserve leading newline if present

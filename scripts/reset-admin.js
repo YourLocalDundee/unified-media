@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Run: node scripts/reset-admin.js <new-password>
-// from /home/minijoe/dev/unified-frontend/app directory
+// from /home/joe/unified-media/app directory
 
 const Database = require('better-sqlite3')
 const bcrypt = require('bcryptjs')
@@ -55,4 +55,4 @@ db.close()
 console.log('\nDone.')
 console.log('Username:', ADMIN_USERNAME)
 console.log('Password:', NEW_PASSWORD)
-console.log('Login at: https://<old-app-host>/login')
+console.log('Login at: https://<app-host>/login')

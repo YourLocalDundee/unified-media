@@ -2,7 +2,7 @@
 
 // Mounts once in the root layout. No-ops entirely in a normal browser tab —
 // only takes effect inside the Capacitor phone/TV shell (see
-// /home/minijoe/dev/unified-frontend/native), which loads this same site via
+// /home/joe/unified-media/native), which loads this same site via
 // capacitor.config.ts's server.url rather than a bundled build. That means
 // this component's own JS (not anything in native/) is what actually runs
 // inside the WebView, so any native-shell behavior has to be wired here.

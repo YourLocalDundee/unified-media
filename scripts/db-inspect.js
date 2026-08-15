@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Run: node scripts/db-inspect.js
-// from /home/minijoe/dev/unified-frontend/app directory
+// from /home/joe/unified-media/app directory
 
 const Database = require('better-sqlite3')
 const path = require('path')

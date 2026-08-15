@@ -1,12 +1,12 @@
 services:
   unified-frontend:
     build:
-      context: /home/minijoe/dev/unified-frontend/app
+      context: /home/joe/unified-media/app
       dockerfile: Dockerfile
     container_name: unified-frontend
     restart: unless-stopped
     env_file:
-      - /home/minijoe/dev/unified-frontend/app/.env.local
+      - /home/joe/unified-media/app/.env.local
     environment:
       - NODE_ENV=production
       - DB_PATH=/data/unified.db

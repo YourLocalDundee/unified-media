@@ -1,7 +1,7 @@
 {
   "name": "unified-media-native",
   "version": "1.0.0",
-  "description": "Capacitor phone/TV shells for Unified Media (loads https://<old-app-host> directly, see capacitor.config.ts)",
+  "description": "Capacitor phone/TV shells for Unified Media (loads https://<app-host> directly, see capacitor.config.ts)",
   "private": true,
   "scripts": {
     "sync": "cap sync android",

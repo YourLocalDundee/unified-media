@@ -1,5 +1,18 @@
+// This app is reachable at more than one origin: the canonical HTTPS name Caddy serves, and the
+// direct host:port for LAN access when DNS is the problem. NEXT_PUBLIC_APP_URL can only hold one
+// of them, and it also feeds password-reset and party links, so it must be the canonical HTTPS
+// one. ADDITIONAL_ALLOWED_ORIGINS (comma-separated) carries the rest.
+//
+// Getting this wrong fails closed and looks like a login bug: an origin that is not listed is
+// rejected with 403 before authentication runs at all. That happened for real — the deployment
+// moved to https://<app-host> while NEXT_PUBLIC_APP_URL still pointed at the host:port,
+// so every mutating request through the real URL was Forbidden.
 const ALLOWED_ORIGINS = [
   process.env.NEXT_PUBLIC_APP_URL,
+  ...(process.env.ADDITIONAL_ALLOWED_ORIGINS ?? '')
+    .split(',')
+    .map((o) => o.trim())
+    .filter(Boolean),
   'http://localhost:3001',
   'http://localhost:3000',
 ].filter(Boolean) as string[]
@@ -10,8 +23,8 @@ export function verifyOrigin(request: Request): boolean {
   // server-to-server call, both of which are safe to allow.
   if (!origin) return true
   // Exact match only. The previous `origin.startsWith(o)` branch was bypassable with a
-  // suffix domain — e.g. `https://<old-app-host>.evil.com` passes startsWith against
-  // `https://<old-app-host>` (A1-002). An exact compare against the full-origin
+  // suffix domain — e.g. `https://<app-host>.evil.com` passes startsWith against
+  // `https://<app-host>` (A1-002). An exact compare against the full-origin
   // allowlist (which already includes the dev ports) closes that hole.
   return ALLOWED_ORIGINS.includes(origin)
 }

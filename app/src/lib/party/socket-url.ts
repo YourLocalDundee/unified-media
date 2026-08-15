@@ -1,7 +1,7 @@
 /**
  * Builds the party WebSocket URL per environment. Client-safe (uses window.location).
  *
- * Production: the page is served from <old-app-host> over https; Caddy maps
+ * Production: the page is served from <app-host> over https; Caddy maps
  *   the path /api/party/ws* to the internal :3002 WS server, so the browser connects
  *   same-origin to wss://<host>/api/party/ws.
  *

@@ -110,12 +110,21 @@ export const SESSION_RECHECK_INTERVAL_MS = 60_000
 // --- WS upgrade origin allowlist (audit H1) ---
 // Cross-site WebSocket hijacking defense: the upgrade Origin must match one of these.
 // NEXT_PUBLIC_APP_URL covers production; the dev origins cover `next dev` on :3001.
+// ADDITIONAL_ALLOWED_ORIGINS is honoured here for the same reason as in csrf.ts: the app answers
+// on both the canonical HTTPS name and a direct host:port, and only one of them fits in
+// NEXT_PUBLIC_APP_URL. Omitting it here would let a user log in over the direct address and then
+// silently fail to join a watch party.
 export function allowedWsOrigins(): string[] {
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL
   const origins = ['http://localhost:3001', 'http://127.0.0.1:3001']
-  if (appUrl) {
+  const candidates = [
+    process.env.NEXT_PUBLIC_APP_URL,
+    ...(process.env.ADDITIONAL_ALLOWED_ORIGINS ?? '').split(','),
+  ]
+  for (const candidate of candidates) {
+    const trimmed = candidate?.trim()
+    if (!trimmed) continue
     try {
-      origins.push(new URL(appUrl).origin)
+      origins.push(new URL(trimmed).origin)
     } catch {
       /* malformed env — ignore */
     }

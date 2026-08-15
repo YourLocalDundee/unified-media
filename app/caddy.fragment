@@ -1,4 +1,4 @@
-<old-app-host> {
+<app-host> {
     import compressed
     # F3 (CLAUDE.md §16): the party WebSocket runs on a dedicated server on port 3002.
     # Route /api/party/ws* there; everything else goes to the Next.js app on 3001.

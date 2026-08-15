@@ -1,5 +1,5 @@
 UNIFIED MEDIA — PARTY PLAY (WATCH TOGETHER) AND CHAT — DEFINITIVE REFERENCE SPECIFICATION
-Target: unified-frontend, the Next.js media platform at /home/minijoe/dev/unified-frontend
+Target: unified-frontend, the Next.js media platform at /home/joe/unified-media
 
 This is the complete v1 specification for native party play and chat inside the unified-frontend
 media server. It is written as one continuous reference in dependency order: read it start to finish
@@ -316,11 +316,11 @@ Implementation:
 - Because this listener is on its own port, it does not intercept Next's own upgrades and Next does not
   intercept it. They coexist in one process, sharing memory.
 
-Public-edge routing. The browser connects same-origin to wss://<old-app-host>/api/party/ws. Caddy
+Public-edge routing. The browser connects same-origin to wss://<app-host>/api/party/ws. Caddy
 routes that path to the new internal port while everything else continues to 3001. Add to the unified
 Caddy block, before the catch-all reverse_proxy:
 
-  <old-app-host> {
+  <app-host> {
     import compressed
     @partyws path /api/party/ws*
     reverse_proxy @partyws unified-frontend:3002
@@ -329,7 +329,7 @@ Caddy block, before the catch-all reverse_proxy:
 
 Caddy upgrades WebSockets automatically (it forwards the Upgrade and Connection headers), so no extra ws
 directive is needed. Expose 3002 on the container the same internal-only way 3001 is exposed
-(<legacy-lan-ip> binding); it has no public surface of its own, it is reachable only through Caddy.
+(<lan-ip> binding); it has no public surface of its own, it is reachable only through Caddy.
 
 Dev vs prod connection target. In production the client connects to wss://<host>/api/party/ws (same
 origin, Caddy maps the path to 3002). In development there is no Caddy, so the client connects directly to
@@ -339,7 +339,7 @@ socket URL per environment.
 
 Content-Security-Policy. next.config.ts currently sets connect-src 'self' http://ip-api.com. Widen it so
 the browser may open the socket. Add the wss origin for production and the ws origin for development:
-  connect-src 'self' http://ip-api.com wss://<old-app-host> ws://localhost:3002
+  connect-src 'self' http://ip-api.com wss://<app-host> ws://localhost:3002
 ('self' covers same-origin wss in modern browsers, but list the origins explicitly so the separate dev
 port and any future host change do not silently break the connection.)
 
@@ -350,7 +350,7 @@ WS_PING_INTERVAL_MS (20s) keep the socket active well under any typical 60s idle
 the connection MUST be tested from a client that is OFF the tailnet (cellular) to confirm the upgrade
 completes through the full edge and survives at least two minutes idle. If BunkerWeb still reaps it, add a
 WebSocket-aware exception for /api/party/ws as a per-domain setting in
-/opt/docker/compose/edge/docker-compose.yml, in the same style as the existing <old-app-host>_*
+/home/joe/docker/edge/docker-compose.yml, in the same style as the existing <app-host>_*
 overrides (raise the reverse-proxy read timeout for that path or exempt it from idle close); confirm the
 exact BunkerWeb variable against the running config. Tailnet clients will not hit this; it is purely a
 public-edge concern.

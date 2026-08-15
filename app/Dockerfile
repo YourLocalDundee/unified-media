@@ -5,6 +5,12 @@ COPY package*.json ./
 RUN npm ci
 COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
+# next.config.ts is evaluated at BUILD time, and NEXT_PUBLIC_* values are inlined into the client
+# bundle then too — the runtime env_file is far too late for either. The CSP connect-src for the
+# party-play WebSocket is derived from this, so without it the build silently bakes the localhost
+# fallback and the socket is blocked in the browser at runtime with nothing visible server-side.
+ARG NEXT_PUBLIC_APP_URL
+ENV NEXT_PUBLIC_APP_URL=$NEXT_PUBLIC_APP_URL
 RUN npm run build
 
 FROM node:24-slim AS runner
