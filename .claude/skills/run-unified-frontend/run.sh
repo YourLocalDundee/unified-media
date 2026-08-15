@@ -30,6 +30,20 @@ fi
 # it at localhost:3001 with no compose-network juggling and no container-IP lookup.
 BASE_URL="${DRIVE_BASE_URL:-http://localhost:3001}"
 
+# *.<internal-domain> resolves ONLY through Pi-hole, and the host resolver deliberately never points
+# at Pi-hole (that misconfiguration caused the original outage, so it is a standing rule). With
+# --network host the container inherits that resolver, so a lab hostname simply fails to resolve
+# and the flow dies at the first nav. Docker still gives the container its own /etc/hosts even on
+# the host network, so --add-host pins the name without touching any resolver config.
+#
+# Only lab names are pinned, and only to the LAN address — this is a test harness convenience, not
+# a general DNS override.
+LAB_IP="${DRIVE_LAB_IP:-<lan-ip>}"
+HOST_MAPS=()
+for name in media jellyfin dns dl auth; do
+  HOST_MAPS+=(--add-host "${name}.<internal-domain>:${LAB_IP}")
+done
+
 # Credentials are mounted read-only and read INSIDE the driver process; they are never passed as
 # an argument and never printed. See SKILL.md "Logging in".
 ENV_FILE="${DRIVE_ENV_FILE:-/home/joe/docker/unified-media/.env}"
@@ -48,6 +62,7 @@ fi
 DOCKER_ARGS=(
   --rm -i
   --network host
+  "${HOST_MAPS[@]}"
   -u "$(id -u):$(id -g)"
   -v "$HERE":/w
   -v "$ENV_FILE":/env/app.env:ro

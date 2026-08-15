@@ -128,14 +128,27 @@ the host. `run.sh` uses `--network host`, so there is no container-IP lookup or 
 juggling.
 
 There is deliberately no dev-server mode. Running `npm run dev` would need Node on the host, which
-does not exist here. Override the target if you need to:
+does not exist here.
+
+### Testing through Caddy
 
 ```bash
 DRIVE_BASE_URL=https://<app-host> ./run.sh flows/smoke.flow
 ```
 
-Note that going through the Caddy hostname exercises TLS and the proxy too, which is useful for
-confirming an edge change but slower and noisier for plain UI work.
+This exercises TLS, the proxy, and — importantly — the **real `Origin` header**, which
+`http://localhost:3001` does not. That matters: a CSRF origin allowlist that does not include the
+public hostname rejects every mutating request with 403 *before authentication runs*, so login
+fails while looking like a password problem. That bug shipped, and the localhost path could not
+have caught it. Run at least one flow through the Caddy hostname after touching origins, CSP,
+`NEXT_PUBLIC_APP_URL`, or the Caddyfile.
+
+`*.<internal-domain>` resolves only through Pi-hole, and the host resolver deliberately never points
+at Pi-hole — that misconfiguration caused the original outage and is a standing rule. With
+`--network host` the container inherits that resolver, so these names would simply fail to resolve.
+`run.sh` therefore pins them with `--add-host` (Docker gives the container its own `/etc/hosts`
+even on the host network). `media`, `jellyfin`, `dns`, `dl` and `auth` are mapped; override the
+target address with `DRIVE_LAB_IP` if it ever moves.
 
 ## Version pinning — read before bumping anything
 
