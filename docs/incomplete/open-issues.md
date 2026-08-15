@@ -54,10 +54,9 @@ plus a correction to the audit's dead-export methodology (commit `53caca8`)**
     unreliable and must be re-derived with same-file callers included before anything else is
     deleted on their say-so. The audit's headline figure of "45 exported symbols never referenced
     outside their own file" is exactly that flawed measure — it's a list of over-wide `export`
-    keywords, **not** a list of dead code. (No tracked doc in this repo currently restates that
-    figure as an actionable item — checked `docs/incomplete/open-issues.md` and
-    `docs/incomplete/BACKLOG.md`, neither has one — so there is nothing else to annotate; this note
-    is the record in case one is added later from the same audit report.)
+    keywords, **not** a list of dead code. Now tracked as its own open item — see "OPEN — Medium /
+    Low remainder" below ("Wiring-audit '45 dead exports' figure must be re-derived before anything
+    is deleted").
 - **Verified.** `tsc --noEmit` clean, `eslint` clean on all changed files, 57 vitest tests pass, image
   rebuilt via compose, container recreated healthy. Post-deploy smoke test: `/api/auth/login`,
   `/library`, `/requests`, `/admin/requests`, `/login` all 200.
@@ -393,6 +392,46 @@ remediation was inverted: the route was deleted, not wired in**
      past the intro chapter on load, or surface a "Skip Intro" button during it).
   - This is a feature to build, not a wiring task. See the 2026-08-15 entry in the Closed section above
     for the sibling `sidebarLabels`/`hwAccel` closures from the same audit pass.
+
+- **`media-server` barrel import boundary is unenforced** — `src/lib/media-server/index.ts`'s own
+  header states consumers "should import from this barrel file rather than individual modules so
+  internal module boundaries can be refactored without touching call sites" and re-exports 10
+  symbols. Measured 2026-08-15: exactly **1** import in the whole tree goes through the barrel
+  (`tmdbImageUrl` in `app/page.tsx`); **58** imports reach past it directly into
+  `@/lib/media-server/<module>` (`scanner.ts`, `enricher.ts`, `library.ts`, `tmdb.ts`,
+  `transcode.ts`, `playback.ts`, …). The boundary the header describes doesn't exist in practice.
+  Nothing is broken today — this is an architecture-intent mismatch, not a bug — so this is a
+  decision, not a task:
+  - **Route imports through it** — rewrite the 58 direct imports to go through the barrel, making the
+    stated boundary real. Mechanical but wide-reaching; touches many files for no behavioural change.
+  - **Delete the barrel and its claim** — accept direct module imports as the actual convention and
+    remove a file whose documented contract is fiction. Smaller, and arguably more honest.
+
+- **Wiring-audit "45 dead exports" figure must be re-derived before anything is deleted** — currently
+  only a caveat buried inside the 2026-08-15 Closed entry above ("Wiring-audit cleanup pass…");
+  promoted here so it's tracked as actionable work rather than a footnote. That audit's detector
+  counted **cross-file references only**, so a symbol exported and consumed within its own module
+  read as zero references — exactly how it wrongly flagged `findSeasonPackCandidates` /
+  `findArcPackCandidates` as dead and nearly shipped a deletion that would have broken the season/arc
+  grab-confirmation preview (caught before it shipped — see that entry for the full story).
+  1. The audit's headline "45 exported symbols never referenced outside their own file" is a list of
+     **over-wide `export` keywords**, **not** a list of dead code.
+  2. It must be **re-derived with same-file callers counted** before any of the 45 are acted on.
+  3. For whatever survives re-derivation as genuinely unreferenced, the correct remediation is to
+     **drop the `export` keyword** (narrowing the module's public surface) — **not** to delete the
+     function.
+
+- **`sessions.device_name` column is written by nobody and read by nobody** — verified 2026-08-15: of
+  the schema's 194 columns, `device_name` is the only one that appears nowhere outside
+  `src/lib/db/migrations.ts:688` (`ALTER TABLE sessions ADD COLUMN device_name TEXT`). Nothing
+  populates it at session creation and nothing reads it. Two options:
+  - **Populate it** — set it from the `User-Agent` header in `createSession()` (`src/lib/dal.ts`).
+    The more useful option: a session-management surface already exists and would benefit —
+    `GET /api/auth/profile/sessions` lists active sessions, `DELETE /api/auth/profile/sessions/:id`
+    revokes one, `POST /api/auth/profile/sessions/revoke-others` revokes the rest (CLAUDE.md §11) —
+    and right now that list has no way to tell one session from another, which makes "revoke this
+    one" close to guesswork for the user. A small genuine feature, not just cleanup.
+  - **Drop the column** in a migration if the session list is never going to show device names.
 
 - **A7-10** two parallel qBit SID caches — left separate by design (different lifetimes/credential
   sourcing); the `clearSession`-on-failed-retry fix (A7-11) was applied to both. Unify only if revisited.

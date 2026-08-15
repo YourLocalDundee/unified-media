@@ -10,6 +10,11 @@ map — are in `docs/complete/FEATURES.md`, not here.)
 
 - **Rate limiting audit** — confirm all state-mutating routes (profile mutations, admin actions, the old request app
   request creation) match the login handler's 10/15min/IP policy.
+- **Re-derive the wiring audit's "45 dead exports" list** with same-file callers counted before
+  acting on any of it — the current figure conflates over-wide `export` keywords with actual dead
+  code. See `docs/incomplete/open-issues.md` "OPEN — Medium / Low remainder", 2026-08-15, and its
+  2026-08-15 Closed entry for the near-miss (`findSeasonPackCandidates`/`findArcPackCandidates`)
+  that prompted this.
 
 ## Operational / manual (not headless-doable)
 
@@ -32,6 +37,14 @@ map — are in `docs/complete/FEATURES.md`, not here.)
   limit configurable in the admin panel; needs a `bandwidth_usage` table. **Blocked on a product
   decision:** does "per-user" mean per-account (shared household logins undercount) or per-session/
   device? Decide before building the table.
+- **`media-server` barrel import boundary** — only 1 of 59 possible imports actually goes through
+  `src/lib/media-server/index.ts`; either route the other 58 through it or delete the barrel and its
+  stated (and currently false) "import from here" contract. See `docs/incomplete/open-issues.md`
+  "OPEN — Medium / Low remainder", 2026-08-15.
+- **`sessions.device_name` column** — written by nobody, read by nobody. Populate it from the
+  `User-Agent` at `createSession()` (makes the existing session-revoke UI usable — see CLAUDE.md
+  §11) or drop the column. See `docs/incomplete/open-issues.md` "OPEN — Medium / Low remainder",
+  2026-08-15.
 
 ## Open from the 2026-06-13 audit (P2)
 
