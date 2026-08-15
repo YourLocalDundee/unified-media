@@ -1,15 +1,19 @@
 /**
  * HLS transcoding for the native media server (Independence Build Phase 5).
  *
- * Three tiers, chosen at transcode-start time by probing the source file's codecs:
+ * Four tiers, chosen at transcode-start time by probing the source file's codecs:
  *
  *   Tier A  remux            h264 video + aac/mp3 audio  → copy both streams to TS/HLS
  *   Tier B  audio transcode  h264 video + other audio    → copy video, re-encode audio to AAC
  *   Tier C  full VAAPI       non-h264 video              → h264_vaapi + AAC audio
+ *   Tier D  full software    non-h264 video, hwAccel=off → libx264 + AAC audio
  *
  * Tier C requires /dev/dri/renderD128 bind-mounted into the container with the process in
  * group 990 (render). If VAAPI device open fails ffmpeg exits non-zero; the error is logged
- * loudly and surfaced to the player — there is no silent CPU fallback.
+ * loudly and surfaced to the player — there is no silent CPU fallback. Tier D is the manual
+ * fallback: the Playback setting "Hardware Acceleration → Software" selects it for a newly
+ * started transcode, which is the escape hatch when the render node is unavailable or the
+ * VAAPI encoder is producing artefacts.
  *
  * Audio-track selection
  * ---------------------
@@ -79,7 +83,13 @@ const BROWSER_SAFE_AUDIO = new Set(['aac', 'mp3'])
 // Types
 // ---------------------------------------------------------------------------
 
-export type TranscodeTier = 'remux' | 'audio_transcode' | 'full_vaapi'
+export type TranscodeTier = 'remux' | 'audio_transcode' | 'full_vaapi' | 'full_software'
+
+// Playback pref "Hardware Acceleration". 'auto' uses the render node when a full re-encode
+// is needed; 'software' forces libx264 instead, which is the escape hatch when VAAPI is
+// unavailable or producing artefacts. It only affects tiers that re-encode video — remux and
+// audio_transcode copy the video stream and never touch an encoder either way.
+export type HwAccelMode = 'auto' | 'software'
 
 // ---------------------------------------------------------------------------
 // In-process job registry — one ChildProcess per media ID
@@ -123,12 +133,13 @@ function jobKey(mediaId: string, audioIdx: number): string {
 export function chooseTier(
   videoCodec: string | null,
   audioCodec: string | null,
+  hwAccel: HwAccelMode = 'auto',
 ): TranscodeTier {
   const videoOk = videoCodec != null && BROWSER_SAFE_VIDEO.has(videoCodec.toLowerCase())
   const audioOk = audioCodec != null && BROWSER_SAFE_AUDIO.has(audioCodec.toLowerCase())
   if (videoOk && audioOk)  return 'remux'
   if (videoOk && !audioOk) return 'audio_transcode'
-  return 'full_vaapi'
+  return hwAccel === 'software' ? 'full_software' : 'full_vaapi'
 }
 
 // ---------------------------------------------------------------------------
@@ -171,6 +182,18 @@ function buildArgs(
     // Upload decoded frames to the VAAPI device then encode to h264_vaapi.
     // format=nv12 ensures the correct input pixel format before hwupload.
     args.push('-vf', 'format=nv12,hwupload', '-c:v', 'h264_vaapi')
+  } else if (tier === 'full_software') {
+    // Same re-encode as tier C but on the CPU. veryfast keeps an N100 roughly at
+    // realtime for 1080p; the HLS muxer streams segments out as they are produced, so
+    // falling behind shows up as buffering rather than failure. yuv420p + the baseline-ish
+    // High profile keeps the output as broadly decodable as the VAAPI path.
+    args.push(
+      '-c:v', 'libx264',
+      '-preset', 'veryfast',
+      '-crf', '23',
+      '-profile:v', 'high',
+      '-pix_fmt', 'yuv420p',
+    )
   } else {
     // Tiers A and B: video is already h264 — copy without re-encoding.
     args.push('-c:v', 'copy')
@@ -376,6 +399,11 @@ export async function ensureHls(
   videoCodec: string | null,
   audioCodec: string | null,
   audioIndex: number = 0,
+  // Applies only to a transcode this call actually starts. The segment cache is keyed by
+  // (media, audio track) and not by tier, so an already-cached transcode is reused as-is
+  // regardless of the requester's preference — both tiers emit equivalent h264, so the
+  // alternative (a per-tier cache namespace) would double disk use to no visible benefit.
+  hwAccel: HwAccelMode = 'auto',
 ): Promise<string> {
   const cacheDir = getCacheDir(mediaId, audioIndex)
   const manifest = path.join(cacheDir, 'master.m3u8')
@@ -388,7 +416,7 @@ export async function ensureHls(
   if (!activeJobs.has(key) && !startingJobs.has(key)) {
     startingJobs.add(key)
     try {
-      const tier = chooseTier(videoCodec, audioCodec)
+      const tier = chooseTier(videoCodec, audioCodec, hwAccel)
       await spawnFfmpeg(mediaId, filePath, tier, 0, audioIndex)
     } finally {
       startingJobs.delete(key)
@@ -404,7 +432,7 @@ export async function ensureHls(
     // immediately rather than burning the full 60 s.
     if (!activeJobs.has(key) && !startingJobs.has(key)) {
       if (await fileExists(manifest)) return manifest
-      const tier = chooseTier(videoCodec, audioCodec)
+      const tier = chooseTier(videoCodec, audioCodec, hwAccel)
       const detail = tier === 'full_vaapi'
         ? ` Verify ${VAAPI_DEVICE} is bind-mounted (devices:) and the container process is in group 990 (render). Check container logs for ffmpeg stderr.`
         : ''

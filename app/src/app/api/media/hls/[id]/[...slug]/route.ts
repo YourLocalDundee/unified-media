@@ -109,7 +109,12 @@ export async function GET(
 
     let manifestPath: string
     try {
-      manifestPath = await ensureHls(id, item.file_path, videoCodec, audioCodec, audioIndex)
+      // `hw=software` comes from the Playback pref and only reaches this manifest request —
+      // hls.js resolves segment URIs relative to the manifest path, so the query is not
+      // carried onto segments. That is fine: the tier is decided once, when the transcode
+      // starts, and segments are then served from the cache it wrote.
+      const hwAccel = req.nextUrl.searchParams.get('hw') === 'software' ? 'software' : 'auto'
+      manifestPath = await ensureHls(id, item.file_path, videoCodec, audioCodec, audioIndex, hwAccel)
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
       console.error(`[hls] ensureHls failed for ${id}:`, msg)

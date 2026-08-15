@@ -95,6 +95,18 @@ function detectAspectRatio(w: number, h: number): AspectRatioMode {
   return minDiff <= 0.15 ? best : 'auto'
 }
 
+// Carry the "Hardware Acceleration" playback pref to the transcoder.
+//
+// Playback prefs live in localStorage, so the server-rendered stream URL cannot know the
+// choice — it has to be appended client-side. Only HLS manifests take the parameter: a
+// Direct Play URL is served straight from disk and never reaches an encoder. The server
+// reads it when the transcode STARTS, so switching this mid-file has no effect until a
+// transcode is started fresh; an already-cached one is reused as-is.
+function withHwAccel(url: string, hwAccel: 'auto' | 'software'): string {
+  if (hwAccel !== 'software' || !url.includes('/api/media/hls/')) return url
+  return `${url}${url.includes('?') ? '&' : '?'}hw=software`
+}
+
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
@@ -628,7 +640,7 @@ export default function VideoPlayer(props: PlaybackData) {
               startLevel: -1,
             })
           hlsRef.current = hls
-          hls.loadSource(activeStreamUrl)
+          hls.loadSource(withHwAccel(activeStreamUrl, prefsRef.current.hwAccel))
           hls.attachMedia(video)
           hls.on(Hls.Events.MANIFEST_PARSED, () => {
             if (destroyed) return
@@ -693,7 +705,7 @@ export default function VideoPlayer(props: PlaybackData) {
             }
           })
         } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-          video.src = activeStreamUrl
+          video.src = withHwAccel(activeStreamUrl, prefsRef.current.hwAccel)
           setIsLoading(false)
           video.play().catch(() => setIsPlaying(false))
         } else {
