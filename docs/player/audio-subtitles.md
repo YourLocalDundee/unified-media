@@ -55,6 +55,24 @@ default); `selectPreferredSubtitleIndex` picks the matching subtitle **preferrin
 signs-and-songs / forced**, returning -1 (off) when no subtitle language is set. ffprobe 3-letter codes
 are normalised to ISO 639-1 via `normalizeLang`/`languageMatches`.
 
+## Client-only playback prefs on the HLS URL (`hwAccel`)
+
+`usePlaybackPrefs` is localStorage-only, so the server-rendered stream URL can't carry a pref's value —
+the server never sees it unless the client puts it on the request. The `hwAccel` pref (`auto` |
+`software`, wired 2026-08-15) is the template for this: a module-scope `withHwAccel(url, hwAccel)` in
+`VideoPlayer.tsx` appends `hw=software` to the URL only when it's an **HLS manifest** request
+(`/api/media/hls/.../master.m3u8`) — a Direct Play URL is served straight from disk and never reaches
+an encoder, so there's nothing to tell it. `app/api/media/hls/[id]/[...slug]/route.ts` reads `?hw=` on
+the manifest request and threads it into `ensureHls(..., hwAccel)` → `chooseTier(...)`.
+
+**This only works on the manifest, never on segment URLs**: hls.js resolves each segment URI relative to
+the manifest's path and drops the query string in the process, so a param appended to a segment request
+would never arrive. Any future client-only pref that the transcoder must honour (not just cache/serve
+differently) has to go through the same manifest-query-param path, and — per the audio-track precedent
+above — the transcode cache is keyed by `(mediaId, audioIdx)` only, not by the new param, so an
+already-running/cached transcode for that `(mediaId, audioIdx)` is reused regardless of the pref until
+it expires from cache.
+
 ## On-demand subtitle search + live `<track>` injection (v0.9.11)
 
 The background subtitle system (Phase 4) writes `subtitle_wants` rows from a nightly scan + a download

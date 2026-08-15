@@ -14,6 +14,174 @@ Severity tags mirror the audit (S = security, D = data/engine, F = functional, A
 
 ## Closed (verify when convenient, then delete from this list)
 
+**2026-08-15 — Wiring-audit no-op settings, part 1: `sidebarLabels` and `hwAccel` wired; `skipIntro`
+remains open (see the OPEN section below)**
+- A wiring audit found three user-facing settings that rendered a control, persisted a value, and had
+  **no consumer anywhere in the codebase**: `sidebarLabels` (Display), `skipIntro` and `hwAccel`
+  (Playback). Two are now wired; `skipIntro` is blocked on a missing prerequisite feature and is tracked
+  as a fresh open item rather than closed here.
+- **`sidebarLabels` (commit `28b66a3`).** `app/settings/display/page.tsx` shows "Sidebar → Show Labels".
+  Nothing read it — labels rendered whenever the sidebar was open, so the toggle did nothing.
+  `src/components/layout/Sidebar.tsx`'s `SidebarNav` now takes a `showLabels` prop; a local
+  `labelled = sidebarOpen && showLabels` gates the `<span>{label}</span>`. Turning the pref off gives an
+  icon-only nav at full width. The `title` attribute (tooltip) now applies whenever the text is absent
+  for **either** reason — collapsed sidebar, or labels off — where previously it keyed off the collapse
+  state alone, so with labels off there would have been neither text nor tooltip.
+- **`hwAccel` (commit `574fba4`).** `app/settings/playback/page.tsx` shows "Hardware Acceleration"
+  (auto/software). Nothing read it: a non-h264 source always transcoded through VAAPI, and
+  `transcode.ts`'s header comment explicitly said "there is no silent CPU fallback" — so a user had no
+  way to force software transcoding when the render node misbehaves, which is exactly what the control
+  offered.
+  - Added tier D `full_software` to `src/lib/media-server/transcode.ts`: the same re-encode as tier C
+    (`full_vaapi`) but `-c:v libx264 -preset veryfast -crf 23 -profile:v high -pix_fmt yuv420p`. New
+    exported type `HwAccelMode = 'auto' | 'software'`; `chooseTier(videoCodec, audioCodec, hwAccel =
+    'auto')` returns `full_software` instead of `full_vaapi` when the pref is `software`. Tiers A
+    (`remux`) and B (`audio_transcode`) are untouched — they copy the video stream and never reach an
+    encoder.
+  - **Plumbing.** Playback prefs are localStorage-backed and therefore client-only, so the
+    server-rendered stream URL can't carry the choice. `VideoPlayer.tsx` gained a module-scope
+    `withHwAccel(url, hwAccel)` helper that appends `hw=software` to **HLS manifest URLs only** (a
+    Direct Play URL is served straight from disk and never reaches an encoder), read via the existing
+    `prefsRef` so the choice doesn't add a dependency to the player's init effect.
+    `app/api/media/hls/[id]/[...slug]/route.ts` reads `?hw=` on the `master.m3u8` request and passes it
+    to `ensureHls(..., hwAccel)`.
+  - **Deliberate documented limitation.** The tier applies only to a transcode the call actually
+    *starts*. The segment cache is keyed by `(mediaId, audioIdx)` and **not** by tier, so an
+    already-cached transcode is reused regardless of the requester's preference. Rationale: both tiers
+    emit equivalent h264, so a per-tier cache namespace would double disk use for no visible benefit —
+    and segment URLs couldn't carry the parameter anyway, because hls.js resolves segment URIs relative
+    to the manifest path, dropping the query string.
+  - **Verified end-to-end** against a real HEVC source (an `x265` Avatar episode): requesting the
+    manifest with `?hw=software` logged `start tier=full_software` and an ffmpeg command line containing
+    `-c:v libx264 -preset veryfast -crf 23` with no `-vaapi_device`; the same request without the
+    parameter logged `start tier=full_vaapi`. Both test transcodes were then killed and their cache
+    directories removed.
+- **`skipIntro` was investigated and found NOT wirable yet — not closed, see the new OPEN entry below.**
+  `src/lib/media-server/playback.ts` returns a hardcoded `chapters: []` (the field exists on the type in
+  `types.ts`, but chapter extraction was never implemented — matches the "Chapter extraction — chapters
+  always returns []" gap in `implementation-status.md`). Wiring `skipIntro` needs chapter data first.
+- Doc note: the general propagation pattern used for `hwAccel` — a localStorage-only pref appended as a
+  query param on the HLS **manifest** URL, since segment URLs can't carry it — is written up in
+  `../player/audio-subtitles.md` ("Client-only playback prefs on the HLS URL").
+
+**2026-08-13 — Wiring-audit re-raise of A17-4 (cron try/catch) — NOT REPRODUCIBLE, obsoleted by a
+dependency upgrade; A17-5 (no process-level rejection handler) genuinely fixed**
+- A wiring audit re-raised **A17-4** from the 2026-06-13 audit
+  (`../analysis/audit-2026-06-13/17-resilience-deadcode.md:104-118`): the automation scheduler's
+  `cron.schedule` callbacks in `src/lib/automation/scheduler.ts` had no `try/catch` around their
+  `await`ed bodies, so a rejection (indexer outage, qBit hiccup) would escape the async callback as an
+  unhandled promise rejection on a recurring timer — at worst process-fatal.
+- **Testing disproved it as currently applicable.** `node-cron` is pinned `^4.2.1` (installed 4.2.1).
+  node-cron 4.x wraps every task execution in its own try/catch internally and routes failures to an
+  `onError` handler that defaults to logging `[NODE-CRON][ERROR]` with a stack — confirmed by reading
+  `node_modules/node-cron/dist/cjs/scheduler/runner.js` (`runAsync` and the surrounding catch blocks at
+  lines ~79, ~97, ~161, ~173). A runtime proof was then run against the app's own installed node-cron: a
+  task body that always rejects was scheduled every second, both unwrapped and wrapped in a manual
+  `try/catch`. Result over the test window: `escaped=0, caught=2`. The unwrapped version did **not**
+  produce an `unhandledRejection` — node-cron caught and logged it internally.
+  - A17-4 was accurate when filed — node-cron 3.x (the version at audit time) did not catch async task
+    errors — and was silently resolved by the later dependency upgrade to 4.x, not by any code change.
+    It should not be re-raised as a live defect.
+- **Change made anyway, for attribution — not because anything was crashing:** `safeCron(expression,
+  label, body)` was added in `src/lib/automation/scheduler.ts` and all eight `cron.schedule` call sites
+  were routed through it (labels: `grab`, `availability`, `import`, `upgrade-scan`, `import-lists`,
+  `collections`, `reaper`, `auto-delete`). node-cron's default error handler prints a stack with no job
+  identity, so all eight jobs previously shared one indistinguishable error shape in the log; the label
+  now names the job that failed. This also keeps error behaviour owned by the app rather than inherited
+  from a library default that could change under a future node-cron bump. The file's header comment was
+  also stale (claimed "three background cron jobs" and "every 15 min — grab loop"; there are eight and
+  the grab loop is every 5 min) and was corrected to list all eight schedules.
+- **A17-5 is genuinely fixed, and is a different bug from A17-4.** A17-5
+  (`../analysis/audit-2026-06-13/17-resilience-deadcode.md:120-132`) covers the *absence of a
+  process-level safety net* — detached promises **outside** the cron ticks (the chokidar watcher, the
+  party WebSocket server, other fire-and-forget work in `instrumentation.ts`) that node-cron's internal
+  catch does nothing for. `src/instrumentation.ts` now registers `process.on('unhandledRejection', …)`
+  (log and keep serving) and `process.on('uncaughtException', …)` (log, then `process.exit(1)` so
+  compose's `restart: unless-stopped` brings the container back into a clean state). Do not conflate the
+  two findings: A17-4 was disproved by an external version bump; A17-5 was real and is closed by this
+  app-level code change.
+- **Verified.** `tsc --noEmit` clean, `eslint` clean on both changed files (`scheduler.ts`,
+  `instrumentation.ts`), all 50 vitest tests pass, image rebuilt via compose and container recreated
+  healthy. Startup log shows `[automation] Scheduler started` with no errors.
+- `../analysis/audit-2026-06-13/17-resilience-deadcode.md` is left unedited (frozen historical record,
+  same precedent as `01-auth-session.md` for A1-005 above); this entry is the closure record for both
+  A17-4 (not reproducible) and A17-5 (fixed).
+
+**2026-08-13 — Wiring-audit XFF / rate-limit-bypass finding — NOT REPRODUCIBLE, disproven by testing**
+- A wiring audit re-examined A1-005's fix (`getClientIp()` in `src/lib/client-ip.ts`, which reads the
+  `parts.length - trustedProxyCount()`-th `X-Forwarded-For` entry, N defaulting to 2 for an assumed
+  BunkerWeb→Caddy chain) and raised a **HIGH** finding: BunkerWeb is not currently deployed (mid-rebuild;
+  it lands at rebuild step 12), Caddy is the only proxy, so N=2 reads one entry too far left and
+  resolves to a client-forged value — supposedly letting an attacker rotate `X-Forwarded-For` to dodge
+  every login/register/forgot/verify rate limit, same class of bug as the original A1-005.
+- **Testing disproved it.** All three checks went through Caddy at `<app-host>` against
+  `POST /api/auth/login`, reading the recorded `login_attempts.ip_address`:
+  1. A single forged entry (`X-Forwarded-For: 203.0.113.99`) recorded the real peer `172.22.0.1`, not
+     the forged value.
+  2. Two forged entries (`203.0.113.99, 198.51.100.50`) still recorded `172.22.0.1` — if Caddy had
+     appended to the header (the audit's assumption), N=2 would have picked the second forged entry.
+     It did not.
+  3. A request from a container at `172.22.0.3` with a forged header correctly recorded `172.22.0.3`,
+     confirming real-client-IP attribution works end to end; earlier `172.20.0.1` rows seen in
+     `audit_log`/`login_attempts` were host-originated test traffic, not evidence of broken attribution.
+  - Root cause of the disproof: Caddy v2.11.4's `trusted_proxies` is unset, so it trusts nothing and
+    **replaces** the inbound `X-Forwarded-For` with the direct peer rather than appending — the app
+    only ever sees a single-entry chain, which `getClientIp`'s lower clamp
+    (`Math.max(0, parts.length - N)`) resolves identically at **both** N=1 and N=2. The finding's
+    premise (a reachable client-controlled entry at N=2) doesn't hold against the current edge.
+- **Change made anyway, for accuracy/defence-in-depth — not because anything was broken:**
+  `TRUSTED_PROXY_COUNT=1` was added to the deployment `.env` (`/home/joe/docker/unified-media/.env`,
+  **outside this git repo** — grepping the repo for the variable only turns up `src/lib/client-ip.ts`
+  and the `.env.local` example in `CLAUDE.md` §8), replacing a stale comment that read "leave unset
+  until behind Caddy (step 9)" (step 9 shipped since). It's a functional no-op today; it becomes
+  load-bearing only if Caddy's `trusted_proxies` is ever configured (Caddy would then preserve the
+  inbound chain and it would grow). **Must be raised to `2` when BunkerWeb is reintroduced in front of
+  Caddy at rebuild step 12.** Container was recreated and is healthy; behavior verified identical
+  before and after the change.
+
+**2026-08-13 — Wiring-audit dead-route finding (`/api/media/image`) — VALID, but the obvious
+remediation was inverted: the route was deleted, not wired in**
+- A wiring audit found `/api/media/image` (49 lines, `src/app/api/media/image/route.ts`) had **zero
+  callers** while 16 call sites across the app built `https://image.tmdb.org/t/p/...` URLs inline.
+  The route existed to prevent open SSRF by constraining the upstream URL — it required auth,
+  allowlisted TMDB sizes (`w92`…`original`), and validated the path against
+  `^/[A-Za-z0-9_-]+\.(jpg|jpeg|png|webp|svg|avif)$`. Unlike the two entries above, this finding was
+  **accurate** — the route genuinely was dead and its SSRF constraint genuinely bypassed by every
+  caller.
+- **The obvious remediation (route the 16 call sites through it) was analyzed and rejected as a
+  regression; the route was deleted instead.** All 12 files that reference `image.tmdb.org` render
+  through `next/image` (confirmed: no plain `<img>` call site, no `unoptimized` prop, no custom
+  `loader` anywhere in the tree) — e.g. `app/library/page.tsx` builds the URL and passes it as the
+  `imageUrl` prop to `components/media/MediaCard.tsx`'s `<Image>`. That means the request path is
+  already `browser → /_next/image (same-origin) → server → image.tmdb.org`: the browser never talks
+  to TMDB directly, and `next.config.ts` `images.remotePatterns` already pins the host to
+  `image.tmdb.org` (and `www.themoviedb.org`) with pathname `/t/p/**`. The SSRF protection the
+  deleted route provided was therefore already enforced by `remotePatterns` — which is *why* the
+  bypass across 16 call sites went unnoticed.
+- Wiring the route in would have cost real things for no security gain: keeping `next/image` on top
+  of it means a double server hop (`/_next/image` → `/api/media/image` → TMDB) — two round-trips,
+  two auth checks, extra memory churn on a 1 GB-limited container, for grids that load dozens of
+  posters at once; switching to plain `<img>` to dodge the double hop would drop `next/image`
+  resizing, WebP/AVIF conversion, and lazy loading entirely; and server-side image fetches traverse
+  gluetun (TMDB isn't in `NO_PROXY`), so each extra hop is extra VPN bandwidth. The route's only
+  unique contribution over `remotePatterns` was the size allowlist — an invalid size just 404s at
+  TMDB, not a vulnerability.
+- **Change made:** deleted `src/app/api/media/image/route.ts` and its now-empty directory. API route
+  count went 119 → 118. Nothing in code referenced it; three historical docs mention it
+  (`../complete/audit-v0.10.2-master-progress.md`,
+  `../analysis/audit-2026-06-13/15-subtitles-global-opt.md`,
+  `../analysis/audit-2026-06-13/03-library-catalog.md`) and were left unedited (frozen historical
+  records, same precedent as `01-auth-session.md` and `17-resilience-deadcode.md` above).
+- **Related observation, recorded as fact, not as a finding or a risk:** `/_next/image` is itself
+  unauthenticated (returns 200 without a session), whereas the deleted route called `requireAuth()`.
+  In practice this changes nothing — nothing used the route, so image loading was already
+  unauthenticated end to end, and the content is public TMDB poster art already constrained by
+  `remotePatterns`.
+- **Verified.** `tsc --noEmit` clean, all 50 vitest tests pass, image rebuilt via compose and
+  container recreated healthy. The route is absent from the built route manifest.
+  `/_next/image?url=...image.tmdb.org...` still returns HTTP 200 `image/jpeg` (22,528 bytes),
+  confirming posters still render through the optimizer.
+
 **2026-06-23 (v0.10.2) — Bucket-1 loose ends** (see `../complete/bucket1-cleanup-session-2026-06-23.md`)
 - **Grab-gate thresholds admin UI** — `gate_min_seeders` / `gate_max_size_movie_gb` / `gate_max_size_tv_gb`
   (v0.10.0 `app_settings` keys, previously SQL-only) now editable on `/admin/automation` → "Grab Gates"
@@ -154,10 +322,29 @@ Severity tags mirror the audit (S = security, D = data/engine, F = functional, A
   - Torrent Interface tab: `/downloads/page.tsx` loads `unified-torrent-prefs`, wires `sortColumn`/`sortReverse`/`rowsPerPage`/`confirmDelete`/`confirmDeleteFiles`. Delete confirm replaced with `DeleteConfirmModal` offering "Delete torrent only" / "Delete torrent + files".
   - `defaultView`: `/library` has a grid/list toggle via `?view=` URL param; list view renders a compact linked list with thumbnail.
   - `posterSize`: wired through `LibraryViewLayout` client component; small/medium/large map to different responsive grid column counts.
-  - `hwAccel` (server-side transcoding decision — leave as-is); `skipIntro` (no intro detection — leave as-is).
+  - `hwAccel` — **CLOSED 2026-08-15** (see the Closed section above): tier D `full_software` added to
+    `transcode.ts`, propagated via `?hw=software` on the HLS manifest URL.
+  - `skipIntro` — **still open**, moved below to "OPEN — Medium / Low remainder" with its dependency
+    chain; the earlier "leave as-is" framing undersold it as a decision rather than a missing
+    prerequisite.
 - ~~**`S`/`N` shortcuts**~~ — **CLOSED 2026-06-20**: `S` cycles subtitle tracks (off→0→1→…→off) and `N` skips to next episode. Both bound in VideoPlayer keydown handler via `nextEpisodeRef` (keeps closure current). Shortcuts page expanded with all real bindings (K/J/L/,/./0-9/I/Shift+arrows).
 
 ## OPEN — Medium / Low remainder
+
+- **`skipIntro` no-op setting (Playback prefs)** — `app/settings/playback/page.tsx` renders a "Skip
+  Intro" toggle that persists to `usePlaybackPrefs` but has **no consumer**: the control is live and
+  currently does nothing when toggled. Blocked on a dependency chain, not a decision:
+  1. **Chapter extraction** — `src/lib/media-server/playback.ts` returns a hardcoded `chapters: []`.
+     The field exists on the `PlaybackData` type (`types.ts`) but nothing populates it; needs ffprobe
+     `-show_chapters` wired through `probe.ts` into `playback.ts`. Tracked separately in
+     `implementation-status.md`'s "Known remaining gaps".
+  2. **Intro detection** — once chapters exist, something has to identify which chapter (if any) is the
+     intro; not designed yet (chapter titles are inconsistent across sources, so this likely needs a
+     heuristic, not just "chapter 2").
+  3. **Wire the toggle** — only after 1 and 2 exist does `skipIntro` have data to act on (e.g. auto-seek
+     past the intro chapter on load, or surface a "Skip Intro" button during it).
+  - This is a feature to build, not a wiring task. See the 2026-08-15 entry in the Closed section above
+    for the sibling `sidebarLabels`/`hwAccel` closures from the same audit pass.
 
 - **A7-10** two parallel qBit SID caches — left separate by design (different lifetimes/credential
   sourcing); the `clearSession`-on-failed-retry fix (A7-11) was applied to both. Unify only if revisited.

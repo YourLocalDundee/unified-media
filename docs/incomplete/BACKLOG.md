@@ -35,6 +35,9 @@ map — are in `docs/complete/FEATURES.md`, not here.)
 
 ## Open from the 2026-06-13 audit (P2)
 
-- No-op settings (Display page except Theme, 9 of 11 Playback prefs, the Torrent Interface tab) — needs
-  a product decision: wire them or remove them.
+- No-op settings — **largely closed**; see `docs/incomplete/open-issues.md` "OPEN — P2 / systemic" for
+  the reconciled per-pref status. Torrent Interface tab, `defaultView`, `posterSize` closed
+  2026-06-19–20; `sidebarLabels` and `hwAccel` closed 2026-08-15. Only **`skipIntro`** remains a no-op,
+  and it's not a product decision — it's blocked on chapter extraction not existing yet (see
+  open-issues.md's "OPEN — Medium / Low remainder", 2026-08-15).
 - a11y: modal focus traps + light-theme contrast.
