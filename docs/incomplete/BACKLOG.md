@@ -8,6 +8,35 @@ map — are in `docs/complete/FEATURES.md`, not here.)
 
 ## Buildable
 
+- **🐛 One request can produce two grabs — enforce one release per item.**
+  Hit for real 2026-08-16. `POST /api/requests` with `pickedTorrent` (interactive
+  pick), followed by approve, grabbed **both** the hand-picked 1080p release and a
+  4K release the automation chose off the monitored item the same request created.
+  Both completed; the automation's pick was the one imported, so the library ended
+  up with the release the user had *not* chosen, and ~14.6GB was spent on one film.
+
+  The profile in play was **"Any" (id 1), which has no `conditions`**, so nothing
+  discriminated between the two candidates. That made the duplicate invisible
+  rather than causing it — the double-dispatch is the actual defect.
+
+  Two things to build:
+  1. **Don't dispatch twice.** If a request carries an explicit `pickedTorrent`,
+     the approve path must not also run the auto-picker for that item. Check the
+     approve → `createItem` → immediate-grab path against the interactive path in
+     `grabber.ts`.
+  2. **Guard at the finish line anyway**, since a race can still produce two.
+     Before import, if more than one completed release maps to the same item, keep
+     exactly one and delete the rest with their data. Selection order:
+     an explicit user pick always wins; then quality-profile match (`conditions`,
+     `language`, `audio_mode`, format score); then name proximity to title+year;
+     then the additive score, then seeders. When the profile is "Any", fall
+     through rather than treating candidates as equally valid.
+
+  Prefer **hardlinking** the winner into the library over moving it —
+  `/srv/media/downloads` and `/srv/media/movies` are one filesystem, so the link
+  costs nothing and the torrent keeps seeding from its original path. That is how
+  the incident was cleaned up by hand.
+
 - **Notification retry** — Discord, ntfy and Web Push sends are single-attempt with an 8s timeout and
   no backoff, queue, or dead-letter record. A transient outage silently drops that event's alert.
   Decide whether a retry is worth the complexity for a household-scale instance before building it.
