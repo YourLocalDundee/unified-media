@@ -24,11 +24,16 @@ Public-edge routing. The browser connects same-origin to `wss://<app-host>/api/p
 live Caddy block routes that path to 3002, everything else to 3001:
 
 ```
-http://<app-host> {
-    import compressed
-    @partyws path /api/party/ws*
-    reverse_proxy @partyws unified-frontend:3002
-    reverse_proxy unified-frontend:3001
+<app-host> {
+    import lab_common
+    encode zstd gzip
+
+    handle /api/party/ws* {
+        reverse_proxy unified-frontend:3002
+    }
+    handle {
+        reverse_proxy unified-frontend:3001
+    }
 }
 ```
 
