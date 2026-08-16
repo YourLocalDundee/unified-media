@@ -1,20 +1,23 @@
 ---
 name: qbit-api
-description: Authenticate to a qBittorrent WebUI and list/add/delete torrents or hit any raw API endpoint, without opening a browser. Use whenever you need to inspect or change qBittorrent's torrent queue directly — e.g. checking what UMT (unified-frontend's download client) actually holds, cleaning up a torrent by hash, or verifying a credential/instance change took effect. Defaults to the same instance unified-frontend itself talks to (UMT_* in app/.env.local); pass explicit connection flags to reach a different instance.
+description: Authenticate to a qBittorrent WebUI and list/add/delete torrents or hit any raw API endpoint, without opening a browser. Use whenever you need to inspect or change qBittorrent's torrent queue directly — e.g. checking what UMT (unified-frontend's download client) actually holds, cleaning up a torrent by hash, or verifying a credential/instance change took effect. Defaults to the same instance unified-frontend itself talks to (UMT_* in the deployment .env); pass explicit connection flags to reach a different instance.
 ---
 
-> ⚠️ **Repointed 2026-08-13, NOT re-tested.** This skill was written for the pre-wipe server. Its
-> paths, IPs and hostnames were mechanically updated to match the rebuilt machine, but no step in
-> it has been run end to end since. Verify before trusting it — and note that **there is no
-> node/npm/npx on this host**, so any bare `npm`/`npx` step here will fail and must be run inside
-> a container. `run-unified-frontend` is the one skill in this directory that has been fully
-> rebuilt and verified; use it as the reference for how these should look.
+> **Rebuilt and verified 2026-08-16.** The previous version was written for the pre-wipe server and
+> was wrong in three ways that all produced misleading failures. Corrected and run end to end:
+> authenticated, listed, and added a real torrent that is downloading now.
 
+**Use `./qbit.sh`, not `node qbit.cjs`** — there is no Node on this host, so everything runs in a
+`node:24-slim` container.
 
-`qbit.cjs` runs on the **host**, not inside any container — qBittorrent is host-networked
-(`network_mode: host` in compose), so it's reachable directly at `<lan-ip>:<port>` from
-wherever this session runs. No `docker exec`/`docker cp` involved, unlike the
-`unified-db-query` skill.
+The client is **not** host-networked. It runs inside gluetun's network namespace and has no ports
+of its own; gluetun publishes the WebUI on `<lan-ip>:8090`.
+
+⚠️ **Do not use that published port.** qBittorrent 5.2 validates the `Host` header and answers a
+bare **HTTP 401** when addressed as `<lan-ip>:8090` — indistinguishable from a wrong password,
+and it will send you hunting for credentials that were never wrong. `qbit.sh` therefore joins the
+`gluetun_default` network and uses **`gluetun:8080`**, exactly the address in `UMT_URL`. (Caddy hits
+the same rule and works around it with `header_up Host {upstream_hostport}` on the `<downloads-host>` site.)
 
 ## Why this exists (read once)
 
@@ -32,21 +35,20 @@ same three fiddly bits:
 ## Usage
 
 ```bash
-node qbit.cjs login                                    # just test auth
-node qbit.cjs list                                     # hash | category | progress | state | name
-node qbit.cjs delete <hash...> [--files]               # --files also deletes data on disk
-node qbit.cjs add <magnet-or-url> [--category X]
-node qbit.cjs raw <METHOD> <api-path> [formBody]       # escape hatch for anything else
+./qbit.sh login                                    # just test auth
+./qbit.sh list                                     # hash | category | progress | state | name
+./qbit.sh delete <hash...> [--files]               # --files also deletes data on disk
+./qbit.sh add <magnet-or-url> [--category X]
+./qbit.sh raw <METHOD> <api-path> [formBody]       # escape hatch for anything else
 ```
 
 Flags can appear anywhere in the command (before or after the subcommand).
 
 Examples:
 ```bash
-node qbit.cjs list
-node qbit.cjs raw GET /api/v2/app/version
-node qbit.cjs delete 0f8478bf303bbe0e4c5bf159bbdefc823211af30 --files
-node qbit.cjs --host <lan-ip> --port 8080 --user minijoe --pass '...' list   # the OTHER instance
+./qbit.sh list
+./qbit.sh raw GET /api/v2/app/version          # verified: HTTP 200, v5.2.3
+./qbit.sh delete 0f8478bf303bbe0e4c5bf159bbdefc823211af30 --files
 ```
 
 ## Which instance it talks to
@@ -55,14 +57,16 @@ Connection resolution, first fully-specified source wins:
 
 1. `--host` / `--port` / `--user` / `--pass` flags
 2. `QBIT_HOST` / `QBIT_PORT` / `QBIT_USER` / `QBIT_PASS` env vars
-3. **Default** — parses `UMT_URL` / `UMT_USERNAME` / `UMT_PASSWORD` straight out of
-   `app/.env.local`, i.e. whatever instance unified-frontend itself is configured to use right
-   now. As of 2026-07-20 that's the dedicated `qbittorrent-umt` instance on `:8082` — reading
-   the env file live means this stays correct if that ever changes again, with zero edits here.
+3. **Default** — parses `UMT_URL` / `UMT_USERNAME` / `UMT_PASSWORD` out of the deployment env file
+   (`QBIT_ENV_FILE`, default **`/home/joe/docker/unified-media/.env`**), i.e. whatever instance
+   unified-frontend itself is configured to use. Reading it live means this stays correct if the
+   address ever changes, with zero edits here.
 
-There is a second, separate qBittorrent instance on this stack (`qbittorrent`, `:8080` —
-the original shared instance, still used by anything else on minime that talks to
-qBittorrent directly). Reach it with explicit `--host`/`--port`/`--user`/`--pass`.
+⚠️ Note `app/.env.local` — which the old version read — **does not exist on this server**. It is
+the dev-only file. Pointing at it yields no credentials at all.
+
+There is only **one** qBittorrent instance on the rebuilt stack. The old note about a separate
+`qbittorrent-umt` on `:8082` described the pre-wipe machine and no longer applies.
 
 ## Gotchas
 

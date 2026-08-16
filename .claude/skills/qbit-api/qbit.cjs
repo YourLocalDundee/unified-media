@@ -1,16 +1,26 @@
 #!/usr/bin/env node
 // qbit.cjs — authenticate to a qBittorrent WebUI and run one operation, without opening a
-// browser. Runs on the HOST (qBittorrent is host-networked, reachable directly over the LAN),
-// not inside any container.
+// browser.
+//
+// The download client is NOT host-networked. It runs inside gluetun's network namespace, so it
+// has no ports of its own; gluetun publishes the WebUI as <lan-ip>:8090.
+//
+// ⚠️ DO NOT reach it on that published port. qBittorrent 5.2 validates the Host header and
+// rejects anything that does not match how it expects to be addressed, so a request to
+// <lan-ip>:8090 fails with a bare **HTTP 401 that looks exactly like a wrong password** --
+// verified 2026-08-16, with credentials that were provably correct. (Caddy hits the same rule and
+// works around it with `header_up Host {upstream_hostport}` on the <downloads-host> site.)
+//
+// The reliable path, and what ./qbit.sh does: run inside the `gluetun_default` network and use
+// gluetun:8080 -- exactly the address in UMT_URL, i.e. how unified-frontend itself talks to it.
+// There is no Node on this host anyway, so this always runs in a container.
 //
 // Connection resolution order (first one fully set wins):
 //   1. --host/--port/--user/--pass flags
 //   2. QBIT_HOST / QBIT_PORT / QBIT_USER / QBIT_PASS env vars
-//   3. Fallback: parse UMT_URL (host:port) + UMT_USERNAME + UMT_PASSWORD out of
-//      unified-frontend's app/.env.local — i.e. "the instance unified-frontend itself talks
-//      to" is the default target, since that's the one this project cares about day to day.
-//      Point explicitly at another instance (e.g. the original shared qbittorrent on :8080)
-//      with the flags/env vars above.
+//   3. Fallback: parse UMT_URL (host:port) + UMT_USERNAME + UMT_PASSWORD out of the deployment
+//      env file (QBIT_ENV_FILE, default /home/joe/docker/unified-media/.env) -- i.e. "the
+//      instance unified-frontend itself talks to" is the default target.
 //
 // Subcommands:
 //   login                                just authenticate, print ok/fail
@@ -30,7 +40,15 @@ const http = require('http')
 const fs = require('fs')
 const path = require('path')
 
-const ENV_LOCAL_PATH = path.join(__dirname, '..', '..', '..', 'app', '.env.local')
+// Production env lives outside the repo. app/.env.local is the dev-only file and does not exist
+// on the server, so it is a fallback, not the default.
+const ENV_PATH =
+  process.env.QBIT_ENV_FILE ||
+  ['/home/joe/docker/unified-media/.env', path.join(__dirname, '..', '..', '..', 'app', '.env.local')].find(
+    (p) => fs.existsSync(p),
+  ) ||
+  '/home/joe/docker/unified-media/.env'
+
 
 function parseEnvFile(filePath) {
   const out = {}
@@ -62,13 +80,13 @@ function resolveConnection(flags) {
       pass: process.env.QBIT_PASS,
     }
   }
-  const env = parseEnvFile(ENV_LOCAL_PATH)
+  const env = parseEnvFile(ENV_PATH)
   const m = (env.UMT_URL || '').match(/^https?:\/\/([^:/]+):(\d+)/)
   if (m && env.UMT_USERNAME && env.UMT_PASSWORD) {
     return { host: flags.host || m[1], port: flags.port || m[2], user: flags.user || env.UMT_USERNAME, pass: flags.pass || env.UMT_PASSWORD }
   }
   console.error(
-    `Could not resolve qBittorrent connection details. Pass --host/--port/--user/--pass, set QBIT_HOST/QBIT_PORT/QBIT_USER/QBIT_PASS, or ensure ${ENV_LOCAL_PATH} has UMT_URL/UMT_USERNAME/UMT_PASSWORD.`,
+    `Could not resolve qBittorrent connection details. Pass --host/--port/--user/--pass, set QBIT_HOST/QBIT_PORT/QBIT_USER/QBIT_PASS, or ensure ${ENV_PATH} has UMT_URL/UMT_USERNAME/UMT_PASSWORD.`,
   )
   process.exit(1)
 }
