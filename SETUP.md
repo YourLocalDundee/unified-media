@@ -19,7 +19,14 @@ is not in the rebuilt one. There is also **no node/npm/npx on the host** — see
 
 ## 1. Environment variables
 
-Copy the template and fill in values:
+There are **two** env files and they are not interchangeable:
+
+| file | used by | in git? |
+|---|---|---|
+| `app/.env.local` | local/dev only — copy from `app/.env.local.example` | no (gitignored) |
+| `/home/joe/docker/unified-media/.env` | **production** — compose reads it via `env_file`, and substitutes `NEXT_PUBLIC_APP_URL` as a build arg | no (outside the repo) |
+
+For a production deploy, the file you edit is `/home/joe/docker/unified-media/.env`. For dev:
 
 ```bash
 cp /home/joe/unified-media/app/.env.local.example \
@@ -30,8 +37,6 @@ Required variables:
 
 | Variable | Where to find it |
 |---|---|
-| `a retired env var` | `http://the old request app:5055` (container name on compose_default) |
-| `a retired env var` | `/opt/docker/configs/the old request app/settings.json` → `main.apiKey` |
 | `QBIT_URL` | `http://qbittorrent:8080` |
 | `QBIT_USERNAME` | UMT web UI credentials |
 | `QBIT_PASSWORD` | UMT web UI credentials |
@@ -53,51 +58,73 @@ Admin password must satisfy all of:
 
 ---
 
-## 2. Build the Docker image
+## 2. Build and run with Compose
 
-```bash
-cd /home/joe/unified-media/app
-docker build -t unified-frontend:latest .
-```
+**Do not `docker build -t unified-frontend:latest .` by hand.** Compose owns the build; a hand-built
+tag produces an image the running container never picks up. The live setup is:
 
-The Dockerfile uses multi-stage build: Node 22 Alpine builder → minimal runner.
-Output mode is `standalone` — no `node_modules` in the final image.
+| thing | value |
+|---|---|
+| compose project | `unified-media` |
+| compose file | `/home/joe/docker/unified-media/docker-compose.yml` |
+| image produced | `unified-media-unified-frontend` |
+| build context | `/home/joe/unified-media/app` |
 
----
-
-## 3. Add to docker-compose
-
-Add this service to `/home/joe/docker/unified-media/docker-compose.yml`:
+The compose file already exists on this machine; it is reproduced here only for a from-scratch
+rebuild. The parts that are easy to get wrong and are all load-bearing: `build.args` (Next inlines
+`NEXT_PUBLIC_*` and bakes the CSP at **build** time), `group_add` + `devices` (VAAPI and
+`/srv/media` access), the external `gluetun_default` network (so `qbittorrent` resolves by name),
+and a **node**-based healthcheck — the image has no `wget` or `curl`.
 
 ```yaml
+services:
   unified-frontend:
-    image: unified-frontend:latest
+    build:
+      context: /home/joe/unified-media/app
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL}
     container_name: unified-frontend
     restart: unless-stopped
     env_file:
-      - /home/joe/unified-media/app/.env.local
+      - .env                      # /home/joe/docker/unified-media/.env — NOT app/.env.local
     environment:
       - NODE_ENV=production
-      - a retired env var=http://the old request app:5055
-      - QBIT_URL=http://qbittorrent:8080
+      - DB_PATH=/data/unified.db
+    group_add: ["1000", "990"]    # joe (for /srv/media), render (for /dev/dri)
+    devices:
+      - /dev/dri:/dev/dri
+    ports:
+      - "3001:3001"
     volumes:
       - unified-db:/data
+      - transcode:/transcode
+      - /srv/media:/srv/media
+    mem_limit: 1g
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:3001/api/health"]
+      test: ['CMD', 'node', '-e', "require('http').get('http://localhost:3001/api/health',r=>process.exit(r.statusCode<400?0:1)).on('error',()=>process.exit(1))"]
       interval: 30s
-      timeout: 5s
+      timeout: 10s
       retries: 3
-    labels:
-      - "com.centurylinklabs.watchtower.enable=false"
+      start_period: 40s
+    networks: [default, gluetun_default]
+
+networks:
+  gluetun_default:
+    external: true
 
 volumes:
   unified-db:
+  transcode:
 ```
 
-Then start it:
+The app Dockerfile is multi-stage, `output: 'standalone'`. Build and start from the compose file's
+own directory so the project name and `.env` are picked up:
 
 ```bash
-docker compose up -d unified-frontend
+cd /home/joe/docker/unified-media
+docker compose build --no-cache unified-frontend
+docker compose up -d --force-recreate unified-frontend
 ```
 
 Watch the logs for the seed message:
@@ -110,11 +137,13 @@ If you see `[seed] ADMIN_USERNAME and ADMIN_PASSWORD are required`, the env vars
 
 ---
 
-## 4. Caddy configuration
+## 3. Caddy configuration
 
 The app handles its own auth — no `forward_auth` / external auth gateway needed.
 
-Run the update script to replace the Caddyfile block:
+Run the update script to replace the Caddyfile block. It edits
+`/home/joe/docker/caddy/Caddyfile` in place (override with `CADDYFILE=...`) and is a no-op if the
+block already matches:
 
 ```bash
 python3 /home/joe/unified-media/scripts/update-caddyfile.py
@@ -124,16 +153,23 @@ Verify the new block looks like:
 
 ```caddyfile
 <app-host> {
-    import compressed
-    reverse_proxy unified-frontend:3001
+    import lab_common
+    encode zstd gzip
+
+    handle /api/party/ws* {
+        reverse_proxy unified-frontend:3002
+    }
+    handle {
+        reverse_proxy unified-frontend:3001
+    }
 }
 ```
 
 Apply it — **`caddy reload` alone is not enough**:
 
 ```bash
-docker exec caddy grep <app-host> /etc/caddy/Caddyfile   # confirm the container SEES the change
-docker compose up -d caddy                              # recreate if it does not
+docker exec caddy grep party/ws /etc/caddy/Caddyfile     # confirm the container SEES the change
+cd /home/joe/docker/caddy && docker compose up -d caddy   # recreate if it does not
 ```
 
 The Caddyfile is a single-file bind mount and Docker binds single files by inode. Any editor that
@@ -143,15 +179,16 @@ writes a temp file and renames it swaps the inode and silently detaches the moun
 
 ---
 
-## 5. First login
+## 4. First login
 
 1. Navigate to `https://<app-host>`
-2. Log in with `ADMIN_USERNAME` and `ADMIN_PASSWORD` you set in `.env.local`
+2. Log in with the `ADMIN_USERNAME` / `ADMIN_PASSWORD` you set in
+   `/home/joe/docker/unified-media/.env` (section 1)
 3. Go to `/admin/invites` to create invite codes for other users
 
 ---
 
-## 6. Adding users
+## 5. Adding users
 
 1. Admin goes to `/admin/invites` → Create an invite code
 2. Copy the link: `https://<app-host>/invite/{code}`
@@ -162,7 +199,7 @@ Invite codes can be set with a max-use count and expiry date.
 
 ---
 
-## 7. Development
+## 6. Development
 
 ⚠️ **There is no node, npm or npx on this host**, so there is no local dev-server workflow.
 Run tooling through a container instead:
@@ -180,7 +217,7 @@ for data checks (~60x faster, no browser).
 
 ---
 
-## 8. Video Player Features
+## 7. Video Player Features
 
 ### Quality Selection
 
@@ -239,12 +276,16 @@ To override, use Playback tab → Aspect Ratio in the tools panel.
 
 ---
 
-## 9. Upgrading
+## 8. Upgrading
 
 1. Pull or copy new source
-2. Rebuild: `docker build -t unified-frontend:latest /home/joe/unified-media/app`
-3. Restart: `docker compose up -d --force-recreate unified-frontend`
-4. Migrations run automatically on startup — no manual SQL needed
+2. Rebuild + restart, from the compose file's directory:
+   ```bash
+   cd /home/joe/docker/unified-media
+   docker compose build --no-cache unified-frontend
+   docker compose up -d --force-recreate unified-frontend
+   ```
+3. Migrations run automatically on startup — no manual SQL needed
 
 The `unified-db` volume persists across rebuilds. Never remove it without a backup:
 

@@ -355,9 +355,12 @@ to `2` when BunkerWeb goes back in front of Caddy. Full evidence:
 `docs/complete/FEATURES.md`.
 
 ### Deploy — always via compose, never bare `docker build`
-Compose tags the image `compose-unified-frontend:latest`; a bare `docker build -t unified-frontend`
-produces an image compose never uses (container keeps the old one).
+Compose project is **`unified-media`**, so it tags the image **`unified-media-unified-frontend`**.
+A bare `docker build -t unified-frontend` — or overriding the project with `-p compose` — produces
+an image compose never uses, and the container keeps the old one. Run it from the compose file's
+own directory so the project name and `.env` are picked up:
 ```
+cd /home/joe/docker/unified-media
 docker compose build --no-cache unified-frontend
 docker compose up -d --force-recreate unified-frontend
 ```
@@ -367,11 +370,20 @@ Use `node:24-slim` (Debian, not Alpine) — `better-sqlite3` needs glibc; build 
 ### Caddy
 ```
 <app-host> {
-  import compressed
-  reverse_proxy unified-frontend:3001
+  import lab_common
+  encode zstd gzip
+
+  handle /api/party/ws* {
+    reverse_proxy unified-frontend:3002
+  }
+  handle {
+    reverse_proxy unified-frontend:3001
+  }
 }
 ```
-Party-play adds a `/api/party/ws*` route to `:3002` — see `docs/features/party-play.md`.
+The `/api/party/ws*` route to `:3002` is **not optional** — the Next standalone server cannot take
+the `upgrade` event, so dropping it makes party play fail silently. See
+`docs/features/party-play.md`. `app/caddy.fragment` holds the same block as the copy-paste source.
 
 ⚠️ **The documented update flow is silently broken.** `python3 scripts/update-caddyfile.py`
 followed by `docker exec caddy caddy reload` reports success and changes nothing. The Caddyfile is
