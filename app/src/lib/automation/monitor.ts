@@ -14,6 +14,7 @@
 
 import { getDb } from '@/lib/db/index'
 import { computeScopeKey } from './scope-key'
+import { DEFAULT_QUALITY_PROFILE_ID } from './types'
 import type {
   GrabHistory,
   ItemStatus,
@@ -127,8 +128,8 @@ export function createItem(data: {
     tmdb_id: data.tmdb_id ?? null,
     tvdb_id: data.tvdb_id ?? null,
     year: data.year ?? null,
-    // profile id=1 is the default "Any" profile seeded at DB init
-    quality_profile_id: data.quality_profile_id ?? 1,
+    // Defaults to the 1080p profile, not "Any" — see DEFAULT_QUALITY_PROFILE_ID.
+    quality_profile_id: data.quality_profile_id ?? DEFAULT_QUALITY_PROFILE_ID,
     root_path: data.root_path ?? '',
     scope_type: scopeType,
     scope_seasons: scopeSeasons != null ? JSON.stringify(scopeSeasons) : null,

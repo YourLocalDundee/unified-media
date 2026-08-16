@@ -15,6 +15,7 @@
 
 import { getDb } from '@/lib/db/index'
 import { createItem } from './monitor'
+import { DEFAULT_QUALITY_PROFILE_ID } from './types'
 import { getCollection } from '@/lib/media-server/tmdb'
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -60,7 +61,7 @@ export function createCollection(data: {
          (tmdb_collection_id, name, quality_profile_id, enabled, added_count, created_at)
        VALUES (?, ?, ?, 1, 0, ?)`,
     )
-    .run(data.tmdb_collection_id, data.name, data.quality_profile_id ?? 1, Date.now())
+    .run(data.tmdb_collection_id, data.name, data.quality_profile_id ?? DEFAULT_QUALITY_PROFILE_ID, Date.now())
   return getCollectionById(r.lastInsertRowid as number)!
 }
 

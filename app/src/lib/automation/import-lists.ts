@@ -20,6 +20,7 @@
 import { getDb } from '@/lib/db/index'
 import { getSetting } from '@/lib/settings'
 import { createItem } from './monitor'
+import { DEFAULT_QUALITY_PROFILE_ID } from './types'
 import { getMovie, getTV, searchMovie, searchTV } from '@/lib/media-server/tmdb'
 
 const FETCH_TIMEOUT_MS = 15_000
@@ -70,7 +71,7 @@ export function createImportList(data: {
       `INSERT INTO import_lists (name, list_type, url, enabled, quality_profile_id, media_type, added_count, created_at)
        VALUES (?, ?, ?, 1, ?, ?, 0, ?)`,
     )
-    .run(data.name, data.list_type, data.url, data.quality_profile_id ?? 1, data.media_type ?? 'movie', Date.now())
+    .run(data.name, data.list_type, data.url, data.quality_profile_id ?? DEFAULT_QUALITY_PROFILE_ID, data.media_type ?? 'movie', Date.now())
   return getImportListById(r.lastInsertRowid as number)!
 }
 

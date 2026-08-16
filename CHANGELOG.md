@@ -7,6 +7,25 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## Unreleased
+
+### Changed
+- **Default quality profile is now `2` ("1080p"), not `1` ("Any")** — new `DEFAULT_QUALITY_PROFILE_ID`
+  in `lib/automation/types.ts`, applied by `createItem`, `collections.ts` and `import-lists.ts`.
+  Profile 1 carries no `conditions`, so it accepts every candidate and cannot tell a 1080p release
+  from an 80GB 4K remux. On 2026-08-16 that let one request finish two downloads of the same film
+  and import the 4K one over the release the user had picked by hand. Profile 2 requires
+  `resolution: 1080p`, which rejects the 4K candidate outright. Passing profile 1 explicitly still
+  works for anyone who wants no constraints. Existing rows keep whatever profile they were created
+  with; this changes new items only. The SQLite columns still declare `DEFAULT 1` — those are
+  applied migrations and were deliberately not edited, and every insert path supplies the value
+  explicitly so the column default never fires. New `monitor.test.ts` (3 cases) pins the behaviour.
+
+### Fixed
+- Documented in `docs/incomplete/BACKLOG.md`: one request can still dispatch two grabs when it
+  carries an explicit `pickedTorrent` and is then approved. The profile change removes the way that
+  bug caused visible damage, but not the double dispatch itself.
+
 ## [Unreleased]
 
 ### Added

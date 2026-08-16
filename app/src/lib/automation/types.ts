@@ -9,6 +9,25 @@
  * cast directly without a mapping step (better-sqlite3 returns plain objects).
  */
 
+/**
+ * Quality profile applied when a caller does not specify one.
+ *
+ * This is **2 ("1080p")**, not 1 ("Any"). Profile 1 carries no `conditions` at all, so it accepts
+ * every candidate and cannot discriminate between, say, a 1080p release and an 80GB 4K remux. That
+ * caused a real incident on 2026-08-16: one request produced two completed downloads of the same
+ * film, and the automation imported the 4K one over the release the user had picked by hand. See
+ * `docs/incomplete/BACKLOG.md` → "One request can produce two grabs".
+ *
+ * Profile 2 has `{ type: 'resolution', value: '1080p', required: true }`, which rejects a 4K
+ * candidate outright and matches how the rest of this library is stored. Anyone who genuinely
+ * wants no constraints can still pass profile 1 explicitly.
+ *
+ * Note the SQLite columns still declare `DEFAULT 1`. Those are historical migrations and are not
+ * edited; every insert path below supplies the value explicitly, so the column default never
+ * fires in practice.
+ */
+export const DEFAULT_QUALITY_PROFILE_ID = 2
+
 export type MediaType = 'movie' | 'tv'
 // 'grabbing' is a transient atomic-claim state (D3) preventing the immediate-grab path and the
 // 15-min cron from grabbing the same row twice; 'grabbed' means sent to download client;
