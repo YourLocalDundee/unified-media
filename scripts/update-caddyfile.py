@@ -8,7 +8,7 @@ The block must keep the /api/party/ws* route: the Next standalone server cannot
 take the `upgrade` event, so that path is served by a separate ws server on 3002
 in the same container. Dropping it makes party play fail silently in production.
 
-Two things about how this writes, both load-bearing:
+Two things about how this writes, both of which matter:
   * The Caddyfile is a single-FILE bind mount, and Docker binds single files by
     inode. Writing in place (open 'w' truncates and rewrites the same inode)
     keeps the mount attached. Never switch this to the write-temp-then-rename

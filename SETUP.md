@@ -71,7 +71,7 @@ tag produces an image the running container never picks up. The live setup is:
 | build context | `/home/joe/unified-media/app` |
 
 The compose file already exists on this machine; it is reproduced here only for a from-scratch
-rebuild. The parts that are easy to get wrong and are all load-bearing: `build.args` (Next inlines
+rebuild. The parts that are easy to get wrong, and that all matter: `build.args` (Next inlines
 `NEXT_PUBLIC_*` and bakes the CSP at **build** time), `group_add` + `devices` (VAAPI and
 `/srv/media` access), the external `gluetun_default` network (so `qbittorrent` resolves by name),
 and a **node**-based healthcheck — the image has no `wget` or `curl`.
