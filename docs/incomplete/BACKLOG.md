@@ -20,8 +20,8 @@ map — are in `docs/complete/FEATURES.md`, not here.)
 
 ## Needs a decision
 
-- **Native apps, phases 2-5** (`docs/features/native-apps.md`, plan at
-  `~/.claude/plans/sorted-riding-popcorn.md`) — Phase 1 (Android phone wrapper) shipped 2026-07-14;
+- **Native apps, phases 2-5** (`docs/features/native-apps.md`; the original session plan file was
+  lost in the server wipe) — Phase 1 (Android phone wrapper) shipped 2026-07-14;
   remaining phases each have their own gate: Phase 2 (iOS wrapper) needs the user to accept a
   $99/yr Apple Developer cost plus a spike on whether WKWebView forwards the session cookie to HLS
   segment requests; Phase 3 (`/tv` D-pad route) is buildable headless but is the single largest

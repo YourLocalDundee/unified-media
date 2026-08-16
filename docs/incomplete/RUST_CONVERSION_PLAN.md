@@ -112,7 +112,7 @@ Exit criteria. Direct play, remux, audio transcode, and full VAAPI all verified 
 
 Everything remaining server-side. Auth integration (Authentik forward-auth headers plus session handling), library/metadata endpoints, watch state, requests/grab-confirmation flow, availability badges, Downloads page API, WebSocket party play, deep-health.
 
-4.1 Port route by route against the OpenAPI spec. This is the long grind phase, mostly mechanical, ideal Claude Code territory with the contract suite as the accept gate per route group.
+4.1 Port route by route against the OpenAPI spec. This is the long grind phase, mostly mechanical, ideal coding-agent territory with the contract suite as the accept gate per route group.
 
 4.2 Party play on axum's native WebSocket support, room state in a tokio task per room with mpsc channels, same message protocol so mid-migration clients keep working.
 

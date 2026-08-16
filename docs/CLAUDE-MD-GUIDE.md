@@ -1,13 +1,13 @@
 # CLAUDE.md & Token-Efficiency Guide
 
-How to keep this project cheap to run with Claude Code. This is the reference behind the trimmed
+How to keep this project cheap to run with the coding agent. This is the reference behind the trimmed
 `CLAUDE.md`. Read it once; apply it whenever you edit `CLAUDE.md`, add a doc, or start a session.
 
-Sources: Anthropic's official Claude Code best-practices page
+Sources: the upstream best-practices guide
 (`code.claude.com/docs/en/best-practices`), Anthropic's memory/CLAUDE.md docs (`/en/memory`), plus
 community token-reduction writeups (Firecrawl token-efficiency benchmark, Finout 2026 pricing guide,
 buildtolaunch token-optimization guide). Verify specifics against the official docs before relying on
-a command name — Claude Code commands evolve.
+a command name — the agent CLI commands evolve.
 
 ## The one fact that drives everything
 
@@ -17,16 +17,16 @@ you've typed a word. Performance also degrades as context fills ("context rot"):
 model isn't broken, the context is. So the goal isn't zero context — it's making sure everything in
 `CLAUDE.md` is **load-bearing**.
 
-Anthropic's litmus test for every line: **"Would removing this cause Claude to make mistakes?"** If
-not, cut it. Bloated `CLAUDE.md` files cause Claude to *ignore* your real instructions because they're
+Anthropic's litmus test for every line: **"Would removing this cause the agent to make mistakes?"** If
+not, cut it. Bloated `CLAUDE.md` files cause the agent to *ignore* your real instructions because they're
 lost in noise.
 
 ## What belongs in CLAUDE.md vs not
 
 | ✅ Include | ❌ Exclude (→ move to `docs/` or delete) |
 | --------- | --------------------------------------- |
-| Bash/deploy commands Claude can't guess (the compose rebuild, the Caddy reload) | Anything Claude can infer by reading the code |
-| Code-style rules that differ from defaults (react-hooks at error, no eslint-disable) | Standard language conventions Claude already knows |
+| Bash/deploy commands the agent can't guess (the compose rebuild, the Caddy reload) | Anything the agent can infer by reading the code |
+| Code-style rules that differ from defaults (react-hooks at error, no eslint-disable) | Standard language conventions the agent already knows |
 | Testing/verify instructions + the preferred runner (`tsc --noEmit`, `eslint`, `npm run build`) | Detailed API docs — link to `sources/` or `docs/` instead |
 | Repo etiquette (SemVer patch-before-minor, changelog discipline) | Info that changes frequently |
 | Architecture decisions specific to this project (host-net the old media server, UMT, party on :3002) | Long explanations/tutorials |
@@ -53,18 +53,18 @@ no quality regression.
 ## Mechanics that save tokens here
 
 - **HTML comments are free.** `<!-- note -->` is stripped before injection and costs zero tokens. Use
-  it for teammate notes / rationale Claude doesn't need to act on.
+  it for teammate notes / rationale the agent doesn't need to act on.
 - **`@path` imports load at session start too.** `See @docs/x.md` pulls the file in *every* session —
   same tax as inline. Use plain prose pointers ("see `docs/x.md`") for on-demand reading; reserve
-  `@import` for the rare file Claude should always have. This repo uses **plain pointers** deliberately.
+  `@import` for the rare file the agent should always have. This repo uses **plain pointers** deliberately.
 - **Add a `.claudeignore`.** Keep `analysis/` raw audit dumps, `sources/` upstream copies, build
-  output, and `node_modules` out of automatic context. Claude can still read them when told to; they
+  output, and `node_modules` out of automatic context. The agent can still read them when told to; they
   just don't get pulled in opportunistically.
 - **Skills over CLAUDE.md for sometimes-relevant knowledge.** Anything only relevant to *one* kind of
   task (e.g. "how to add a new indexer adapter") belongs in `.claude/skills/<name>/SKILL.md`, loaded on
   demand, not in the always-on `CLAUDE.md`. Keep skill bodies small and link to a longer reference
   file the skill can read when triggered.
-- **CLI tools beat API fetches for context.** Install `gh`; Claude uses it for issues/PRs far more
+- **CLI tools beat API fetches for context.** Install `gh`; the agent uses it for issues/PRs far more
   cheaply than raw API calls, and avoids unauthenticated rate limits.
 
 ## Session habits (the bigger lever than the file)
@@ -80,7 +80,7 @@ The file is the constant baseline; *session sprawl* is what actually blows budge
   long polluted one almost every time.
 - **Use subagents for investigation.** The single biggest context lever Anthropic calls out. Full
   rules for this repo are in "Subagents" below.
-- **Give Claude a check it can run.** Tests, a build exit code, a lint pass, a screenshot diff. With a
+- **Give the agent a check it can run.** Tests, a build exit code, a lint pass, a screenshot diff. With a
   check, the loop closes on its own and you can walk away; without one, "looks done" is the only signal
   and you become the verification loop. This repo's check is `npx tsc --noEmit` + `npx eslint <files>`
   + `npm run build`.
@@ -90,7 +90,7 @@ The file is the constant baseline; *session sprawl* is what actually blows budge
 - **Disable non-essential background calls if cost matters.** Auto-memory forks the whole context after
   every message into a parallel call that always cache-misses. `/memory` → turn auto-memory off, or set
   `DISABLE_NON_ESSENTIAL_MODEL_CALLS=1`, to stop background model calls not essential to the task.
-- **Pin the Claude Code version in CI/onboarding.** Documented March-2026 incidents (prompt-cache
+- **Pin the agent CLI version in CI/onboarding.** Documented March-2026 incidents (prompt-cache
   bugs, a bad release inflating rate-limit consumption 3–50×) mean a silent team-wide upgrade can spike
   costs overnight. Pin, and check release notes first if a bill suddenly looks wrong.
 
@@ -136,10 +136,10 @@ how to ship.
 ## Maintenance loop
 
 Treat `CLAUDE.md` like code:
-1. Review it when something goes wrong (Claude did the wrong thing, or asked a question the file
+1. Review it when something goes wrong (the agent did the wrong thing, or asked a question the file
    already answers → the phrasing is ambiguous or the file is too long).
 2. Prune regularly. When a gotcha is fixed in code or enforced by a lint rule/hook, delete the prose.
-3. Test changes by watching whether Claude's behavior actually shifts — not by assuming the words
+3. Test changes by watching whether the agent's behavior actually shifts — not by assuming the words
    helped.
 4. Prefer a **hook** over a prose rule for anything that must happen every time with zero exceptions
    (hooks are deterministic; CLAUDE.md is advisory). E.g. a Stop hook that runs the typecheck/lint gate.

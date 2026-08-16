@@ -24,7 +24,7 @@ app-backup-*/
 .vscode/
 .idea/
 
-# Claude Code local worktree scratch (git worktree metadata, not source) — narrowed to just
+# Agent CLI local worktree scratch (git worktree metadata, not source) — narrowed to just
 # worktrees/ so .claude/skills/ (committed agent skills, e.g. run-unified-frontend) stays tracked.
 .claude/worktrees/
 .claude/settings.json

@@ -28,10 +28,11 @@ Most of the model is built. It was written for subtitle search, not display:
 So the per-series "which numbering does this show use" concept already exists and already works.
 This plan generalises it from *subtitle lookup* to *the whole app*, and fixes the data underneath.
 
-> Jellyfin has the same idea natively — a per-series **Display Order** of Aired / DVD / Absolute.
-> Worth knowing it exists rather than rebuilding it there. Note its Absolute mode only works if the
-> metadata provider supplies absolute numbers: **TheTVDB does, TMDB does not.** That is a further
-> argument for TVDB as the anime metadata source on the Jellyfin side too.
+> The standalone playback server has the same idea natively — a per-series **Display Order** of
+> Aired / DVD / Absolute. Worth knowing it exists rather than rebuilding it there. Note its
+> Absolute mode only works if the metadata provider supplies absolute numbers: **TheTVDB does,
+> TMDB does not.** That is a further argument for TVDB as the anime metadata source on that side
+> too.
 
 ## The three numbering systems
 

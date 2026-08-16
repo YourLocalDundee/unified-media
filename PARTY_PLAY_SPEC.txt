@@ -1,6 +1,21 @@
 UNIFIED MEDIA — PARTY PLAY (WATCH TOGETHER) AND CHAT — DEFINITIVE REFERENCE SPECIFICATION
 Target: unified-frontend, the Next.js media platform at /home/joe/unified-media
 
+*** EDGE ERRATUM — 2026-08-16, read before setting this back up ***
+This spec was written for the pre-wipe server and assumes a public-internet path through a WAF.
+That is no longer the deployment. On the rebuilt server:
+  - Caddy is the ONLY thing at the edge. There is no WAF and no CrowdSec; a WAF was slated for
+    rebuild step 12 and may not be built at all, since nothing is internet-exposed.
+  - Nothing is internet-exposed. Reach is LAN + tailnet only, so the "test from a client OFF the
+    tailnet (cellular)" instruction below cannot be satisfied as written — the nearest equivalent
+    is a tailnet client on cellular with wifi off.
+  - The live Caddy block is the one shown under "Public-edge routing" below, and it is already
+    deployed. app/caddy.fragment is the canonical copy; scripts/update-caddyfile.py writes it.
+  - Port 3001 IS published to the host (0.0.0.0:3001). Port 3002 is NOT published and does not
+    need to be — Caddy reaches it over the compose network by container name.
+Everything about message-level authentication, heartbeats and reconnect below still stands: those
+were never WAF-dependent, and a socket being open is still not authorization.
+
 This is the complete v1 specification for native party play and chat inside the unified-frontend
 media server. It is written as one continuous reference in dependency order: read it start to finish
 and each idea builds on the one before it. The condensed build sequence is the only ordered list, and
@@ -92,13 +107,13 @@ CORE DESIGN PRINCIPLES (READ BEFORE BUILDING)
    other party code. Write the interface now, implement it in-memory now. Do not build the distributed
    backing in v1. The interface is the horizontal-scale boundary.
 
-4. Authenticate every message, not just the connection. Because the app is reachable from the public
-   internet through BunkerWeb and Caddy, the WebSocket handshake must validate the unified-session cookie,
+4. Authenticate every message, not just the connection. The WebSocket handshake must validate the
+   unified-session cookie,
    and every control, chat, and reaction message must confirm the sender is a member of the specific party
    it is acting on. A socket being open is not authorization to control or post to a party.
 
-5. Resilience by design. Backgrounded tabs, brief network drops, and the public-edge path through
-   BunkerWeb and Caddy all make connections fragile. Application heartbeat plus WebSocket ping/pong keep
+5. Resilience by design. Backgrounded tabs, brief network drops, and the edge path through Caddy
+   all make connections fragile. Application heartbeat plus WebSocket ping/pong keep
    sockets alive, clients auto-reconnect and resync by adopting the full-state snapshot, and a server-side
    grace window means a short drop does not eject a member. Build this in from the start, not as a later
    patch.
@@ -321,15 +336,22 @@ routes that path to the new internal port while everything else continues to 300
 Caddy block, before the catch-all reverse_proxy:
 
   <app-host> {
-    import compressed
-    @partyws path /api/party/ws*
-    reverse_proxy @partyws unified-frontend:3002
-    reverse_proxy unified-frontend:3001
+    import lab_common
+    encode zstd gzip
+
+    handle /api/party/ws* {
+      reverse_proxy unified-frontend:3002
+    }
+    handle {
+      reverse_proxy unified-frontend:3001
+    }
   }
 
 Caddy upgrades WebSockets automatically (it forwards the Upgrade and Connection headers), so no extra ws
-directive is needed. Expose 3002 on the container the same internal-only way 3001 is exposed
-(<lan-ip> binding); it has no public surface of its own, it is reachable only through Caddy.
+directive is needed. Do NOT publish 3002 to the host: it has no public surface of its own and Caddy
+reaches it by container name over the compose network. (Erratum: 3001 is published as 0.0.0.0:3001,
+not bound to <lan-ip>. To drive 3002 from the host for a test, forward it — see the
+deploy-unified-frontend skill.)
 
 Dev vs prod connection target. In production the client connects to wss://<host>/api/party/ws (same
 origin, Caddy maps the path to 3002). In development there is no Caddy, so the client connects directly to
@@ -343,12 +365,16 @@ the browser may open the socket. Add the wss origin for production and the ws or
 ('self' covers same-origin wss in modern browsers, but list the origins explicitly so the separate dev
 port and any future host change do not silently break the connection.)
 
-BunkerWeb idle reaping. The public path traverses BunkerWeb, CrowdSec, and Caddy. Caddy upgrades
-WebSockets fine. BunkerWeb may reap long-lived idle upgraded connections. The primary defense is traffic:
+Idle reaping at the edge. (ERRATUM 2026-08-16: on the rebuilt server the path is Caddy ONLY — no WAF,
+no CrowdSec. Caddy upgrades WebSockets fine and does not reap them, so this concern is currently moot.
+It becomes live again only if a WAF is put back in front of Caddy at rebuild step 12. Keep the
+heartbeats regardless: they are cheap and they also cover client-side sleep and NAT timeouts.)
+A WAF may reap long-lived idle upgraded connections. The primary defense is traffic:
 the application heartbeat every HEARTBEAT_INTERVAL_MS (5s) plus the ws protocol ping every
 WS_PING_INTERVAL_MS (20s) keep the socket active well under any typical 60s idle timeout. After building,
-the connection MUST be tested from a client that is OFF the tailnet (cellular) to confirm the upgrade
-completes through the full edge and survives at least two minutes idle. If BunkerWeb still reaps it, add a
+the connection SHOULD be tested from a client on cellular with wifi off, over the tailnet, to confirm the
+upgrade completes through the real edge and survives at least two minutes idle. (Testing from fully off
+the tailnet is not possible — nothing is internet-exposed.) If a WAF is ever added and reaps it, add a
 WebSocket-aware exception for /api/party/ws as a per-domain setting in
 /home/joe/docker/edge/docker-compose.yml, in the same style as the existing <app-host>_*
 overrides (raise the reverse-proxy read timeout for that path or exempt it from idle close); confirm the

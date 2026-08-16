@@ -147,8 +147,8 @@ have caught it. Run at least one flow through the Caddy hostname after touching 
 at Pi-hole — that misconfiguration caused the original outage and is a standing rule. With
 `--network host` the container inherits that resolver, so these names would simply fail to resolve.
 `run.sh` therefore pins them with `--add-host` (Docker gives the container its own `/etc/hosts`
-even on the host network). `media`, `jellyfin`, `dns`, `dl` and `auth` are mapped; override the
-target address with `DRIVE_LAB_IP` if it ever moves.
+even on the host network). `media`, `dns`, `dl` and `auth` are mapped by default; add others with
+`DRIVE_LAB_HOSTS="media foo"` and override the target address with `DRIVE_LAB_IP` if it moves.
 
 ## Version pinning — read before bumping anything
 

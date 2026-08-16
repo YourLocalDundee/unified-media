@@ -38,9 +38,13 @@ BASE_URL="${DRIVE_BASE_URL:-http://localhost:3001}"
 #
 # Only lab names are pinned, and only to the LAN address — this is a test harness convenience, not
 # a general DNS override.
+#
+# The short names are a list rather than a hardcoded set so a flow that needs some other lab
+# hostname can add it without editing this file: DRIVE_LAB_HOSTS="media foo" ./run.sh ...
 LAB_IP="${DRIVE_LAB_IP:-<lan-ip>}"
+LAB_HOSTS="${DRIVE_LAB_HOSTS:-media dns dl auth}"
 HOST_MAPS=()
-for name in media jellyfin dns dl auth; do
+for name in $LAB_HOSTS; do
   HOST_MAPS+=(--add-host "${name}.<internal-domain>:${LAB_IP}")
 done
 

@@ -2,7 +2,8 @@
 
 > **Note (2026-08-13):** paths, IPs and hostnames in this document were mechanically updated to match the rebuilt server. The findings, decisions and dates below are the original record and have not been altered.
 
-Interactive click-through audit driven via `.claude/skills/run-unified-frontend/driver.mjs`
+Interactive click-through audit driven via `.claude/skills/run-unified-frontend/` (the harness was
+rewritten on 2026-08-13; the `driver.mjs` REPL used here no longer exists, `drive.mjs` replaced it)
 (headless Chromium/Playwright). Every row below was actually navigated/clicked in a live dev
 server (`npm run dev`, port 3001) against the real dev DB (`app/unified.db`) and the real
 LAN services in `.env.local` (the old request app/the external automation services at <lan-ip>; qBittorrent/UMT confirmed

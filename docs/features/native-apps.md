@@ -3,8 +3,9 @@
 Turns Unified Media into an installable phone app (Android + iOS) and, eventually, a real app on
 Android TV/Fire TV/Google TV plus Chromecast casting. **6-phase plan, only Phase 1 shipped so
 far** (2026-07-14). Full phase-by-phase design (file-level detail, cost/effort table, spikes to
-run before deeper investment) lives at `/home/joe/.claude/plans/sorted-riding-popcorn.md` —
-this doc is the condensed, durable version of what actually landed.
+run before deeper investment) lived in a session plan file that **did not survive the server
+wipe**; this doc is now the only durable record of the design, and the condensed version of what
+actually landed.
 
 ## Architecture: one app, thin delivery shells
 
@@ -109,5 +110,6 @@ Full detail for each is in the plan file; summarized here only so this doc stays
 - `docs/features/pwa-notifications.md` — the existing installable-PWA path (already shipped,
   separate from this Capacitor effort; the two are complementary, not redundant — PWA installs from
   a browser with zero native tooling, Capacitor gives a real APK/IPA with native APIs).
-- `/home/joe/.claude/plans/sorted-riding-popcorn.md` — the original full plan (architecture
-  rationale, file-level design for every phase, cost/effort table).
+- ~~The original full plan~~ (architecture rationale, file-level design for every phase,
+  cost/effort table) — **lost in the server wipe.** This document and
+  `.claude/skills/test-unified-android/SKILL.md` are what remain.

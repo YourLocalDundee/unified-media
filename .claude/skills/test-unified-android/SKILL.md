@@ -3,20 +3,20 @@ name: test-unified-android
 description: Build the Unified Media Capacitor Android app and drive it on a headless emulator (or a real device over adb). Use when asked to test the phone/TV app, build the debug APK, boot the Android emulator, or click through a flow in the native Android wrapper (as opposed to the web app — see run-unified-frontend for that).
 ---
 
-> ## ⛔ The toolchain is not installed on this machine. Read this before anything else.
+> ## ✅ Rebuilt and verified end to end, 2026-08-16
 >
-> Checked directly on 2026-08-16: **no `java`, no `adb`, no `gradle`, no `sdkmanager`, no
-> `~/Android/Sdk`, no `~/.jdks`, no `~/.gradle`.** All of it went with the wipe.
+> The toolchain was wiped with the server and has now been reinstalled, and **every step in this
+> file below was executed on the rebuilt machine** — APK build, emulator boot, install, launch, and
+> a screenshot of the real login page rendering inside the WebView.
 >
-> The previous version of this file opened with "Prerequisites (one-time; **already done on this
-> machine** as of 2026-07-14)" and then listed those exact things. That statement described the
-> pre-wipe server and is false today — every command below the build section would fail at
-> `command not found`. Do not trust a "repointed" skill that was never run.
+> Installed (all userspace, no sudo): **JDK 21.0.12+8** at `~/.jdks/jdk-21.0.12+8`, pinned for
+> Gradle in `~/.gradle/gradle.properties`; **Android SDK** at `~/Android/Sdk` (5.6G) with
+> `platform-tools` 37.0.1, `platforms;android-36`, `build-tools;36.0.0`, `emulator`, and
+> `system-images;android-36;google_apis;x86_64`; AVD **`unified_media_test`** (Pixel 7);
+> `JAVA_HOME`/`ANDROID_HOME`/`ANDROID_SDK_ROOT`/`PATH` appended to `~/.bashrc`.
 >
-> Restoring it is a real install (JDK + SDK + a ~10GB system image), so it is a decision, not a
-> step. See **"Restoring the toolchain"** at the bottom. Everything the emulator needs on the
-> *host* side is already fine: `/dev/kvm` exists, `joe` is in the `kvm` group (991), and there is
-> 392G free on `/`.
+> A plain `bash -c` from this harness may not source `~/.bashrc`, so every block below exports what
+> it needs explicitly. `/dev/kvm` is present and `joe` is in the `kvm` group (991).
 
 Drives the Capacitor Android shell at `/home/joe/unified-media/native/`. The shell has almost no
 code of its own — `capacitor.config.ts` sets `server.url` to `https://<app-host>`, so
@@ -47,13 +47,44 @@ DNS layout. Expect to hit it the first time the emulator ever runs here.
 
 ## Build the debug APK
 
+### Step 0 — `cap sync` first, or the build fails
+
+`native/node_modules/` and `native/capacitor-cordova-android-plugins/` are **gitignored and absent
+on a fresh checkout**. Skipping this step fails with a message that names a file rather than the
+cause:
+
+```
+Could not read script '.../capacitor-cordova-android-plugins/cordova.variables.gradle'
+as it does not exist.
+```
+
+That directory is *generated* by the Capacitor CLI. There is no Node on this host, so run it in a
+container (mount as your own uid so the generated files are yours, not root's):
+
 ```bash
+docker run --rm -u "$(id -u):$(id -g)" -v /home/joe/unified-media/native:/native \
+  -w /native -e HOME=/tmp node:24-slim \
+  sh -c 'npm install --no-audit --no-fund && npx cap sync android'
+```
+Expect `Found 3 Capacitor plugins for android` (`@capacitor/app`, `splash-screen`, `status-bar`).
+Re-run this after changing `native/package.json`, `capacitor.config.ts`, or anything in `www/`.
+
+### Step 1 — Gradle
+
+```bash
+export JAVA_HOME=/home/joe/.jdks/jdk-21.0.12+8
 export ANDROID_HOME="$HOME/Android/Sdk"
-export PATH="$PATH:$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools"
+export ANDROID_SDK_ROOT="$ANDROID_HOME"
+export PATH="$JAVA_HOME/bin:$PATH:$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools"
 cd /home/joe/unified-media/native/android
 ./gradlew assembleDebug --console=plain
 ```
-Output: `app/build/outputs/apk/debug/app-debug.apk`.
+Output: `app/build/outputs/apk/debug/app-debug.apk`. Verified 2026-08-16: **BUILD SUCCESSFUL in
+1m 8s**, 183 tasks, 5.2MB APK. The `org.gradle.java.home` pin applies automatically.
+
+⚠️ **Do not judge the result from a piped `tail`.** `./gradlew … | tail -25` reports the exit
+status of `tail`, not Gradle — a failed build looks like success. Redirect to a file and check
+`$?`, or grep the log for `BUILD SUCCESSFUL`. This bit me on the first run here.
 
 Rebuild only after changing `native/` (the Capacitor shell itself — `capacitor.config.ts`, icons,
 plugins) or native-bridge code like `app/src/components/native/NativeAppBridge.tsx`. Ordinary web
@@ -64,7 +95,7 @@ live at `https://<app-host>`.
 
 ```bash
 export ANDROID_HOME="$HOME/Android/Sdk"
-export PATH="$PATH:$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator"
+export PATH="$PATH:$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator"
 nohup emulator -avd unified_media_test -no-window -no-audio -no-boot-anim \
   -gpu swiftshader_indirect -no-snapshot -dns-server <lan-ip> > /tmp/emulator.log 2>&1 &
 disown
@@ -74,12 +105,16 @@ for i in $(seq 1 40); do
   sleep 8
 done
 ```
-Cold boot takes ~1–3 minutes. `adb devices` should show `emulator-5554  device` (not `offline`)
-once `sys.boot_completed=1`.
+Verified 2026-08-16: **booted in 68s**, `adb devices` → `emulator-5554  device`.
 
 The old version wrapped this in `sg kvm -c "..."` for a user named `minijoe`. Neither applies:
 the user is **`joe`**, and `joe` is already in the `kvm` group, so no `sg` wrapper is needed unless
 a future session's shell somehow lacks the group.
+
+Confirm the DNS flag did its job before blaming the app for anything:
+```bash
+adb shell ping -c 2 <app-host>     # must resolve to <lan-ip>
+```
 
 ## Install + launch
 
