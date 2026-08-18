@@ -36,9 +36,20 @@ minijoe.dev {
 
 # The old internal-only name. Kept working so LAN/tailnet bookmarks and the Android app do not
 # break; it serves the same app through the same basePath rules.
+#
+# Guarded to private networks. Port 443 is forwarded from the internet for the apex, and Caddy
+# matches vhosts by hostname, so every vhost on this listener is internet-reachable to anyone who
+# knows its name unless it says otherwise. Written as the FIRST `handle` on purpose: the body is
+# made of `handle` blocks, and a matching `handle` beats a bare `respond` regardless of file order.
+# (For a vhost using `redir`, wrap the body in `route` instead — `redir` outranks `respond` too.)
 <app-host> {
 	import lab_common
 	encode zstd gzip
+
+	@external not remote_ip 127.0.0.1/8 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 100.64.0.0/10
+	handle @external {
+		respond 403
+	}
 
 	handle /api/party/ws* {
 		reverse_proxy unified-frontend:3002

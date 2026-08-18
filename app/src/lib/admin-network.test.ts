@@ -10,8 +10,8 @@ afterEach(() => {
 
 describe('isAdminNetwork defaults', () => {
   it('allows the tailnet (100.64.0.0/10)', () => {
-    expect(isAdminNetwork('<tailnet-ip>')).toBe(true)   // mini
-    expect(isAdminNetwork('<tailnet-ip>')).toBe(true)   // brittany-a15
+    expect(isAdminNetwork('100.100.100.100')).toBe(true)
+    expect(isAdminNetwork('100.90.10.20')).toBe(true)
     expect(isAdminNetwork('100.64.0.0')).toBe(true)      // first address
     expect(isAdminNetwork('100.127.255.255')).toBe(true) // last address
   })
@@ -52,7 +52,7 @@ describe('isAdminNetwork defaults', () => {
   })
 
   it('tolerates surrounding whitespace from a header split', () => {
-    expect(isAdminNetwork('  <tailnet-ip> ')).toBe(true)
+    expect(isAdminNetwork('  100.100.100.100 ')).toBe(true)
   })
 })
 
@@ -76,7 +76,7 @@ describe('ADMIN_ALLOWED_CIDRS override', () => {
 
   it('falls back to the defaults when set to whitespace', () => {
     process.env.ADMIN_ALLOWED_CIDRS = '   '
-    expect(isAdminNetwork('<tailnet-ip>')).toBe(true)
+    expect(isAdminNetwork('100.100.100.100')).toBe(true)
     expect(isAdminNetwork('8.8.8.8')).toBe(false)
   })
 })

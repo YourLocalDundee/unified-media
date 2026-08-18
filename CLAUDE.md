@@ -310,8 +310,8 @@ These are the live "don't trip over this" rules. Kept in full because they're lo
   the app's own auth, the closed registration endpoint, and the admin network restriction
   above. Anything added to the public vhost inherits that exposure.
 - **Editing the Caddyfile needs a container recreate, not a reload** — see the Caddy note in §8.
-- **Pi-hole has no wildcard.** It serves five explicit host records (`<app-host>`, `<pihole-host>`,
-  `<downloads-host>`, `<auth-host>`, `<jellyfin-host>`, all → `<lan-ip>`) in `pihole.toml`. Any other
+- **Pi-hole has no wildcard.** It serves a handful of explicit `*.<internal-domain>` host
+  records (listed in `pihole.toml` on the box, not here). Any other
   `*.minijoe.dev` name returns NXDOMAIN internally and resolves publicly only if it exists at
   Porkbun. An earlier version of this file claimed a wildcard; there is none, and assuming one
   costs an hour of debugging a name that simply does not exist. No
