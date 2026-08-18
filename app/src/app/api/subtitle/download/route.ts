@@ -18,6 +18,6 @@ export async function POST(req: NextRequest) {
   const rl = checkRateLimit(`subtitle-download:${session.userId}`, 10, 60 * 60 * 1000)
   if (!rl.allowed) return rateLimitResponse(rl, 'Too many subtitle download runs. Try again later.')
 
-  const job = enqueue('subtitle-download', () => downloadPendingSubtitles())
+  const job = enqueue('subtitle-download', session.userId, () => downloadPendingSubtitles())
   return NextResponse.json({ jobId: job.id, status: job.status }, { status: 202 })
 }

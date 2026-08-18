@@ -9,9 +9,9 @@ export const dynamic = 'force-dynamic'
 
 export async function POST(req: NextRequest) {
   if (!verifyOrigin(req)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 }) // S2: CSRF
-  await requireAdmin()
+  const session = await requireAdmin()
 
-  const job = enqueue('media-scan', async () => {
+  const job = enqueue('media-scan', session.userId, async () => {
     const { scanned } = await scanAll()
     const { enriched, failed } = await enrichAll()
     const episodes = await enrichEpisodeStills()

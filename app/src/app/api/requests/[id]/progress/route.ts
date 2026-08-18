@@ -34,7 +34,7 @@ export async function GET(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  await requireAuth()
+  const session = await requireAuth()
 
   const { id: idStr } = await params
   const id = parseInt(idStr, 10)
@@ -46,10 +46,16 @@ export async function GET(
 
   // Look up the request to get tmdb_id + media_type so we can find monitored_items rows.
   const request = db
-    .prepare('SELECT tmdb_id, media_type FROM media_requests WHERE id = ?')
-    .get(id) as { tmdb_id: number; media_type: string } | undefined
+    .prepare('SELECT tmdb_id, media_type, user_id FROM media_requests WHERE id = ?')
+    .get(id) as { tmdb_id: number; media_type: string; user_id: string } | undefined
 
   if (!request) {
+    return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  }
+
+  // Owner-or-admin, matching GET /api/requests/[id]. 404 rather than 403 to avoid leaking
+  // that the request ID exists.
+  if (session.role !== 'admin' && request.user_id !== session.userId) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 })
   }
 

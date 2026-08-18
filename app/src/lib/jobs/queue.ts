@@ -5,6 +5,8 @@ export type JobStatus = 'queued' | 'running' | 'done' | 'failed'
 export interface JobRecord {
   id: string
   label: string
+  /** User who started the job. Reads are owner-or-admin; see GET /api/jobs/[id]. */
+  userId: string
   status: JobStatus
   result?: unknown
   error?: string
@@ -35,10 +37,10 @@ function drain() {
   void run()
 }
 
-export function enqueue<T>(label: string, fn: () => Promise<T>): JobRecord {
+export function enqueue<T>(label: string, userId: string, fn: () => Promise<T>): JobRecord {
   purgeExpired()
   const id = crypto.randomBytes(8).toString('hex')
-  const record: JobRecord = { id, label, status: 'queued', queuedAt: Date.now() }
+  const record: JobRecord = { id, label, userId, status: 'queued', queuedAt: Date.now() }
   jobs.set(id, record)
 
   pending.push(async () => {
