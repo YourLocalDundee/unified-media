@@ -14,11 +14,12 @@ automation, and subtitle management — a fully self-contained media stack.
 
 ## Status & docs map
 
-- **Current version:** v0.11.10 is the latest doc-tracked feature-batch label (see
+- **Current version:** v0.11.11 is the latest doc-tracked feature-batch label (see
   `docs/complete/FEATURES.md`); `app/package.json` is still `0.11.2`, bumped only at an actual
   release cut, so the two numbers legitimately diverge between cuts. Deployed to production
-  (`<app-host>`) as of 2026-07-11 — the doc-tracked and deployed versions are in sync as of
-  this writing, but re-check `docker inspect unified-frontend` before assuming that still holds.
+  (`<app-host>`) as of 2026-07-11 — v0.11.11 (one grab per item) is **built but not yet
+  deployed**, so the doc-tracked and deployed versions have diverged; re-check
+  `docker inspect unified-frontend` before assuming anything about what is running.
 - **Audit:** the 2026-06-13 21-agent audit is closed (all P0/P1 fixed). History +
   remediation: `docs/analysis/audit-2026-06-13-summary.md`; live tracker `docs/incomplete/open-issues.md`.
 - **What's shipped:** `docs/complete/FEATURES.md`.
@@ -248,14 +249,72 @@ These are the live "don't trip over this" rules. Kept in full because they're lo
   Server Component render. All three mutation sites in `dal.ts` are wrapped in try/catch (no-op in SC
   context, succeed in Route Handler context). Without this, expired-session users get a 500 on every load.
 
+### URL layout — basePath lives in two places
+- **The app is served at `https://minijoe.dev/unified`.** `next.config.ts` sets
+  `basePath: '/unified'`, which covers pages, `<Link>`, `router.push`, assets, the manifest and
+  the service worker. It does **not** cover `fetch()`. The ~240 absolute `fetch('/api/...')` call
+  sites across 45 files were deliberately left at the root, and **Caddy rewrites `/api/*` ->
+  `/unified/api/*`** instead (`app/caddy.fragment`). Change `basePath` and you must change the
+  Caddyfile in the same breath, or every API call 404s while the pages still render fine.
+- **`/api/party/ws*` must stay above the rewrite** in the Caddyfile. That path is served by the
+  separate ws server on :3002, which is not Next and knows nothing about the basePath.
+- **`NEXT_PUBLIC_APP_URL` is origin-only (`https://minijoe.dev`), never `.../unified`.**
+  `verifyOrigin()` exact-matches it against the `Origin` header, which never carries a path. Put
+  the path in and every mutating request returns 403 before auth runs — the failure mode already
+  documented in `src/lib/csrf.ts`. Root-level links (password reset, party invites, push targets)
+  still work because the apex `redir /unified{uri}` preserves path and query.
+- **Anything that talks to the app directly must carry `/unified` itself.** The rewrite lives in
+  Caddy, so a caller that skips Caddy skips the rewrite. This already caught three: the compose
+  healthcheck (`localhost:3001/unified/api/health` — it went `unhealthy` after the move),
+  `.claude/skills/run-unified-frontend/{api.sh,run.sh,drive.mjs}`, and
+  `.claude/skills/unified-db-query/authed-request.cjs`. Browser traffic and the Android app go
+  through Caddy and are unaffected.
+- **`localhost:3000`/`localhost:3001` are no longer in the CSRF allowlist** (`src/lib/csrf.ts`).
+  They were dev convenience and became a real hole once the app was public — a page on any dev
+  server on the victim's own machine could send one as a genuine `Origin`. `api.sh` now sends no
+  `Origin` at all, which `verifyOrigin()` allows for non-browser callers. Re-add via
+  `ADDITIONAL_ALLOWED_ORIGINS` in a dev env only, never in the deployed one.
+- **`<app-host>` still works** and follows the same rules. `<old-app-host>` was
+  the pre-wipe public name and was deleted from Porkbun on 2026-08-08 (`rebuild-steps/STATUS.md`);
+  it does not resolve and is not coming back.
+
+### Admin access is network-gated
+- Admin sign-in and every `requireAdmin()` call require the client IP to be in
+  `ADMIN_ALLOWED_CIDRS` — by default the tailnet (`100.64.0.0/10`), the LAN (`<lan-subnet>/24`),
+  the Docker bridges (`172.16.0.0/12`, which is how a browser on the mini box appears) and
+  loopback. `src/lib/admin-network.ts`, tested in `admin-network.test.ts`.
+- The check runs **after** the password check in the login route, so a guesser on the public
+  internet cannot use the 403 to discover which accounts are admins.
+- `requireAdmin()` re-checks per request, so an admin cookie minted on the tailnet stops working
+  if it travels to the public internet. It redirects to `/` exactly like the role failure does.
+- Regular accounts are unaffected. This is a perimeter, not an identity check: **any** device on
+  the tailnet passes.
+
+### Registration is closed
+- `POST /api/auth/register` returns 403 and `/register` redirects to `/login`. Accounts are
+  created by an admin through **`POST /api/admin/users`**, which validates the same way, issues no
+  session, and sets `force_pw_change=1` so the admin's temporary password cannot stay in use.
+- The `invite_codes` table, its admin UI and its routes were purged (both were empty). The
+  vestigial `users.invite_used` column was left in place — dropping it needs a table rebuild, and
+  the rebuild blocks in `migrations.ts` have a column-loss bug (see below).
+- `verify-email`, `resend-verification` and `register-config` are now unreachable in practice.
+
 ### Edge / infra
 - **No WAF in the rebuilt stack.** BunkerWeb used to sit in front of Caddy and needed several
   features disabled per-domain (`USE_BAD_BEHAVIOR`, `USE_CROWDSEC`, `USE_DNSBL`, `USE_MODSECURITY`,
   `USE_BLACKLIST`) because RSC prefetch scoring, VPN/cellular-NAT false bans and password-field CRS
-  rules all misfired on this app. None of that applies now — there is no WAF and nothing is
-  internet-exposed. If a WAF is ever reintroduced, those same five will need disabling again.
+  rules all misfired on this app. None of that applies now — there is no WAF. If one is ever
+  reintroduced, those same five will need disabling again.
+- **The app IS internet-exposed** as of the move to `https://minijoe.dev/unified`. It is the
+  only publicly reachable service here, it has no WAF in front of it, and its only gates are
+  the app's own auth, the closed registration endpoint, and the admin network restriction
+  above. Anything added to the public vhost inherits that exposure.
 - **Editing the Caddyfile needs a container recreate, not a reload** — see the Caddy note in §8.
-- **Pi-hole wildcard DNS:** resolves `*.minijoe.dev` → `<lan-ip>` for LAN + Docker host; no
+- **Pi-hole has no wildcard.** It serves five explicit host records (`<app-host>`, `<pihole-host>`,
+  `<downloads-host>`, `<auth-host>`, `<jellyfin-host>`, all → `<lan-ip>`) in `pihole.toml`. Any other
+  `*.minijoe.dev` name returns NXDOMAIN internally and resolves publicly only if it exists at
+  Porkbun. An earlier version of this file claimed a wildcard; there is none, and assuming one
+  costs an hour of debugging a name that simply does not exist. No
   `/etc/hosts` needed in the container.
 - **Docker network:** the app's backing containers are reachable by container name or host IP;
   `.env.local` uses host IPs in dev, container names in prod.
@@ -278,6 +337,12 @@ These are the live "don't trip over this" rules. Kept in full because they're lo
   `unhandledRejection`, so task bodies don't need defensive try/catch for survival, and `safeCron()`
   buys attribution, not crash protection. Full detail, plus the complete job catalogue (12 cron jobs
   across three schedulers) and every timer in the app: `docs/features/scheduling.md`.
+- **A monitored item holds at most one live grab.** `grab_history.superseded_at` marks the losing
+  rows when `resolveDuplicateGrabs()` resolves a duplicate before import — any new "latest grab for
+  this item" query must filter `superseded_at IS NULL` or a deleted release still wins
+  `MAX(grabbed_at)` and strands the item. Full mechanism: `docs/features/decision-engine.md`
+  ("Duplicate-grab resolution before import"); the approve-time claim half is
+  `docs/features/grab-confirmation.md` ("One grab per item").
 - **`grabber.ts` exports functions consumed only within its own module** (`findSeasonPackCandidates`,
   `findArcPackCandidates` — called by `searchCandidatesForItem` in the same file). A cross-file-only
   reference search reports these as dead; they aren't. See `docs/incomplete/open-issues.md` 2026-08-15
