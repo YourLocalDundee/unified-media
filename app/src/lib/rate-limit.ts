@@ -41,6 +41,17 @@ export function rateLimitResponse(
 let lastCleanup = 0
 const CLEANUP_INTERVAL_MS = 5 * 60 * 1000
 
+/**
+ * Drop a bucket entirely. Used by the login route on a successful sign-in: the limiter counts
+ * every attempt, so without this a user legitimately signing in from several devices (or an
+ * app re-authenticating) burns the same 10/15min budget as a brute-force attacker and locks
+ * itself out. Failures still accumulate; only a correct password clears the window.
+ */
+export function clearRateLimit(key: string): void {
+  const db = getDb()
+  try { db.prepare('DELETE FROM rate_limits WHERE key = ?').run(key) } catch { /* best effort */ }
+}
+
 export function checkRateLimit(
   key: string,
   max: number,

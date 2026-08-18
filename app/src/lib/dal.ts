@@ -17,11 +17,13 @@
  * Handlers and Server Actions work normally while Server Components no-op.
  */
 import 'server-only'
-import { cookies } from 'next/headers'
+import { cookies, headers } from 'next/headers'
 import { redirect } from 'next/navigation'
 import { getDb } from './db/index'
 import { getCountryFromIP } from './geo'
 import { deviceNameFromUserAgent } from './device-name'
+import { getClientIp } from './client-ip'
+import { isAdminNetwork } from './admin-network'
 
 export interface SessionData {
   userId: string
@@ -149,6 +151,13 @@ export async function requireAdmin(): Promise<SessionData> {
   const session = await requireAuth()
   // Non-admins get a silent redirect to home rather than a 403 to avoid leaking route existence
   if (session.role !== 'admin') redirect('/')
+
+  // Same network gate as the login route, applied per-request: a session minted on the tailnet
+  // must not keep working once the cookie travels to the public internet. Same silent redirect
+  // as the role check, so the two failures are indistinguishable from outside.
+  const ip = getClientIp(new Request('http://internal', { headers: await headers() }))
+  if (!isAdminNetwork(ip)) redirect('/')
+
   return session
 }
 

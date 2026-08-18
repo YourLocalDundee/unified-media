@@ -15,8 +15,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getDb } from '@/lib/db/index'
 import { verifyPassword } from '@/lib/password'
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit'
+import { checkRateLimit, clearRateLimit, rateLimitResponse } from '@/lib/rate-limit'
 import { getClientIp } from '@/lib/client-ip'
+import { isAdminNetwork } from '@/lib/admin-network'
 import { createSession, logEvent } from '@/lib/dal'
 import { cookies } from 'next/headers'
 import { verifyOrigin } from '@/lib/csrf'
@@ -79,6 +80,17 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid username or password' }, { status: 401 })
   }
 
+  // Admin accounts are additionally gated on network: tailnet, LAN, or the box itself. Checked
+  // AFTER the password so a guesser on the public internet cannot use the 403 to discover which
+  // accounts are admins — a wrong password still returns the same 401 as any other account.
+  if (user.role === 'admin' && !isAdminNetwork(ip)) {
+    await logEvent('login_blocked', { reason: 'admin_network' }, { userId: user.id, username: user.username, ip })
+    return NextResponse.json(
+      { error: 'Admin sign-in is only allowed from the tailnet or local network.' },
+      { status: 403 }
+    )
+  }
+
   // Suspension is only revealed AFTER a correct password, so a guesser without the
   // password can no longer distinguish "suspended" (403) from "no such user" (401).
   if (!user.is_active) {
@@ -91,6 +103,11 @@ export async function POST(req: NextRequest) {
   // forced change now lives in the session gate: requireAuth() redirects these
   // accounts to /change-password on every other route (A1-001), and the
   // change-password route uses getSession() so it stays reachable.
+  // Correct password → drop the attempt window. The limiter counts every POST, so without this
+  // ten legitimate sign-ins in 15 minutes (several devices, or an app re-authenticating) trip
+  // the same lockout as ten wrong guesses.
+  clearRateLimit(`login:${ip}`)
+
   const sessionId = await createSession(user.id, ip, req.headers.get('user-agent') ?? undefined)
   db.prepare('UPDATE users SET last_login = ? WHERE id = ?').run(Date.now(), user.id)
   await logEvent('login_success', {}, { userId: user.id, username: user.username, ip })

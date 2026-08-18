@@ -3,6 +3,12 @@
 // of them, and it also feeds password-reset and party links, so it must be the canonical HTTPS
 // one. ADDITIONAL_ALLOWED_ORIGINS (comma-separated) carries the rest.
 //
+// localhost:3000 and localhost:3001 used to be hardcoded here for dev convenience. They were
+// removed when the app became publicly reachable: a page served by any dev server on the
+// victim's own machine could send one of those as a genuine Origin and pass the CSRF check
+// against production. Add them back through ADDITIONAL_ALLOWED_ORIGINS in a dev .env if you
+// ever need them — never in the deployed one.
+//
 // Getting this wrong fails closed and looks like a login bug: an origin that is not listed is
 // rejected with 403 before authentication runs at all. That happened for real — the deployment
 // moved to https://<app-host> while NEXT_PUBLIC_APP_URL still pointed at the host:port,
@@ -13,8 +19,6 @@ const ALLOWED_ORIGINS = [
     .split(',')
     .map((o) => o.trim())
     .filter(Boolean),
-  'http://localhost:3001',
-  'http://localhost:3000',
 ].filter(Boolean) as string[]
 
 export function verifyOrigin(request: Request): boolean {
