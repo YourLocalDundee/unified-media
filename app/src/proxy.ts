@@ -22,7 +22,6 @@ const PUBLIC_PATHS = [
   '/forgot',
   '/reset-password',
   '/change-password',
-  '/invite',
   '/join',
   '/api/auth/login',
   '/api/auth/logout',
@@ -63,8 +62,8 @@ export function proxy(request: NextRequest) {
     p => pathname === p || pathname.startsWith(p + '/')
   )
 
-  // Unauthenticated visitor arriving via a party play URL → send to the invite page
-  // so they can set a nickname and join as a guest instead of hitting the login wall.
+  // Unauthenticated visitor arriving via a party play URL → send to /join so they can set a
+  // nickname and join as a guest instead of hitting the login wall.
   if (!hasSession && pathname.startsWith('/play/')) {
     const partyCode = request.nextUrl.searchParams.get('party')
     if (partyCode) {

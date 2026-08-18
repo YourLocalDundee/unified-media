@@ -32,17 +32,6 @@ export function runMigrations(db: Database.Database): void {
       invite_used   TEXT,
       force_pw_change INTEGER DEFAULT 0
     );
-    CREATE TABLE IF NOT EXISTS invite_codes (
-      code          TEXT PRIMARY KEY,
-      created_by    TEXT NOT NULL,
-      label         TEXT,
-      max_uses      INTEGER DEFAULT 1,
-      use_count     INTEGER DEFAULT 0,
-      used_by       TEXT,
-      used_at       INTEGER,
-      expires_at    INTEGER,
-      created_at    INTEGER NOT NULL
-    );
     CREATE TABLE IF NOT EXISTS sessions (
       id            TEXT PRIMARY KEY,
       user_id       TEXT NOT NULL,

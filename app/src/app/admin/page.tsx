@@ -15,8 +15,8 @@ interface WatchDayRow { day: number; count: number }
 
 const EVENT_ICONS: Record<string, string> = {
   login_success: '✓', login_failure: '✗', logout: '→', user_created: '+',
-  user_suspended: '⊘', user_activated: '◉', invite_created: '✉', invite_used: '✉',
-  invite_revoked: '✗', password_changed: '🔑', watch_started: '▶', watch_completed: '■',
+  user_suspended: '⊘', user_activated: '◉',
+  password_changed: '🔑', watch_started: '▶', watch_completed: '■',
   admin_action: '⚡',
 }
 

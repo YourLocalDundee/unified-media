@@ -148,10 +148,7 @@ function LoginForm() {
         </div>
 
         <p className="mt-6 text-center text-sm text-muted-foreground">
-          New here?{' '}
-          <a href="/register" className="text-primary hover:underline font-medium">
-            Create an account &rarr;
-          </a>
+          Accounts are created by the site owner.
         </p>
       </div>
     </div>
