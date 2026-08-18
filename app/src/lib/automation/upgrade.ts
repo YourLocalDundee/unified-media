@@ -106,7 +106,9 @@ type GrabRow = { release_title: string; info_hash: string; grabbed_at: number }
 
 function latestGrab(itemId: number): GrabRow | undefined {
   return getDb()
-    .prepare('SELECT release_title, info_hash, grabbed_at FROM grab_history WHERE item_id = ? ORDER BY grabbed_at DESC LIMIT 1')
+    // superseded rows lost a duplicate resolution and no longer exist in the client (dedupe.ts),
+    // so they must never be treated as the item's current release.
+    .prepare('SELECT release_title, info_hash, grabbed_at FROM grab_history WHERE item_id = ? AND superseded_at IS NULL ORDER BY grabbed_at DESC LIMIT 1')
     .get(itemId) as GrabRow | undefined
 }
 

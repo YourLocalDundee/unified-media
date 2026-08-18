@@ -48,6 +48,8 @@ export async function POST(req: NextRequest) {
     type?: 'movie' | 'tv'
     release?: unknown
     override?: boolean
+    // Admin-only: re-grab an item that already has a download in flight (see the guard below).
+    force?: boolean
   } | null
   if (!body) return NextResponse.json({ error: 'Invalid request' }, { status: 400 })
 
@@ -67,6 +69,19 @@ export async function POST(req: NextRequest) {
   if (session.role !== 'admin') {
     const owned = item.tmdb_id != null && getRequestByTmdb(session.userId, item.tmdb_id, item.type)
     if (!owned) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  }
+
+  // One release per item: an item that is mid-grab ('grabbing') or already has a torrent in flight
+  // ('grabbed', not yet imported) must not receive a second one. This is the other half of the
+  // 2026-08-16 double-grab — a user-hand-picked release grabbed at approval, then the auto-pick
+  // confirmed from this modal against the same item. An admin can still re-grab deliberately, via
+  // force:true (the automation table's Grab Now) or the explicit POST /api/requests/[id]/grab path.
+  const adminRegrab = session.role === 'admin' && body.force === true
+  if (!adminRegrab && (item.status === 'grabbing' || item.status === 'grabbed')) {
+    return NextResponse.json(
+      { error: 'A download for this item is already in progress — nothing else was grabbed.' },
+      { status: 409 },
+    )
   }
 
   if (!isValidRelease(body.release)) {

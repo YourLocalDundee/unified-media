@@ -33,6 +33,44 @@ not-found grab attempt always did. `TorrentPickModal`'s optional `onSubmitOverri
 manual pick through `/api/grab/confirm` instead of its own `POST /api/requests` (which would 409 —
 a request already exists by the time the confirm modal's "Search manually" is reachable).
 
+## One grab per item
+
+An item can carry at most one live grab claim. `POST /api/requests/[id]/approve` used to claim the
+monitored item `'wanted'` → `'grabbing'` *inside* the fire-and-forget preferred-grab call — that left
+a window between the response returning and the claim actually landing where the 5-minute grab cron
+could claim the same row and auto-pick its own release before the preferred grab's dynamic imports
+resolved. Hit for real 2026-08-16: an interactive pick followed by approve grabbed both the
+hand-picked release and a 4K release the cron chose independently, and the cron's pick was the one
+that got imported.
+
+The claim now happens synchronously in the approve route, before the response is sent
+(`claimForPreferredGrab(itemId)`), and `firePreferredGrab` takes the already-claimed item id instead
+of calling `createItem()` a second time — the old second call carried no scope fields, so an
+interactive pick on a scoped TV request could mint a second `monitored_items` row (different
+`scope_key`) and leave the original row at `'wanted'` for the cron to grab on its own. The failure
+path releases the claim by item id (`WHERE id = ? AND status = 'grabbing'`), not by `tmdb_id`+`type`,
+which could release a different scope's row. The approve response carries `pickGrabbed: true|false`
+on the pick paths — `false` means the request was approved but nothing was dispatched because the
+item already had a grab of its own; `RequestsTable.tsx`'s approve-with-pick and admin
+override-approve handlers show a message rather than approving silently.
+
+`POST /api/grab/confirm` returns 409 when the target item is already `'grabbing'` or `'grabbed'`, so
+the confirmation modal can't add a second release to an item whose hand-picked release was already
+grabbed at approval. Admin-only escape hatch: `force: true` in the body, honoured only when
+`session.role === 'admin'`. `GrabConfirmTarget` gained `allowRegrab?: boolean`, forwarded as `force`
+— the Monitored Items table's "Grab Now" button on `/admin/automation` passes `allowRegrab: true`,
+since that's an explicit per-item admin action that must keep working on an already-grabbed item.
+
+A claim held for more than a few seconds belongs to a claimer that died mid-search (container
+restart, or the gap between the approve route's synchronous claim and its fire-and-forget grab) —
+without a sweep such a row is stranded, since the grab cron only ever reads `'wanted'` items. New
+`releaseStaleGrabClaims(maxAgeMs)` in `src/lib/automation/monitor.ts`; the grab cron calls it with a
+15-minute threshold before reading the want list.
+
+This closes half of the fix for the backlog item "one request can produce two grabs"; the other half
+— a pre-import guard for the race that can still slip past a synchronous claim — is
+`resolveDuplicateGrabs()`, documented in `docs/features/decision-engine.md`.
+
 **Testing:** Vitest is now installed (`vitest.config.ts`, `npm run test`). Test files live next to
 their source (`src/lib/automation/grabber.test.ts`) — this was the first test in the repo, so there
 was no prior mocking convention; `vi.hoisted()` is required when a `vi.mock()` factory needs to

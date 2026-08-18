@@ -786,6 +786,12 @@ export function runMigrations(db: Database.Database): void {
     // show under season 1 with absolute episode numbers. Recomputed by pruneOrphanedWants's
     // sibling in scanner.ts on every scan; see subtitle_numbering below for how it's used.
     'ALTER TABLE media_items ADD COLUMN absolute_episode_number INTEGER',
+    // grab_history — set when the one-release-per-item guard (automation/dedupe.ts) resolved a
+    // duplicate and this row's torrent was the loser: unix-ms of the resolution. The torrent and its
+    // data are deleted at the same time, so a superseded row is history only — every "latest grab
+    // for this item" lookup (importer, reaper, upgrade) filters it out, which is what makes the
+    // surviving release the one that imports.
+    'ALTER TABLE grab_history ADD COLUMN superseded_at INTEGER',
     // media_items (series rows) — which numbering scheme actually matches this show on
     // OpenSubtitles: NULL = not yet determined (auto-probe on next search), 'season' = the
     // parsed season/episode numbers match, 'absolute' = use season=1 + absolute_episode_number

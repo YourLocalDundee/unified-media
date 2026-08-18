@@ -110,10 +110,11 @@ export async function reapStalledTorrents(): Promise<number> {
       SELECT gh.item_id, gh.info_hash, gh.grabbed_at
       FROM grab_history gh
       INNER JOIN (
-        SELECT item_id, MAX(grabbed_at) AS latest FROM grab_history GROUP BY item_id
+        SELECT item_id, MAX(grabbed_at) AS latest FROM grab_history
+        WHERE superseded_at IS NULL GROUP BY item_id
       ) last ON gh.item_id = last.item_id AND gh.grabbed_at = last.latest
       INNER JOIN monitored_items mi ON mi.id = gh.item_id
-      WHERE mi.status = 'grabbed'
+      WHERE gh.superseded_at IS NULL AND mi.status = 'grabbed'
     `)
     .all() as GrabbedRow[]
 

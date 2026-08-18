@@ -579,8 +579,14 @@ function PreferredReleasePanel({
     setMessage(null)
     try {
       const res = await fetch(`/api/requests/${requestId}/approve`, { method: 'POST' })
-      if (res.ok) onApproved('approved')
-      else setMessage('Approval failed.')
+      const json = await res.json().catch(() => ({})) as { pickGrabbed?: boolean }
+      if (!res.ok) { setMessage('Approval failed.'); return }
+      // Approved, but the item already had a download of its own, so the pick was not dispatched —
+      // one release per item. Say so instead of leaving it to be noticed later.
+      if (json.pickGrabbed === false) {
+        setMessage('Approved — the pick was not grabbed: this item already has a download in progress.')
+      }
+      onApproved('approved')
     } finally { setApprovingPick(false) }
   }
 
@@ -645,8 +651,12 @@ function PreferredReleasePanel({
           },
         }),
       })
-      if (res.ok) onApproved('approved')
-      else setMessage('Override approval failed.')
+      const json = await res.json().catch(() => ({})) as { pickGrabbed?: boolean }
+      if (!res.ok) { setMessage('Override approval failed.'); return }
+      if (json.pickGrabbed === false) {
+        setMessage('Approved — the override was not grabbed: this item already has a download in progress.')
+      }
+      onApproved('approved')
     } finally { setSubmittingOverride(false) }
   }
 

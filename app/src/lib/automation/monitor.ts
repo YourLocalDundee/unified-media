@@ -56,6 +56,23 @@ export function getWantedItems(): MonitoredItem[] {
     .all() as MonitoredItem[]
 }
 
+/**
+ * Release 'grabbing' claims that were never resolved, so the grab cron can retry them.
+ *
+ * 'grabbing' is a transient claim (D3) held across a search + download-client add — seconds, not
+ * minutes. A row still holding it long after that means the claimer died before it could grab or
+ * release (a container restart mid-search, or between the approve route's synchronous claim and its
+ * fire-and-forget grab). Without this the row is stranded: the cron only ever sees 'wanted'.
+ *
+ * Returns how many claims were released. Called at the top of the grab cron tick.
+ */
+export function releaseStaleGrabClaims(maxAgeMs: number): number {
+  const cutoff = Date.now() - maxAgeMs
+  return getDb()
+    .prepare("UPDATE monitored_items SET status = 'wanted', updated_at = ? WHERE status = 'grabbing' AND updated_at < ?")
+    .run(Date.now(), cutoff).changes
+}
+
 export function getAllItems(): (MonitoredItem & {
   last_searched_at: number | null
   last_skip_reason: string | null

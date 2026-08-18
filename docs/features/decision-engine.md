@@ -87,6 +87,68 @@ first that produces any indexer results becomes the candidate pool. Scope filter
 episode/season matching) is applied to the alternative-title results exactly as it is to primary
 results, so the AKA fallback cannot pull in unrelated content.
 
+## Duplicate-grab resolution before import (v0.11.11)
+
+A second guard against the same monitored item ending up with more than one completed release —
+the approve-time synchronous claim (`docs/features/grab-confirmation.md` → "One grab per item")
+closes the common case, but a race can still slip past it. `resolveDuplicateGrabs()` (new
+`src/lib/automation/dedupe.ts`) runs at the top of `runImportCheck()` (the 2-minute import cron), so
+resolution always happens before anything is placed in the library. If a monitored item at
+`status='grabbed'` has more than one COMPLETED download, it keeps exactly one and deletes the rest
+with their data via `DownloadClient.deleteTorrents(hashes, true)`. A failure of the guard is caught
+and logged; the importer continues with its pre-guard behaviour rather than blocking imports.
+
+**Selection order** (exported pure function `pickWinner`; ranked keys, highest wins on the first key
+that differs):
+1. An explicit user pick — matched by `infoHash` from `media_requests.preferred_release`, falling
+   back to release-title match when the pick carried no hash.
+2. Quality-profile conditions score.
+3. Language / `audio_mode` preference, when one is set.
+4. Name proximity to the item's title + year (exported `nameProximity`).
+5. Custom-format additive score.
+6. Seeders.
+
+Final deterministic tiebreak: the earliest grab, then the hash. A profile with no `conditions`
+("Any", id 1 — the profile in play during the 2026-08-16 incident that exposed this whole class of
+bug) scores every candidate 0 at the conditions key, so ranking falls through to the later keys
+instead of treating the candidates as equally valid. That fall-through is what keeps a profile with
+no conditions safe to go on using.
+
+**Two safety rules:**
+- A torrent whose content already sits inside a `MEDIA_ROOT` is never a candidate for deletion. The
+  importer's primary path is `setLocation`, so an imported torrent's data *is* the library file —
+  deleting it "with data" would take the library copy with it.
+- An item with a `pending` row in `pending_upgrades` is skipped entirely. Two releases in flight is
+  what `upgrade.ts` means to have happen there, and `completeUpgrades()` owns removing the old one.
+
+Losers are **not** blocklisted — they're healthy releases that lost a ranking, and blocklisting
+would gate them out of a future upgrade scan.
+
+**Schema:** `grab_history.superseded_at INTEGER` (additive migration), set to the current unix ms on
+loser rows. Every "latest grab for this item" lookup now filters `superseded_at IS NULL` —
+`importer.ts` (both sides of the `MAX(grabbed_at)` join, plus the by-title fallback query),
+`reaper.ts`, and `upgrade.ts`'s `latestGrab`. Without that filter a deleted release would still win
+`MAX(grabbed_at)` and strand the item.
+
+**Reading vs. deleting torrent state:** the read of torrent state/paths is a raw `qbitFetch` (needs
+`save_path`/`content_path`, which the normalized `DownloadClient.Torrent` omits); the destructive
+delete goes through `DownloadClient.deleteTorrents`. This mirrors the convention already documented
+for `reaper.ts`.
+
+**Deliberately not hardlinked:** the backlog item that motivated this guard also asked for
+hardlinking the winning release into the library instead of moving it. The importer's primary path
+still uses `setLocation`. `auto-delete.ts`'s hourly 48h quick-request cleanup only unlinks library
+files and never deletes torrents — if the importer hardlinked instead of moving, the download would
+stay in the completed-downloads tree and expiring a quick request would stop reclaiming space.
+Hardlinking stays what it already was: the importer's fallback-2 path, and the technique used to
+clean up the 2026-08-16 incident by hand.
+
+Tests: `dedupe.test.ts` (10 cases) over `pickWinner` and `nameProximity` — user pick beats a
+higher-seeded 4K auto-pick, title-match fallback when the pick has no hash, profile-conditions
+preference, fall-through when the profile has no conditions, format score above seeders, language
+preference above seeders, deterministic tiebreak in either input order, an empty candidate list, and
+two name-proximity cases.
+
 ## Related: grab scoring (the soft score, v0.9.10 Bug 2)
 
 The soft score sits downstream of the gates and **de-prioritizes, never hard-rejects**.

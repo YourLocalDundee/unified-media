@@ -7,28 +7,38 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
-## Unreleased
-
-### Changed
-- **Default quality profile is now `2` ("1080p"), not `1` ("Any")** — new `DEFAULT_QUALITY_PROFILE_ID`
-  in `lib/automation/types.ts`, applied by `createItem`, `collections.ts` and `import-lists.ts`.
-  Profile 1 carries no `conditions`, so it accepts every candidate and cannot tell a 1080p release
-  from an 80GB 4K remux. On 2026-08-16 that let one request finish two downloads of the same film
-  and import the 4K one over the release the user had picked by hand. Profile 2 requires
-  `resolution: 1080p`, which rejects the 4K candidate outright. Passing profile 1 explicitly still
-  works for anyone who wants no constraints. Existing rows keep whatever profile they were created
-  with; this changes new items only. The SQLite columns still declare `DEFAULT 1` — those are
-  applied migrations and were deliberately not edited, and every insert path supplies the value
-  explicitly so the column default never fires. New `monitor.test.ts` (3 cases) pins the behaviour.
-
-### Fixed
-- Documented in `docs/incomplete/BACKLOG.md`: one request can still dispatch two grabs when it
-  carries an explicit `pickedTorrent` and is then approved. The profile change removes the way that
-  bug caused visible damage, but not the double dispatch itself.
-
 ## [Unreleased]
 
 ### Added
+- **One grab per item, part 2: a duplicate-grab guard before import.** New
+  `app/src/lib/automation/dedupe.ts`: `resolveDuplicateGrabs()` runs at the top of the import cron
+  (`runImportCheck()`) and, for any monitored item at `status='grabbed'` with more than one
+  completed download, keeps exactly one and deletes the rest with their data via
+  `DownloadClient.deleteTorrents(hashes, true)`. Selection order (pure, tested `pickWinner`,
+  highest wins on the first key that differs): an explicit user pick (matched by `infoHash` from
+  `media_requests.preferred_release`, falling back to release-title match when the pick carried no
+  hash) beats quality-profile conditions score, then language/audio-mode preference, then name
+  proximity to the item's title+year (`nameProximity`), then custom-format score, then seeders, with
+  the earliest grab and then the hash as a final deterministic tiebreak. A profile with no
+  `conditions` (id 1, "Any" — the profile in play during the 2026-08-16 incident, see Fixed below)
+  now scores every candidate 0 at that key and falls through to the later keys instead of treating
+  them as equally valid. Two safety rules: a torrent whose content already sits inside a
+  `MEDIA_ROOT` is never a candidate (the importer's primary path is `setLocation`, so an imported
+  torrent's data *is* the library file and deleting it "with data" would take the library copy), and
+  an item with a `pending` row in `pending_upgrades` is skipped entirely, since two releases in
+  flight there is `upgrade.ts` doing its job and `completeUpgrades()` owns removing the old one.
+  Losers are not blocklisted — they're healthy releases that lost a ranking, and blocklisting would
+  gate them out of a future upgrade scan. Guard failure is caught and logged; the importer continues
+  with pre-guard behaviour. New `grab_history.superseded_at` column (set, unix ms, on loser rows);
+  every "latest grab for this item" lookup — `importer.ts` (both sides of the `MAX(grabbed_at)` join,
+  plus the by-title fallback query), `reaper.ts`, and `upgrade.ts`'s `latestGrab` — now filters
+  `superseded_at IS NULL`, or a deleted release would still win `MAX(grabbed_at)` and strand the
+  item. The backlog item also asked for hardlinking the winner into the library instead of moving
+  it; that stays the importer's fallback-2 path deliberately — `auto-delete.ts`'s hourly 48h
+  quick-request cleanup only unlinks library files and never deletes torrents, so hardlinking on the
+  primary path would leave the download sitting in the completed-downloads tree once a quick request
+  expired. 10 new tests in `dedupe.test.ts` over the ranking function. Full detail:
+  `docs/features/decision-engine.md`.
 - **Party-guest accounts are now cleaned up.** `pruneGuestUsers()` runs on the existing hourly tick
   right after the auth-table prune. A guest's throwaway `users` row used to outlive its 8-hour session
   forever. Deletion is conservative because `foreign_keys=ON` and `users(id)` has two FK referrers: a
@@ -170,6 +180,32 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `/play/{id}?party={code}` URL are intercepted in the proxy and sent to `/join?code={code}`.
 
 ### Fixed
+- **One grab per item, part 1: the double dispatch.** Hit for real 2026-08-16 — `POST
+  /api/requests` with `pickedTorrent` (interactive pick), followed by approve, grabbed both the
+  hand-picked 1080p release and a 4K release the automation chose off the monitored item the same
+  request created; both completed, the automation's pick was the one imported, and the library
+  ended up with the release the user had *not* chosen (~14.6GB spent on one film). The `'wanted'` →
+  `'grabbing'` claim used to happen inside the fire-and-forget preferred-grab call, leaving a window
+  after the response had already returned where the 5-minute grab cron could claim the same row and
+  auto-pick its own release before the preferred grab's dynamic imports resolved.
+  `POST /api/requests/[id]/approve` now claims the item synchronously, before the response is sent
+  (new `claimForPreferredGrab(itemId)`), and `firePreferredGrab` takes the already-claimed item id
+  instead of calling `createItem()` again — the old second call carried no scope fields, so an
+  interactive pick on a scoped TV request could mint a second `monitored_items` row and leave the
+  original at `'wanted'` for the cron to grab on its own. Its failure path now releases the claim by
+  item id instead of by `tmdb_id`+`type`, which could release a different scope's row. The approve
+  response now carries `pickGrabbed: true|false`; `RequestsTable.tsx` surfaces a message on `false`
+  instead of silently approving with nothing dispatched. `POST /api/grab/confirm` now returns 409
+  when the target item is already `'grabbing'` or `'grabbed'`, with an admin-only `force: true`
+  escape hatch (`session.role === 'admin'`) wired to the automation page's "Grab Now" button via a
+  new `allowRegrab` prop on `GrabConfirmModal`/`GrabConfirmTarget`, since that action must keep
+  working on an already-grabbed item. New `releaseStaleGrabClaims(maxAgeMs)` in `monitor.ts`, called
+  by the grab cron with a 15-minute threshold before it reads the want list, reclaims a `'grabbing'`
+  row whose claimer died (container restart mid-search, or between the approve route's synchronous
+  claim and its fire-and-forget grab) instead of leaving it stranded — the cron only ever looks at
+  `'wanted'` rows otherwise. See also the pre-import duplicate-grab guard under Added, which closes
+  the same defect from the other end. Closes the entry at the top of
+  `docs/incomplete/BACKLOG.md`'s Buildable section. Full detail: `docs/features/grab-confirmation.md`.
 - **`Retry-After` now on every rate-limited route, via one helper.** New `rateLimitResponse()` in
   `lib/rate-limit.ts` is the single way to answer a breached limit. `resetAt` was already on the
   limiter's result so the header cost nothing — it was simply never read by 17 of the 19 routes. All
@@ -289,6 +325,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   out of scope.
 
 ### Changed
+- **Default quality profile is now `2` ("1080p"), not `1` ("Any")** — new `DEFAULT_QUALITY_PROFILE_ID`
+  in `lib/automation/types.ts`, applied by `createItem`, `collections.ts` and `import-lists.ts`.
+  Profile 1 carries no `conditions`, so it accepts every candidate and cannot tell a 1080p release
+  from an 80GB 4K remux. On 2026-08-16 that let one request finish two downloads of the same film
+  and import the 4K one over the release the user had picked by hand (see the double-dispatch fix
+  under Fixed, and the duplicate-grab guard under Added — this profile change only removed the way
+  that bug caused visible damage). Profile 2 requires `resolution: 1080p`, which rejects the 4K
+  candidate outright. Passing profile 1 explicitly still works for anyone who wants no constraints.
+  Existing rows keep whatever profile they were created with; this changes new items only. The
+  SQLite columns still declare `DEFAULT 1` — those are applied migrations and were deliberately not
+  edited, and every insert path supplies the value explicitly so the column default never fires. New
+  `monitor.test.ts` (3 cases) pins the behaviour.
 - **Scheduling prose consolidated into one doc.** `CLAUDE.md` §7/§11/§18,
   `docs/features/grab-confirmation.md`, `FEATURE_STATUS.md` and
   `docs/incomplete/implementation-status.md` no longer restate cron cadences or scheduler behaviour;

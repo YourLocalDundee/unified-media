@@ -25,7 +25,7 @@
 
 import cron from 'node-cron'
 import { getDb } from '@/lib/db/index'
-import { getWantedItems } from './monitor'
+import { getWantedItems, releaseStaleGrabClaims } from './monitor'
 import { grabItem } from './grabber'
 import { checkAvailability } from './availability'
 import { runImportCheck } from './importer'
@@ -34,6 +34,10 @@ import type { MonitoredItem } from './types'
 // C-5: login_attempts and audit_log are otherwise never pruned (one row per attempt / per event,
 // forever), so they bloat on a long-lived self-host. login_attempts only needs a 5-minute window
 // for its failure count; audit_log keeps a longer history.
+// How long a 'grabbing' claim may be held before the grab loop treats it as abandoned. Well above
+// the seconds a real search + client add takes, well below the 5-minute-tick cost of a stuck row.
+const STALE_CLAIM_MS = 15 * 60 * 1000                          // 15 minutes
+
 const LOGIN_ATTEMPTS_RETENTION_MS = 24 * 60 * 60 * 1000        // 24 hours
 const AUDIT_LOG_RETENTION_MS = 90 * 24 * 60 * 60 * 1000        // 90 days
 
@@ -174,6 +178,11 @@ export function initScheduler(): void {
   // Grab loop: search all indexers for every wanted item sequentially to avoid
   // hammering indexers with concurrent requests on large want lists
   safeCron('*/5 * * * *', 'grab', async () => {
+    // A 'grabbing' claim is held for seconds; anything still holding one after STALE_CLAIM_MS
+    // belongs to a claimer that died and would otherwise never be retried by this loop.
+    const released = releaseStaleGrabClaims(STALE_CLAIM_MS)
+    if (released > 0) console.log(`[automation] Released ${released} stale grab claim(s)`)
+
     const wanted = getWantedItems()
     if (wanted.length === 0) return
     console.log(`[automation] Poll tick: ${wanted.length} wanted items`)

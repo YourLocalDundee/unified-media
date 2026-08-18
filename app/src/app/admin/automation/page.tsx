@@ -299,7 +299,10 @@ export default function AdminAutomationPage() {
   // see or veto the pick — now it opens the grab-confirmation modal against the existing item.
   function handleGrab(item: MonitoredItem) {
     if (item.tmdb_id == null) return // no tmdb_id (manually-added item) — nothing to confirm against
-    openGrabConfirm({ itemId: item.id, tmdbId: item.tmdb_id, type: item.type, title: item.title, year: item.year })
+    // allowRegrab: this table's Grab Now is an explicit per-item admin action, so it may re-grab an
+    // item that already has a download in flight — the one-release-per-item guard in
+    // POST /api/grab/confirm blocks every other (user-facing) entry point from doing that.
+    openGrabConfirm({ itemId: item.id, tmdbId: item.tmdb_id, type: item.type, title: item.title, year: item.year, allowRegrab: true })
   }
 
   async function handleDelete(item: MonitoredItem) {

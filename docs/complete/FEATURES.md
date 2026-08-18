@@ -89,6 +89,7 @@ secret in both the old request app and `the retired webhook secret`. `/api/the o
 | Standard category widening (additive-only) + `/admin/indexers/search` manual-search debug page | v0.11.10 | — |
 | `indexers.name` unique-constraint fix (retroactive dedup migration) | v0.11.10 | CLAUDE.md §3 |
 | Indexer expansion: the indexer bridge 10 → 30 configured, `indexers` table 15 → 35 rows, zero signups | v0.11.10 | CLAUDE.md §3 |
+| One grab per item — approve-time synchronous claim + pre-import duplicate-grab resolution | v0.11.11 | `docs/features/grab-confirmation.md`, `docs/features/decision-engine.md` |
 
 ## Done items pulled from the old §13 backlog
 

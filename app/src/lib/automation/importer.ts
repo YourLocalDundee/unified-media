@@ -129,6 +129,18 @@ async function scanPath(dirPath: string): Promise<void> {
 export async function runImportCheck(): Promise<void> {
   const db = getDb()
 
+  // One release per item, enforced BEFORE anything is placed: if a race got two completed
+  // downloads onto the same item, keep one and delete the rest with their data (dedupe.ts).
+  // Superseded grab rows drop out of the hash lookup below, so what survives here is the winner.
+  try {
+    const { resolveDuplicateGrabs } = await import('./dedupe')
+    await resolveDuplicateGrabs()
+  } catch (err) {
+    // Never block placement on the guard failing — the pre-guard behaviour (import the latest
+    // grab) is what happens then, which is exactly today's behaviour.
+    process.stderr.write(`[importer] duplicate guard failed (continuing): ${err}\n`)
+  }
+
   // Get all grabbed items (already sent to download client, not yet confirmed in library)
   type GrabbedRow = MonitoredItem
   const grabbed = db
@@ -137,7 +149,9 @@ export async function runImportCheck(): Promise<void> {
 
   if (grabbed.length === 0) return
 
-  // Get most recent grab_history row per item to find info_hash
+  // Get most recent grab_history row per item to find info_hash. Superseded rows (losers of a
+  // duplicate resolution — their torrent and data are gone) are excluded on BOTH sides of the
+  // join, or a deleted release would still win MAX(grabbed_at) and strand the item.
   type HashRow = { item_id: number; info_hash: string }
   const hashRows = db
     .prepare(`
@@ -146,9 +160,10 @@ export async function runImportCheck(): Promise<void> {
       INNER JOIN (
         SELECT item_id, MAX(grabbed_at) AS latest
         FROM grab_history
+        WHERE superseded_at IS NULL
         GROUP BY item_id
       ) latest ON gh.item_id = latest.item_id AND gh.grabbed_at = latest.latest
-      WHERE gh.item_id IN (${grabbed.map(() => '?').join(',')})
+      WHERE gh.superseded_at IS NULL AND gh.item_id IN (${grabbed.map(() => '?').join(',')})
     `)
     .all(...grabbed.map(i => i.id)) as HashRow[]
 
@@ -212,7 +227,7 @@ export async function runImportCheck(): Promise<void> {
       }
       // Fallback 2: look for the file/dir in the completed-downloads dir and move it to the library.
       const grabHistoryRow = db.prepare(
-        'SELECT release_title FROM grab_history WHERE item_id = ? ORDER BY grabbed_at DESC LIMIT 1'
+        'SELECT release_title FROM grab_history WHERE item_id = ? AND superseded_at IS NULL ORDER BY grabbed_at DESC LIMIT 1'
       ).get(item.id) as { release_title: string } | undefined
 
       if (grabHistoryRow?.release_title) {

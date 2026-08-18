@@ -108,6 +108,11 @@ export interface GrabConfirmTarget {
   year: number | null
   posterPath?: string | null
   overview?: string | null
+  // Deliberate admin re-grab of an item that already has a download in flight (the admin
+  // automation table's "Grab Now"). POST /api/grab/confirm refuses one release per item by default —
+  // see the one-release-per-item guard there — and this is the admin-only opt-out, forwarded as
+  // `force`. Never set it on a user-facing entry point: that is the double-grab this guards.
+  allowRegrab?: boolean
 }
 
 interface CandidatesResponse {
@@ -200,6 +205,7 @@ export function GrabConfirmModal({ target, onClose, onGrabbed }: Props) {
           itemId: data.itemId,
           release: candidate.result,
           override,
+          force: target.allowRegrab === true,
         }),
       })
       const json = await res.json().catch(() => ({})) as { grabbed?: boolean; title?: string; error?: string }
@@ -236,7 +242,7 @@ export function GrabConfirmModal({ target, onClose, onGrabbed }: Props) {
     const res = await fetch('/api/grab/confirm', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ itemId: data.itemId, release: picked, override: true }),
+      body: JSON.stringify({ itemId: data.itemId, release: picked, override: true, force: target.allowRegrab === true }),
     })
     const json = await res.json().catch(() => ({})) as { grabbed?: boolean; title?: string; error?: string }
     if (!res.ok) throw new Error(json.error ?? `HTTP ${res.status}`)
