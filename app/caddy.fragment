@@ -1,16 +1,59 @@
+# Caddy vhosts for unified-media. Copy-paste source for /home/joe/docker/caddy/Caddyfile.
+#
+# The app runs with Next's basePath = '/unified' (next.config.ts), so pages, assets, the
+# manifest and the service worker are all served under /unified/*. Client code still calls
+# fetch('/api/...') at the ROOT — 240-odd call sites that were deliberately not rewritten —
+# so the /api/* block below rewrites those onto /unified/api/* before proxying.
+#
+# Routing therefore lives in two places. If you change basePath, change this file too.
+
+minijoe.dev {
+	import lab_common
+	encode zstd gzip
+
+	# Party-play WebSocket. MUST stay above the /api/* rewrite: the ws server on :3002 is not
+	# Next, serves this exact path itself, and knows nothing about the basePath.
+	handle /api/party/ws* {
+		reverse_proxy unified-frontend:3002
+	}
+
+	# Root-level API calls from the browser -> the app's basePath-prefixed API routes.
+	handle /api/* {
+		rewrite * /unified{uri}
+		reverse_proxy unified-frontend:3001
+	}
+
+	# The app itself.
+	handle /unified* {
+		reverse_proxy unified-frontend:3001
+	}
+
+	# Everything else at the apex, including "/", lands on the app.
+	handle {
+		redir * /unified{uri} permanent
+	}
+}
+
+# The old internal-only name. Kept working so LAN/tailnet bookmarks and the Android app do not
+# break; it serves the same app through the same basePath rules.
 <app-host> {
 	import lab_common
 	encode zstd gzip
 
-	# F3 (CLAUDE.md §16): the party WebSocket runs on a dedicated server on port 3002.
-	# Route /api/party/ws* there; everything else goes to the Next.js app on 3001.
-	# Caddy upgrades WebSockets automatically (forwards Upgrade/Connection). The
-	# handle blocks are evaluated in order, so the WS path is matched before the
-	# catch-all and cannot be swallowed by it.
 	handle /api/party/ws* {
 		reverse_proxy unified-frontend:3002
 	}
-	handle {
+
+	handle /api/* {
+		rewrite * /unified{uri}
 		reverse_proxy unified-frontend:3001
+	}
+
+	handle /unified* {
+		reverse_proxy unified-frontend:3001
+	}
+
+	handle {
+		redir * /unified{uri} permanent
 	}
 }

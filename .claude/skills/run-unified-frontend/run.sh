@@ -28,7 +28,7 @@ fi
 
 # The deployed unified-frontend container publishes 3001 on the host, so --network host reaches
 # it at localhost:3001 with no compose-network juggling and no container-IP lookup.
-BASE_URL="${DRIVE_BASE_URL:-http://localhost:3001}"
+BASE_URL="${DRIVE_BASE_URL:-http://localhost:3001/unified}"
 
 # *.<internal-domain> resolves ONLY through Pi-hole, and the host resolver deliberately never points
 # at Pi-hole (that misconfiguration caused the original outage, so it is a standing rule). With

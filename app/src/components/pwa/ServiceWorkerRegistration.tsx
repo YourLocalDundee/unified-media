@@ -19,7 +19,7 @@ export default function ServiceWorkerRegistration() {
       window.location.protocol === 'https:' || window.location.hostname === 'localhost'
     if (!isSecureContext) return
 
-    navigator.serviceWorker.register('/sw.js').catch(() => {
+    navigator.serviceWorker.register('/unified/sw.js').catch(() => {
       // The PWA shell is a progressive enhancement — a failed registration
       // (unsupported browser, blocked by an extension, etc.) must never
       // break the app.

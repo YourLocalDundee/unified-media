@@ -11,21 +11,22 @@ export default function manifest(): MetadataRoute.Manifest {
     name: 'Unified Media',
     short_name: 'Unified',
     description: 'Browse, request, and watch your media library from one app.',
-    start_url: '/',
+    start_url: '/unified',
+    scope: '/unified',
     display: 'standalone',
     orientation: 'any',
     background_color: '#0f1729',
     theme_color: '#3c83f6',
     icons: [
       // SVG source icon. Modern Chromium/Firefox accept SVG manifest icons directly.
-      { src: '/icons/icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any' },
-      { src: '/icons/icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'maskable' },
+      { src: '/unified/icons/icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any' },
+      { src: '/unified/icons/icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'maskable' },
       // Rasterized fallbacks for installers/launchers that require a fixed-size
       // raster icon (e.g. some Android launchers, Windows tiles).
-      { src: '/icons/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
-      { src: '/icons/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'maskable' },
-      { src: '/icons/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
-      { src: '/icons/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+      { src: '/unified/icons/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
+      { src: '/unified/icons/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'maskable' },
+      { src: '/unified/icons/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
+      { src: '/unified/icons/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
     ],
   }
 }

@@ -25,18 +25,21 @@
 // "never cache user data" rule.
 // =============================================================================
 
-const SW_VERSION = 'v1'
+const SW_VERSION = 'v2-unified-basepath'
 const SHELL_CACHE = `unified-shell-${SW_VERSION}`
 
 // Precached at install time. Keep this list to genuinely static, non-personalized
 // assets only — do not add pages that render per-user data.
+// Paths are basePath-prefixed: the app is served under /unified, so these are the URLs the
+// browser actually requests. API calls are the exception — they stay at the root /api/* and
+// Caddy rewrites them, so isNeverCache below must NOT be prefixed.
 const PRECACHE_URLS = [
-  '/offline',
-  '/manifest.webmanifest',
-  '/icons/icon.svg',
-  '/icons/icon-192.png',
-  '/icons/icon-512.png',
-  '/apple-touch-icon.png',
+  '/unified/offline',
+  '/unified/manifest.webmanifest',
+  '/unified/icons/icon.svg',
+  '/unified/icons/icon-192.png',
+  '/unified/icons/icon-512.png',
+  '/unified/apple-touch-icon.png',
 ]
 
 self.addEventListener('install', event => {
@@ -64,7 +67,7 @@ self.addEventListener('activate', event => {
 })
 
 function isStaticBuildAsset(url) {
-  return url.pathname.startsWith('/_next/static/')
+  return url.pathname.startsWith('/unified/_next/static/')
 }
 
 function isNeverCache(url) {
@@ -123,7 +126,7 @@ async function networkFirstNavigation(request) {
     // Offline: fall back to the cached offline shell. This is intentionally
     // the only offline experience — we do not attempt to serve library/browse
     // data offline, since that data is auth-gated and must never be cached.
-    const offline = await caches.match('/offline')
+    const offline = await caches.match('/unified/offline')
     if (offline) return offline
     return new Response('Offline', {
       status: 503,

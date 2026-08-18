@@ -46,7 +46,7 @@ const SHOT_DIR = process.env.DRIVE_SHOT_DIR || path.join(HERE, 'screenshots')
 const HOST_DIR = process.env.DRIVE_HOST_DIR
 const forHost = (p) => (HOST_DIR ? p.replace(/^\/w\b/, HOST_DIR) : p)
 const ENV_FILE = process.env.DRIVE_ENV_FILE || '/env/app.env'
-const BASE = process.env.DRIVE_BASE_URL || 'http://localhost:3001'
+const BASE = process.env.DRIVE_BASE_URL || 'http://localhost:3001/unified'
 
 // Console noise that is expected and is not a failure. Anything matching is dropped before
 // `expect-no-errors` sees it, so that check stays meaningful instead of always red.

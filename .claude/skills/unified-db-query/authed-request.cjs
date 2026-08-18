@@ -24,6 +24,12 @@
 
 const http = require('http')
 
+// The app runs under Next basePath /unified. This talks to it directly on :3001, so it does
+// NOT get Caddy's /api/* -> /unified/api/* rewrite and has to add the prefix itself. Paths are
+// still passed in at the root (e.g. /api/auth/me) so the usage examples above stay accurate.
+const BASE_PATH = '/unified'
+const withBase = (p) => (p.startsWith(BASE_PATH + '/') ? p : BASE_PATH + p)
+
 const [, , method, path, ...rest] = process.argv
 if (!method || !path) {
   console.error('usage: node authed-request.cjs <METHOD> <path> [jsonBody] [--wait-job]')
@@ -60,7 +66,7 @@ function req(opts, body) {
     {
       hostname: 'localhost',
       port: 3001,
-      path: '/api/auth/login',
+      path: withBase('/api/auth/login'),
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(loginBody) },
     },
@@ -81,7 +87,7 @@ function req(opts, body) {
     headers['Content-Length'] = 0
   }
 
-  const res = await req({ hostname: 'localhost', port: 3001, path, method, headers }, body)
+  const res = await req({ hostname: 'localhost', port: 3001, path: withBase(path), method, headers }, body)
   console.log(`${method} ${path} -> ${res.status}`)
   console.log(res.body)
 
@@ -101,7 +107,7 @@ function req(opts, body) {
       const jobRes = await req({
         hostname: 'localhost',
         port: 3001,
-        path: `/api/jobs/${jobId}`,
+        path: withBase(`/api/jobs/${jobId}`),
         headers: { Cookie: cookie },
       })
       const job = JSON.parse(jobRes.body)

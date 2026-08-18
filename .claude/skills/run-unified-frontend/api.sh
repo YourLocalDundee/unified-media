@@ -17,7 +17,13 @@
 # questions perfectly.
 set -euo pipefail
 
-BASE="${DRIVE_BASE_URL:-http://localhost:3001}"
+# The app runs under Next basePath /unified, and this talks to it DIRECTLY — so it does not
+# get Caddy's /api/* -> /unified/api/* rewrite and must carry the prefix itself.
+BASE="${DRIVE_BASE_URL:-http://localhost:3001/unified}"
+
+# No Origin header is sent on purpose. localhost is no longer in the CSRF allowlist (it was
+# removed when the app went public), and verifyOrigin() allows a request with no Origin at
+# all — which is what a non-browser client like curl should look like anyway.
 ENV_FILE="${DRIVE_ENV_FILE:-/home/joe/docker/unified-media/.env}"
 JAR="${DRIVE_COOKIE_JAR:-/tmp/unified-api-cookies-$UID}"
 
@@ -38,7 +44,7 @@ login() {
     "$(printf '%s' "$user" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')" \
     "$(printf '%s' "$pass" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')" \
   | curl -sS -o /dev/null -c "$JAR" -H 'Content-Type: application/json' \
-      -H "Origin: $BASE" --data @- "$BASE/api/auth/login"
+      --data @- "$BASE/api/auth/login"
   chmod 600 "$JAR"
 }
 
@@ -59,4 +65,4 @@ case "$path" in
   *) url="$BASE/$path" ;;
 esac
 
-exec curl -sS -b "$JAR" -c "$JAR" -H "Origin: $BASE" "${args[@]}" "$url"
+exec curl -sS -b "$JAR" -c "$JAR" "${args[@]}" "$url"

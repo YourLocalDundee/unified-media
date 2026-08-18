@@ -14,6 +14,12 @@ const wsOrigin = (() => {
 })()
 
 const nextConfig: NextConfig = {
+  // The app is served at https://minijoe.dev/unified, with the apex redirecting to it.
+  // basePath covers pages, <Link>, router.push and every asset URL — but NOT raw fetch().
+  // The ~240 absolute fetch('/api/...') call sites are left alone and Caddy rewrites
+  // /api/* -> /unified/api/* at the edge instead. Routing therefore lives in two places:
+  // change one and you must change the other. See CLAUDE.md §7.
+  basePath: '/unified',
   output: 'standalone',
   serverExternalPackages: ['better-sqlite3'],
   images: {
