@@ -22,8 +22,8 @@ describe('isAdminNetwork defaults', () => {
   })
 
   it('allows the LAN and the box itself', () => {
-    expect(isAdminNetwork('<lan-ip>')).toBe(true)  // the server
-    expect(isAdminNetwork('<lan-ip>')).toBe(true)  // a LAN client
+    expect(isAdminNetwork('10.1.2.3')).toBe(true)     // private LAN
+    expect(isAdminNetwork('192.168.1.42')).toBe(true) // private LAN
     expect(isAdminNetwork('172.20.0.1')).toBe(true)   // docker gateway — how local logins appear
     expect(isAdminNetwork('127.0.0.1')).toBe(true)
     expect(isAdminNetwork('::1')).toBe(true)
@@ -35,19 +35,18 @@ describe('isAdminNetwork defaults', () => {
     expect(isAdminNetwork('203.0.113.7')).toBe(false)
     expect(isAdminNetwork('198.51.100.4')).toBe(false)
     expect(isAdminNetwork('8.8.8.8')).toBe(false)
-    expect(isAdminNetwork('10.20.10.10')).toBe(false)    // different private /24
   })
 
   it('rejects malformed input rather than passing it', () => {
     expect(isAdminNetwork('')).toBe(false)
     expect(isAdminNetwork('not-an-ip')).toBe(false)
-    expect(isAdminNetwork('10.10.10')).toBe(false)
+    expect(isAdminNetwork('10.1.2')).toBe(false)
     expect(isAdminNetwork('999.1.1.1')).toBe(false)
     expect(isAdminNetwork('2001:db8::1')).toBe(false) // IPv6 we cannot evaluate
   })
 
   it('unwraps IPv6-mapped IPv4', () => {
-    expect(isAdminNetwork('::ffff:<lan-ip>')).toBe(true)
+    expect(isAdminNetwork('::ffff:10.1.2.3')).toBe(true)
     expect(isAdminNetwork('::ffff:8.8.8.8')).toBe(false)
   })
 
@@ -58,9 +57,9 @@ describe('isAdminNetwork defaults', () => {
 
 describe('ADMIN_ALLOWED_CIDRS override', () => {
   it('replaces the defaults', () => {
-    process.env.ADMIN_ALLOWED_CIDRS = '192.168.1.0/24'
-    expect(isAdminNetwork('192.168.1.7')).toBe(true)
-    expect(isAdminNetwork('<lan-ip>')).toBe(false) // default no longer applies
+    process.env.ADMIN_ALLOWED_CIDRS = '198.18.0.0/15'
+    expect(isAdminNetwork('198.18.0.7')).toBe(true)
+    expect(isAdminNetwork('10.1.2.3')).toBe(false) // default no longer applies
   })
 
   it('accepts a bare address as a /32', () => {

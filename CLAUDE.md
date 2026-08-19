@@ -86,14 +86,14 @@ request → watch, with download status visible inline.
 ### How it fits in the stack
 
 ```
-LAN (<lan-subnet>/24) + tailnet — NOT the public internet
+LAN (<lan-subnet>) + tailnet — NOT the public internet
   └── Caddy (reverse proxy, TLS via Porkbun DNS-01)
         └── reverse_proxy → unified-frontend:3001  (this app — auth handled internally)
             (party-play WebSocket path → :3002, see docs/features/party-play.md)
 ```
 
 **Nothing here is internet-exposed.** Caddy is the only thing at the edge. BunkerWeb was in this
-chain on the pre-wipe server and is not in the rebuilt one — `*.<internal-domain>` names resolve
+chain on the pre-wipe server and is not in the rebuilt one — `<internal-hosts>` names resolve
 only through Pi-hole, on the LAN and over the tailnet.
 
 The app calls backing services from **Next.js server components and API routes** — never directly
@@ -280,7 +280,7 @@ These are the live "don't trip over this" rules. Kept in full because they're lo
 
 ### Admin access is network-gated
 - Admin sign-in and every `requireAdmin()` call require the client IP to be in
-  `ADMIN_ALLOWED_CIDRS` — by default the tailnet (`100.64.0.0/10`), the LAN (`<lan-subnet>/24`),
+  `ADMIN_ALLOWED_CIDRS` — by default the tailnet (`100.64.0.0/10`), the LAN (`<lan-subnet>`),
   the Docker bridges (`172.16.0.0/12`, which is how a browser on the mini box appears) and
   loopback. `src/lib/admin-network.ts`, tested in `admin-network.test.ts`.
 - The check runs **after** the password check in the login route, so a guesser on the public
@@ -299,6 +299,14 @@ These are the live "don't trip over this" rules. Kept in full because they're lo
   the rebuild blocks in `migrations.ts` have a column-loss bug (see below).
 - `verify-email`, `resend-verification` and `register-config` are now unreachable in practice.
 
+### Placeholders — this repo is public
+Real hostnames and addresses do not go in this repo. Docs and comments use placeholders, and the
+real values live on the box (`/home/joe/docker/*/.env`, the Caddyfile, `pihole.toml`) or in env
+vars: `<app-host>`, `<internal-domain>`, `<internal-hosts>`, `<downloads-host>`, `<jellyfin-host>`,
+`<pihole-host>`, `<auth-host>`, `<lan-ip>`, `<lan-subnet>`. The public app URL is fine to name —
+it is in public DNS. Anything that needs a real value at runtime reads it from an env var
+(`APP_HOST`, `DRIVE_LAB_IP`, `NEXT_PUBLIC_APP_URL`, `ADMIN_ALLOWED_CIDRS`).
+
 ### Edge / infra
 - **No WAF in the rebuilt stack.** BunkerWeb used to sit in front of Caddy and needed several
   features disabled per-domain (`USE_BAD_BEHAVIOR`, `USE_CROWDSEC`, `USE_DNSBL`, `USE_MODSECURITY`,
@@ -310,7 +318,7 @@ These are the live "don't trip over this" rules. Kept in full because they're lo
   the app's own auth, the closed registration endpoint, and the admin network restriction
   above. Anything added to the public vhost inherits that exposure.
 - **Editing the Caddyfile needs a container recreate, not a reload** — see the Caddy note in §8.
-- **Pi-hole has no wildcard.** It serves a handful of explicit `*.<internal-domain>` host
+- **Pi-hole has no wildcard.** It serves a handful of explicit `<internal-hosts>` host
   records (listed in `pihole.toml` on the box, not here). Any other
   `*.minijoe.dev` name returns NXDOMAIN internally and resolves publicly only if it exists at
   Porkbun. An earlier version of this file claimed a wildcard; there is none, and assuming one

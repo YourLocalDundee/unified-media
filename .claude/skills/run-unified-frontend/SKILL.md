@@ -143,7 +143,7 @@ fails while looking like a password problem. That bug shipped, and the localhost
 have caught it. Run at least one flow through the Caddy hostname after touching origins, CSP,
 `NEXT_PUBLIC_APP_URL`, or the Caddyfile.
 
-`*.<internal-domain>` resolves only through Pi-hole, and the host resolver deliberately never points
+`<internal-hosts>` resolves only through Pi-hole, and the host resolver deliberately never points
 at Pi-hole — that misconfiguration caused the original outage and is a standing rule. With
 `--network host` the container inherits that resolver, so these names would simply fail to resolve.
 `run.sh` therefore pins them with `--add-host` (Docker gives the container its own `/etc/hosts`

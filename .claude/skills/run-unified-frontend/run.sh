@@ -30,7 +30,7 @@ fi
 # it at localhost:3001 with no compose-network juggling and no container-IP lookup.
 BASE_URL="${DRIVE_BASE_URL:-http://localhost:3001/unified}"
 
-# *.<internal-domain> resolves ONLY through Pi-hole, and the host resolver deliberately never points
+# <internal-hosts> resolves ONLY through Pi-hole, and the host resolver deliberately never points
 # at Pi-hole (that misconfiguration caused the original outage, so it is a standing rule). With
 # --network host the container inherits that resolver, so a lab hostname simply fails to resolve
 # and the flow dies at the first nav. Docker still gives the container its own /etc/hosts even on
@@ -41,7 +41,8 @@ BASE_URL="${DRIVE_BASE_URL:-http://localhost:3001/unified}"
 #
 # The short names are a list rather than a hardcoded set so a flow that needs some other lab
 # hostname can add it without editing this file: DRIVE_LAB_HOSTS="media foo" ./run.sh ...
-LAB_IP="${DRIVE_LAB_IP:-<lan-ip>}"
+# Set DRIVE_LAB_IP to the box's LAN address when driving the internal *.lab names.
+LAB_IP="${DRIVE_LAB_IP:-127.0.0.1}"
 LAB_HOSTS="${DRIVE_LAB_HOSTS:-media dns dl auth}"
 HOST_MAPS=()
 for name in $LAB_HOSTS; do

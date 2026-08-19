@@ -10,7 +10,7 @@ const config: CapacitorConfig = {
     // mobile Chrome/Safari hitting <app-host>, so the existing
     // cookie-session auth (src/lib/dal.ts) and verifyOrigin() CSRF check
     // (src/lib/csrf.ts, allowlists NEXT_PUBLIC_APP_URL) work unmodified.
-    url: 'https://<app-host>',
+    url: 'https://minijoe.dev/unified',
     cleartext: false,
   },
   android: {

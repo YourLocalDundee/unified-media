@@ -86,7 +86,7 @@ curl -s --max-time 8 http://localhost:3001/api/health -o /dev/null -w "app:  %{h
 curl -s --max-time 8 --resolve <app-host>:443:<lan-ip> \
   https://<app-host>/api/health -o /dev/null -w "edge: %{http_code}\n"
 ```
-The `--resolve` is not optional from the host: `*.<internal-domain>` resolves **only** through
+The `--resolve` is not optional from the host: `<internal-hosts>` resolves **only** through
 Pi-hole, and the host resolver deliberately never points at Pi-hole (standing rule — that
 misconfiguration caused the original outage). Without it you get exit code 6, not a real failure.
 

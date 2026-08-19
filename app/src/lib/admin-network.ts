@@ -15,16 +15,28 @@
  *
  * Defaults cover:
  *   100.64.0.0/10   Tailscale/CGNAT — the tailnet
- *   <lan-subnet>/24   the LAN
- *   172.16.0.0/12   Docker bridge networks — a browser on the mini box itself is seen as
- *                   172.20.0.1, which is how every login on this host has been recorded
+ *   10.0.0.0/8      private LAN
+ *   172.16.0.0/12   private, and the Docker bridge networks — a browser on the server
+ *                   itself is seen as a bridge gateway address, which is how a local login
+ *                   is recorded
+ *   192.168.0.0/16  private LAN
  *   127.0.0.0/8     loopback
+ *
+ * The ranges are the standard private ones rather than this deployment's own subnet: a
+ * client can only present a private source address if it is already inside the perimeter,
+ * so narrowing them further buys nothing and puts the site's topology in a public repo.
  *
  * Override with ADMIN_ALLOWED_CIDRS (comma-separated). Setting it to `0.0.0.0/0` disables the
  * restriction entirely; do that knowingly, not by accident.
  */
 
-const DEFAULT_CIDRS = ['100.64.0.0/10', '<lan-subnet>/24', '172.16.0.0/12', '127.0.0.0/8']
+const DEFAULT_CIDRS = [
+  '100.64.0.0/10',
+  '10.0.0.0/8',
+  '172.16.0.0/12',
+  '192.168.0.0/16',
+  '127.0.0.0/8',
+]
 
 function allowedCidrs(): string[] {
   const raw = process.env.ADMIN_ALLOWED_CIDRS
