@@ -27,6 +27,7 @@ import { searchTheRarbg } from './adapters/therarbg'
 import { searchAnimeTosho } from './adapters/animetosho'
 import { searchAnimeRss } from './adapters/animerss'
 import { normalizeInfoHash } from './adapters/_shared'
+import { diffResults, indexerMode, logDiff, logFailure, searchViaRust } from './rust-shadow'
 
 // ---------------------------------------------------------------------------
 // Native adapter registry
@@ -337,7 +338,14 @@ export async function searchIndexer(
  * deduplicate results by infoHash (keep higher seeder count), and return
  * results sorted descending by seeders.
  */
-export async function searchAllIndexers(
+/**
+ * Fan out to every searchable indexer, dedupe and sort.
+ *
+ * This is the TypeScript implementation. Which implementation actually answers a caller is decided
+ * by `searchAllIndexers` below, the Phase 1.5 cutover seam — during shadow mode both run and their
+ * answers are diffed.
+ */
+async function searchAllIndexersTs(
   params: TorznabSearchParams,
 ): Promise<TorznabResult[]> {
   // getSearchableIndexers() excludes any indexer in active backoff so one flaky tracker can't keep
@@ -404,6 +412,56 @@ export async function searchAllIndexers(
   merged.sort((a, b) => b.seeders - a.seeders)
 
   return merged
+}
+
+// ---------------------------------------------------------------------------
+// Phase 1.5 cutover seam
+// ---------------------------------------------------------------------------
+
+/**
+ * Fan out to every searchable indexer, dedupe and sort.
+ *
+ * Unless `UM_INDEXER_MODE` says otherwise this is exactly `searchAllIndexersTs` and nothing else
+ * happens. See `./rust-shadow` for what the other two modes do and why the default is off.
+ */
+export async function searchAllIndexers(
+  params: TorznabSearchParams,
+): Promise<TorznabResult[]> {
+  const mode = indexerMode()
+  if (mode === 'off') return searchAllIndexersTs(params)
+
+  if (mode === 'primary') {
+    try {
+      return await searchViaRust(params)
+    } catch (err) {
+      // Falling back rather than failing: a search that returns nothing looks to automation like a
+      // release that does not exist yet, and it would quietly stop grabbing.
+      logFailure('primary', params, err)
+      return searchAllIndexersTs(params)
+    }
+  }
+
+  // Shadow. Both sides are started together so they see the same trackers in the same state, but
+  // only the TS answer is awaited — the diff resolves after the caller already has its results, so
+  // shadowing cannot slow a grab down or fail one.
+  const rustStarted = Date.now()
+  const rustPromise = searchViaRust(params).then(
+    results => ({ results, ms: Date.now() - rustStarted }),
+    err => {
+      logFailure('shadow', params, err)
+      return null
+    },
+  )
+
+  const tsStarted = Date.now()
+  const tsResults = await searchAllIndexersTs(params)
+  const tsMs = Date.now() - tsStarted
+
+  void rustPromise.then(rust => {
+    if (rust) logDiff(params, diffResults(tsResults, rust.results), tsMs, rust.ms)
+  })
+
+  return tsResults
 }
 
 // ---------------------------------------------------------------------------
