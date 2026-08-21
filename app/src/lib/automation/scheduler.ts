@@ -1,7 +1,10 @@
 /**
  * Automation scheduler: registers the eight background cron jobs for the pipeline.
  *
- * Called once from src/instrumentation.ts (Next.js server startup hook).
+ * Called once from src/instrumentation.ts (Next.js server startup hook). Whether the eight
+ * register at all depends on UM_AUTOMATION_MODE — see automationOwner below. With the pipeline
+ * handed to um-automation this file still schedules the hourly maintenance tick, which is the
+ * app's own housekeeping and is not ported.
  * The 'started' guard prevents double-registration on hot-reload in dev — Node module
  * cache resets between HMR cycles but instrumentation.ts can fire multiple times.
  *
@@ -126,6 +129,24 @@ function pruneAuthTables(): void {
   }
 }
 
+/**
+ * The housekeeping half of the hourly tick: prune the auth tables, then the guest users left
+ * behind once their sessions are gone.
+ *
+ * Kept separate from auto-delete because the two have different owners. Auto-delete is pipeline
+ * work and is ported to um-automation; these two prune `sessions`, `login_attempts`, `audit_log`,
+ * `pending_registrations` and guest `users` — auth and party tables the Rust side neither reads
+ * nor writes, and will not until a much later phase. So this has to keep running after the
+ * pipeline jobs stand down, or the tables grow without bound and nothing says so.
+ *
+ * Order matters: auth tables first, so a guest whose session row is dropped on this same tick
+ * becomes eligible immediately rather than waiting an extra hour.
+ */
+function runMaintenance(): void {
+  pruneAuthTables()
+  pruneGuestUsers()
+}
+
 // Produce a short scope suffix like " S13E521" or " S02+03" for log lines so
 // 101 identical "One Piece: not_found" entries are distinguishable per episode.
 function fmtScope(item: MonitoredItem): string {
@@ -171,9 +192,37 @@ function safeCron(expression: string, label: string, body: () => Promise<void> |
   })
 }
 
+/**
+ * Who owns the pipeline jobs, from `UM_AUTOMATION_MODE`.
+ *
+ *   ts   (default) — this scheduler runs all eight. Behaviour before this switch existed.
+ *   rust           — um-automation runs them; this scheduler registers none of them.
+ *
+ * There is no shadow mode here, unlike the indexer seam. A shadowed search is a read: run both
+ * sides, diff the answers, and the loser costs nothing. A grab is a write to the world — it adds
+ * a torrent and spends disk — and the two sides are on separate databases, so each has its own
+ * view of what is still `wanted` and both would grab the same titles. The claim that prevents a
+ * double grab is per database and cannot see across. So one side runs the pipeline at a time.
+ *
+ * An unrecognised value means `ts`. The indexer seam defaults an unknown value to `off` so a typo
+ * cannot route production traffic somewhere new; here the same typo must not silently stop
+ * production work. Both defaults leave behaviour where it was.
+ */
+export function automationOwner(): 'ts' | 'rust' {
+  return process.env.UM_AUTOMATION_MODE?.trim() === 'rust' ? 'rust' : 'ts'
+}
+
 export function initScheduler(): void {
   if (started) return
   started = true
+
+  // The housekeeping below is this app's own rather than the pipeline's, and nothing else will
+  // do it once the pipeline jobs stop. See runMaintenance.
+  if (automationOwner() === 'rust') {
+    safeCron('0 * * * *', 'maintenance', () => { runMaintenance() })
+    console.log('[automation] UM_AUTOMATION_MODE=rust \u2014 pipeline jobs not registered; maintenance still runs hourly')
+    return
+  }
 
   // Grab loop: search all indexers for every wanted item sequentially to avoid
   // hammering indexers with concurrent requests on large want lists
@@ -259,10 +308,7 @@ export function initScheduler(): void {
   // Auto-delete: runs at the top of every hour; dynamic import keeps the fs-heavy
   // auto-delete module out of the initial module graph
   safeCron('0 * * * *', 'auto-delete', async () => {
-    pruneAuthTables()
-    // After pruneAuthTables, so a guest whose session row is dropped on this same tick becomes
-    // eligible immediately rather than waiting an extra hour.
-    pruneGuestUsers()
+    runMaintenance()
     const { runAutoDelete } = await import('./auto-delete')
     const count = await runAutoDelete()
     if (count > 0) {
