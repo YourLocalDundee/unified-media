@@ -3,8 +3,15 @@
 // (would need to download and bencode-parse the .torrent itself to get one) — downloadUrl-only
 // results are expected here, not a bug; they fall into searchAllIndexers' "no infoHash" bucket
 // (skipped by hash-dedup, kept as-is). Confirmed live 2026-07-12.
+//
+// 2026-08-20: the site has moved behind Cloudflare and now answers a plain fetch with a "Just a
+// moment" interstitial (HTTP 403), so this adapter had been returning nothing at all — silently,
+// because a 403 is just another failed indexer in the fan-out. FlareSolverr clears the challenge
+// (verified against the live site), so it now takes the Tier C path like dmhy and uindex. Note
+// that means it must also be in CLOUDFLARE_GATED_TYPES in ../index.ts, or the outer timeout races
+// the solve.
 import type { TorznabResult } from '../types'
-import { fetchHtml } from './_shared'
+import { fetchSolvedHtml } from './_shared'
 
 const BASE_URL = 'https://bt.etree.org'
 
@@ -20,7 +27,7 @@ function parseSize(text: string): number {
 export async function searchBtEtree(q: string): Promise<TorznabResult[]> {
   try {
     const url = `${BASE_URL}/?searchzzzz=${encodeURIComponent(q)}&cat=0&sort=seeders`
-    const $ = await fetchHtml(url)
+    const $ = await fetchSolvedHtml(url)
 
     const results: TorznabResult[] = []
     $('table[bgcolor="#CCCCCC"] tbody tr').each((_i, el) => {

@@ -76,12 +76,13 @@ export const adapterRegistry: Record<string, AdapterFn> = {
 // the two isn't padding for its own sake — uindex measured a real 27.7s solve on one run and
 // 34s+ on another live-testing this session, so a tight outer cap turns ordinary FlareSolverr
 // variance into spurious failures.
-// Only dmhy and uindex are here — of the 8 Cloudflare-gated candidates checked live against
-// FlareSolverr on 2026-07-12, those were the only 2 that actually solved. The rest (1337x,
+// dmhy and uindex were the only 2 of 8 Cloudflare-gated candidates that actually solved when
+// checked live against FlareSolverr on 2026-07-12. btetree joined them on 2026-08-20, having put
+// itself behind Cloudflare after its adapter was written; it solves too. The rest (1337x,
 // extratorrent.st: Turnstile timeout; kickasstorrents.to/.ws: connection timeout; torrentkitty:
 // connection refused; magnetcat: explicit "IP banned" from Cloudflare) have no adapter — building
 // one would just wrap a request that can never succeed.
-const CLOUDFLARE_GATED_TYPES = new Set(['dmhy', 'uindex'])
+const CLOUDFLARE_GATED_TYPES = new Set(['btetree', 'dmhy', 'uindex'])
 
 // Not Cloudflare-gated, just slow: these serve large unpaginated feeds and need an outer cap above
 // their own inner fetch timeout, for the same reason the Cloudflare set does — otherwise the outer
